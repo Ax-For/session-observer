@@ -146,12 +146,48 @@ function preferAgentEvent(prev, next) {
   return next;
 }
 
+// Check if two events are duplicates (including sidechain duplicates)
+function isDuplicateEvent(prev, next) {
+  if (!prev || !next) return false;
+  if (prev.sessionId !== next.sessionId) return false;
+  if ((prev.turnId || "") !== (next.turnId || "")) return false;
+  if (prev.callType !== next.callType) return false;
+  if (normalizeEventText(prev.content) !== normalizeEventText(next.content)) return false;
+
+  // Check time proximity (within 5 seconds)
+  const prevMs = toTimeMs(prev.time);
+  const nextMs = toTimeMs(next.time);
+  if (prevMs != null && nextMs != null && Math.abs(prevMs - nextMs) > 5000) return false;
+  return true;
+}
+
+// Prefer non-sidechain events over sidechain events
+function preferEvent(prev, next) {
+  // For Agent events, use the existing preference logic
+  if (prev.callType === "Agent" && next.callType === "Agent") {
+    return preferAgentEvent(prev, next);
+  }
+  // For sidechain events, prefer non-sidechain (extra doesn't start with "sidechain/")
+  const prevIsSidechain = (prev.extra || "").startsWith("sidechain/");
+  const nextIsSidechain = (next.extra || "").startsWith("sidechain/");
+  if (prevIsSidechain && !nextIsSidechain) return next;
+  if (!prevIsSidechain && nextIsSidechain) return prev;
+  // If both or neither are sidechain, keep the first one
+  return prev;
+}
+
 function dedupeEvents(events) {
   const out = [];
   for (const event of events) {
     const prev = out[out.length - 1];
+    // Check for Agent duplicates (existing logic)
     if (isDuplicateAgentEvent(prev, event)) {
       out[out.length - 1] = preferAgentEvent(prev, event);
+      continue;
+    }
+    // Check for general duplicates including sidechain events
+    if (isDuplicateEvent(prev, event)) {
+      out[out.length - 1] = preferEvent(prev, event);
       continue;
     }
     out.push(event);

@@ -2286,6 +2286,8 @@ function renderConversationMessages() {
     '<command-args>',
     '<local-command-stdout>',
     '<system-reminder>',
+    '<task-notification>',
+    '<local-command-caveat>',
     'Caveat:',
     'This session is being continued from a previous',
     '[Request interrupted',
@@ -2298,21 +2300,15 @@ function renderConversationMessages() {
     );
   }
 
-  // Check if content is a subagent message like "[subagent:xxx] ..."
-  function isSubagentContent(content) {
-    if (!content || typeof content !== 'string') return false;
-    return content.startsWith('[subagent:');
-  }
-
   const conversationEvents = events.filter(e => {
     // Skip Token_Usage
     if (e.callType === "Token_Usage") return false;
     // Skip Raw system messages
     if (e.callType === "Raw" && isInternalContent(e.content)) return false;
-    // Skip User/Prompt messages with internal content (command outputs, subagent commands)
+    // Skip User/Prompt messages with internal content (command outputs, subagent commands, task notifications)
     if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
     // Skip Agent messages that are subagent outputs
-    if (e.callType === "Agent" && isSubagentContent(e.content)) return false;
+    if (e.callType === "Agent" && isInternalContent(e.content)) return false;
     return true;
   });
 
