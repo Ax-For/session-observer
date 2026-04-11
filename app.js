@@ -2248,8 +2248,8 @@ async function loadConversationEvents(offset, limit) {
     // Update status
     els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
 
-    // Render messages
-    renderConversationMessages();
+    // Render messages (scrollToBottom only on initial load)
+    renderConversationMessages(offset === 0);
 
     // Update load status indicator
     updateConvLoadStatus();
@@ -2302,7 +2302,7 @@ async function loadMoreConversationEvents() {
   isLoadingMore = false;
 }
 
-function renderConversationMessages() {
+function renderConversationMessages(scrollToBottom = false) {
   const events = state.conversationEvents;
   if (events.length === 0) {
     els.convPageBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
@@ -2366,8 +2366,10 @@ function renderConversationMessages() {
   // Setup scroll-to-top button behavior
   setupScrollToTop();
 
-  // Scroll to bottom (most recent message) initially
-  els.convPageBody.scrollTop = els.convPageBody.scrollHeight;
+  // Only scroll to bottom on initial load
+  if (scrollToBottom) {
+    els.convPageBody.scrollTop = els.convPageBody.scrollHeight;
+  }
 }
 
 function setupScrollToTop() {
