@@ -44,11 +44,11 @@
   --spacing-lg: 16px;
   --spacing-xl: 20px;
 
-  --font-xs: 0.68rem;
-  --font-sm: 0.72rem;
-  --font-base: 0.84rem;
-  --font-lg: 0.92rem;
-  --font-xl: 1.1rem;
+  --font-xs: 0.72rem;
+  --font-sm: 0.81rem;
+  --font-base: 0.94rem;
+  --font-lg: 1.06rem;
+  --font-xl: 1.25rem;
 
   --shadow-sm: 0 2px 4px rgba(17, 32, 51, 0.08);
   --shadow-card: 0 4px 12px rgba(17, 32, 51, 0.12);
@@ -2615,14 +2615,15 @@ body[data-theme='dark'] .conv-message.tool.error {
 /* Avatar/Icon Styles */
 
 .conv-avatar {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: var(--font-sm);
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .conv-avatar.user {
@@ -2638,9 +2639,9 @@ body[data-theme='dark'] .conv-message.tool.error {
 .conv-avatar.tool {
   background: var(--ink-soft);
   color: var(--panel-strong);
-  width: 22px;
-  height: 22px;
-  font-size: 0.62rem;
+  width: 24px;
+  height: 24px;
+  font-size: var(--font-xs);
 }
 
 /* Bubble Styles */
@@ -2698,7 +2699,7 @@ body[data-theme='dark'] .conv-message.tool.error {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--ink-soft);
   user-select: none;
   padding: 2px 0;
@@ -2745,7 +2746,7 @@ body[data-theme='dark'] .conv-collapsible[open] summary {
 .conv-collapsible summary .coll-sep {
   color: var(--ink-soft);
   opacity: 0.4;
-  font-size: 10px;
+  font-size: 0.6rem;
   flex-shrink: 0;
 }
 
@@ -2755,7 +2756,7 @@ body[data-theme='dark'] .conv-collapsible[open] summary {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: #3b82f6;
 }
 
@@ -2773,13 +2774,13 @@ body[data-theme='dark'] .conv-collapsible[open] summary {
 .conv-collapsible-content {
   margin-top: 6px;
   padding-left: 18px;
-  font-size: var(--font-sm);
+  font-size: var(--font-base);
 }
 
 .conv-collapsible-content pre {
   margin: 0;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-size: var(--font-sm);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 300px;
@@ -2794,7 +2795,7 @@ body[data-theme='dark'] .conv-collapsible[open] summary {
   border-radius: var(--radius-sm);
   padding: var(--spacing-sm);
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-size: var(--font-xs);
   overflow-x: auto;
 }
 
@@ -2803,14 +2804,14 @@ body[data-theme='dark'] .conv-collapsible[open] summary {
   align-items: center;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-xs);
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--ink-soft);
 }
 
 .conv-diff-badge {
   padding: 1px 4px;
   border-radius: 2px;
-  font-size: 10px;
+  font-size: 0.6rem;
   font-weight: 600;
 }
 
@@ -2864,7 +2865,7 @@ body[data-theme='dark'] .conv-diff-new {
 
 .conv-file-list {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-size: var(--font-xs);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -2881,7 +2882,7 @@ body[data-theme='dark'] .conv-diff-new {
 /* Markdown Content Styles */
 
 .conv-markdown {
-  line-height: 1.5;
+  line-height: 1.65;
 }
 
 .conv-markdown p {
@@ -2898,7 +2899,7 @@ body[data-theme='dark'] .conv-diff-new {
   border-radius: 2px;
   padding: 1px 4px;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.9em;
+  font-size: 0.92em;
 }
 
 .conv-markdown pre {
@@ -2965,7 +2966,7 @@ body[data-theme='dark'] .conv-diff-new {
 
 .conv-message.grouped .conv-avatar {
   visibility: hidden;
-  width: 28px;
+  width: 32px;
 }
 
 /* Time Stamp */
@@ -3023,7 +3024,7 @@ body[data-theme='dark'] .conv-diff-new {
   align-items: center;
   justify-content: center;
   color: #22c55e;
-  font-size: 14px;
+  font-size: var(--font-base);
   flex-shrink: 0;
   padding-top: 2px;
 }
@@ -3045,7 +3046,7 @@ body[data-theme='dark'] .conv-terminal-pill {
 
 .conv-terminal-code {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: #22c55e;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3065,7 +3066,7 @@ body[data-theme='dark'] .conv-terminal-pill {
   border: none;
   background: transparent;
   color: #6b7280;
-  font-size: 12px;
+  font-size: var(--font-sm);
   padding: 2px;
   display: flex;
   align-items: center;
@@ -3087,7 +3088,7 @@ body[data-theme='dark'] .conv-terminal-pill {
 
 .conv-terminal-desc {
   margin-left: 22px;
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--ink-soft);
   opacity: 0.7;
   font-style: italic;
@@ -3099,7 +3100,7 @@ body[data-theme='dark'] .conv-terminal-pill {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   margin: 4px 0;
   border-left: 2px solid var(--line);
   padding: 4px 0;
@@ -3126,21 +3127,21 @@ body[data-theme='dark'] .conv-terminal-pill {
 .conv-tool-one-line .tool-label {
   color: var(--ink-soft);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-sm);
   flex-shrink: 0;
 }
 
 .conv-tool-one-line .tool-sep {
   color: var(--ink-soft);
   opacity: 0.4;
-  font-size: 10px;
+  font-size: 0.6rem;
   flex-shrink: 0;
 }
 
 .conv-tool-one-line .tool-value {
   color: var(--ink);
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-size: var(--font-sm);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -3155,7 +3156,7 @@ body[data-theme='dark'] .conv-terminal-pill {
 
 .conv-tool-one-line .tool-secondary {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-style: italic;
   opacity: 0.7;
   flex-shrink: 0;
@@ -3168,7 +3169,7 @@ body[data-theme='dark'] .conv-terminal-pill {
   border: none;
   background: transparent;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: var(--font-sm);
   padding: 2px;
   flex-shrink: 0;
   margin-left: 4px;
@@ -3201,7 +3202,7 @@ body[data-theme='dark'] .conv-terminal-pill {
 /* Tool message styles */
 
 .conv-tool-time {
-  font-size: 10px;
+  font-size: var(--font-xs);
   color: var(--ink-soft);
   opacity: 0.6;
   margin-top: 2px;
