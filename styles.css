@@ -1810,6 +1810,7 @@ body[data-theme='dark'] .chip-raw {
   border-radius: var(--radius);
   background: var(--panel);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .group-header {
@@ -1853,8 +1854,7 @@ body[data-theme='dark'] .chip-raw {
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   gap: 14px;
-  align-items: center;
-  padding: 14px 18px;
+  padding: 16px 18px;
   border-bottom: 1px solid var(--line);
   cursor: pointer;
   transition: background 120ms ease;
@@ -1885,6 +1885,9 @@ body[data-theme='dark'] .chip-raw {
 
 .card-info {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .card-title-row {
