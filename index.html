@@ -38,6 +38,7 @@
     <section class="tabs" id="tabBar">
       <button class="tab-btn active" data-tab="stream">事件流</button>
       <button class="tab-btn" data-tab="sessions">会话管理</button>
+      <button class="tab-btn" data-tab="conversation">对话详情</button>
     </section>
 
     <section class="filters" id="streamFilters">
@@ -198,6 +199,26 @@
       </div>
       <div id="sessionGroups" class="session-groups"></div>
     </section>
+
+    <!-- Conversation View (page view, not modal) -->
+    <section class="conversation-view" id="conversationView" hidden>
+      <header class="conv-page-header">
+        <button id="convBackBtn" type="button" class="conv-back-btn">← 返回会话列表</button>
+        <div class="conv-header-info">
+          <h2 id="convPageTitle">对话详情</h2>
+          <div class="conv-header-meta">
+            <span class="chip chip-platform" id="convPagePlatform"></span>
+            <span id="convPageModels"></span>
+            <span id="convPageStats"></span>
+          </div>
+        </div>
+      </header>
+      <div class="conv-page-toolbar">
+        <span id="convPageLoadStatus">已加载 0 / 共 0</span>
+        <button id="convPageLoadAllBtn" type="button">加载全部</button>
+      </div>
+      <div id="convPageBody" class="conv-page-body"></div>
+    </section>
   </main>
 
   <!-- Detail Modal -->
@@ -226,28 +247,6 @@
         <button id="sessionDetailCloseBtn" type="button">关闭</button>
       </header>
       <div id="sessionDetailBody" class="session-detail-body"></div>
-    </section>
-  </div>
-
-  <!-- Conversation Modal -->
-  <div id="conversationModal" class="modal hidden" aria-hidden="true">
-    <div class="modal-backdrop" data-close-conversation="1"></div>
-    <section class="modal-panel modal-panel-wide" role="dialog" aria-modal="true" aria-label="对话记录">
-      <header class="modal-head conv-head">
-        <div class="conv-header-left">
-          <h2 id="conversationTitle">对话记录</h2>
-          <div class="conv-meta">
-            <span class="chip chip-platform" id="convPlatformChip"></span>
-            <span id="convModelInfo"></span>
-          </div>
-        </div>
-        <button id="conversationCloseBtn" type="button">关闭</button>
-      </header>
-      <div id="conversationBody" class="conv-body"></div>
-      <footer class="conv-footer">
-        <button id="convLoadAllBtn" type="button">加载全部</button>
-        <span id="convLoadStatus">已加载 0 / 共 0</span>
-      </footer>
     </section>
   </div>
 

@@ -107,17 +107,117 @@ const els = {
   batchConfirmCloseBtn: document.getElementById("batchConfirmCloseBtn"),
   batchConfirmCancelBtn: document.getElementById("batchConfirmCancelBtn"),
   batchConfirmOkBtn: document.getElementById("batchConfirmOkBtn"),
-  // Conversation modal elements
-  conversationModal: document.getElementById("conversationModal"),
-  conversationTitle: document.getElementById("conversationTitle"),
-  conversationBody: document.getElementById("conversationBody"),
-  conversationCloseBtn: document.getElementById("conversationCloseBtn"),
-  convPlatformChip: document.getElementById("convPlatformChip"),
-  convModelInfo: document.getElementById("convModelInfo"),
-  convLoadAllBtn: document.getElementById("convLoadAllBtn"),
-  convLoadStatus: document.getElementById("convLoadStatus"),
+  // Conversation page view elements
+  conversationView: document.getElementById("conversationView"),
+  convBackBtn: document.getElementById("convBackBtn"),
+  convPageTitle: document.getElementById("convPageTitle"),
+  convPagePlatform: document.getElementById("convPagePlatform"),
+  convPageModels: document.getElementById("convPageModels"),
+  convPageStats: document.getElementById("convPageStats"),
+  convPageLoadStatus: document.getElementById("convPageLoadStatus"),
+  convPageLoadAllBtn: document.getElementById("convPageLoadAllBtn"),
+  convPageBody: document.getElementById("convPageBody"),
 };
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
+
+// Tool display configurations (inspired by claudecodeui toolConfigs)
+const TOOL_DISPLAY_CONFIGS = {
+  Bash: {
+    category: "bash",
+    inputStyle: "terminal",
+    showResult: false, // Hide successful results
+  },
+  Read: {
+    category: "read",
+    inputStyle: "one-line",
+    showResult: false,
+  },
+  Edit: {
+    category: "edit",
+    inputStyle: "collapsible",
+    showResult: false,
+  },
+  Write: {
+    category: "edit",
+    inputStyle: "collapsible",
+    showResult: false,
+  },
+  ApplyPatch: {
+    category: "edit",
+    inputStyle: "collapsible",
+    showResult: false,
+  },
+  Grep: {
+    category: "search",
+    inputStyle: "one-line",
+    resultStyle: "collapsible",
+  },
+  Glob: {
+    category: "search",
+    inputStyle: "one-line",
+    resultStyle: "collapsible",
+  },
+  TodoWrite: {
+    category: "todo",
+    inputStyle: "collapsible",
+    showResult: false,
+  },
+  TodoRead: {
+    category: "todo",
+    inputStyle: "one-line",
+    resultStyle: "collapsible",
+  },
+  TaskCreate: {
+    category: "task",
+    inputStyle: "one-line",
+    showResult: false,
+  },
+  TaskUpdate: {
+    category: "task",
+    inputStyle: "one-line",
+    showResult: false,
+  },
+  TaskList: {
+    category: "task",
+    inputStyle: "one-line",
+    resultStyle: "collapsible",
+  },
+  Agent: {
+    category: "agent",
+    inputStyle: "collapsible",
+    resultStyle: "collapsible",
+  },
+  Default: {
+    category: "default",
+    inputStyle: "collapsible",
+    resultStyle: "collapsible",
+  }
+};
+
+function getToolConfig(toolName) {
+  return TOOL_DISPLAY_CONFIGS[toolName] || TOOL_DISPLAY_CONFIGS.Default;
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+  }
+  // Fallback for older browsers
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return true;
+  } catch {
+    document.body.removeChild(textarea);
+    return false;
+  }
+}
 
 function escapeHtml(text) {
   return String(text)
@@ -1831,15 +1931,26 @@ function switchTab(tab) {
   document.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === tab);
   });
-  const isStream = tab === "stream";
-  els.streamView.hidden = !isStream;
-  els.sessionsView.hidden = isStream;
-  els.streamFilters.hidden = !isStream;
-  document.getElementById("stats").hidden = !isStream;
-  document.getElementById("quickFilters").hidden = !isStream;
 
-  if (tab === "sessions") {
+  // Hide all views
+  els.streamView.hidden = true;
+  els.sessionsView.hidden = true;
+  els.conversationView.hidden = true;
+  els.streamFilters.hidden = true;
+  document.getElementById("stats").hidden = true;
+  document.getElementById("quickFilters").hidden = true;
+
+  // Show the selected view
+  if (tab === "stream") {
+    els.streamView.hidden = false;
+    els.streamFilters.hidden = false;
+    document.getElementById("stats").hidden = false;
+    document.getElementById("quickFilters").hidden = false;
+  } else if (tab === "sessions") {
+    els.sessionsView.hidden = false;
     loadSessionMgmtData();
+  } else if (tab === "conversation") {
+    els.conversationView.hidden = false;
   }
 }
 
@@ -2014,6 +2125,9 @@ async function openConversationView(sessionId) {
   }
   if (!found) return;
 
+  // Close session detail modal if open
+  closeSessionDetail();
+
   // Initialize conversation state
   state.conversationSessionId = sessionId;
   state.conversationSessionInfo = found;
@@ -2021,18 +2135,20 @@ async function openConversationView(sessionId) {
   state.conversationLoaded = 0;
   state.conversationTotal = found.count;
 
-  // Set modal header info
-  els.conversationTitle.textContent = found.sessionTitle || found.fallbackTitle || "未命名会话";
-  els.convPlatformChip.textContent = found.sourceType;
-  els.convPlatformChip.className = `chip chip-platform chip-${found.sourceType}`;
+  // Set page header info
+  els.convPageTitle.textContent = found.sessionTitle || found.fallbackTitle || "未命名会话";
+  els.convPagePlatform.textContent = found.sourceType;
+  els.convPagePlatform.className = `chip chip-platform chip-${found.sourceType}`;
   const models = found.models || [];
-  els.convModelInfo.textContent = models.length > 0 ? `${models.length} 个模型` : "";
+  els.convPageModels.textContent = models.length > 0 ? `${models.length} 个模型` : "";
+  els.convPageStats.textContent = `${found.count} 个事件`;
 
   // Show loading state
-  els.conversationBody.innerHTML = '<div class="conv-loading">加载中...</div>';
-  els.convLoadStatus.textContent = `已加载 0 / 共 ${found.count}`;
-  els.conversationModal.classList.remove("hidden");
-  els.conversationModal.setAttribute("aria-hidden", "false");
+  els.convPageBody.innerHTML = '<div class="conv-loading">加载中...</div>';
+  els.convPageLoadStatus.textContent = `已加载 0 / 共 ${found.count}`;
+
+  // Switch to conversation tab
+  switchTab("conversation");
 
   // Fetch initial events
   await loadConversationEvents(0, 100);
@@ -2061,18 +2177,18 @@ async function loadConversationEvents(offset, limit) {
     state.conversationTotal = data.totalMatching || state.conversationSessionInfo?.count || state.conversationLoaded;
 
     // Update status
-    els.convLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
+    els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
 
     // Render messages
     renderConversationMessages();
 
     // Hide load all button if all loaded
     if (state.conversationLoaded >= state.conversationTotal) {
-      els.convLoadAllBtn.hidden = true;
+      els.convPageLoadAllBtn.hidden = true;
     }
   } catch (err) {
     console.error("Failed to load conversation events:", err);
-    els.conversationBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
+    els.convPageBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -2080,18 +2196,18 @@ async function loadAllConversationEvents() {
   const remaining = state.conversationTotal - state.conversationLoaded;
   if (remaining <= 0) return;
 
-  els.convLoadAllBtn.disabled = true;
-  els.convLoadAllBtn.textContent = "加载中...";
+  els.convPageLoadAllBtn.disabled = true;
+  els.convPageLoadAllBtn.textContent = "加载中...";
 
   await loadConversationEvents(state.conversationLoaded, remaining);
 
-  els.convLoadAllBtn.hidden = true;
+  els.convPageLoadAllBtn.hidden = true;
 }
 
 function renderConversationMessages() {
   const events = state.conversationEvents;
   if (events.length === 0) {
-    els.conversationBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
+    els.convPageBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
     return;
   }
 
@@ -2104,10 +2220,10 @@ function renderConversationMessages() {
     return renderConvMessage(e, prevEvent);
   }).join("");
 
-  els.conversationBody.innerHTML = messagesHtml;
+  els.convPageBody.innerHTML = messagesHtml;
 
   // Scroll to bottom (most recent message)
-  els.conversationBody.scrollTop = els.conversationBody.scrollHeight;
+  els.convPageBody.scrollTop = els.convPageBody.scrollHeight;
 }
 
 function renderConvMessage(event, prevEvent) {
@@ -2126,7 +2242,7 @@ function renderConvMessage(event, prevEvent) {
     avatarClass = "user";
   } else if (callType === "Tool_Call" || callType === "Tool_Result") {
     msgType = "tool";
-    avatar = "T";
+    avatar = "🔧";
     avatarClass = "tool";
   } else if (callType === "Thinking") {
     msgType = "thinking";
@@ -2152,7 +2268,7 @@ function renderConvMessage(event, prevEvent) {
 
   // Build message HTML based on type
   if (msgType === "tool") {
-    return renderToolMessage(event, isGrouped, timeStr);
+    return renderToolMessage(event, prevEvent, timeStr);
   } else if (msgType === "thinking") {
     return renderThinkingMessage(event, content, timeStr);
   } else {
@@ -2163,6 +2279,7 @@ function renderConvMessage(event, prevEvent) {
 function renderTextMessage(event, msgType, avatar, avatarClass, isGrouped, content, agentPrefix, timeStr) {
   const groupedClass = isGrouped ? "grouped" : "";
   const avatarHtml = isGrouped ? "" : `<div class="conv-avatar ${avatarClass}">${avatar}</div>`;
+  const contentId = `content-${event.callId || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Render content as markdown for agent messages
   let contentHtml;
@@ -2179,12 +2296,135 @@ function renderTextMessage(event, msgType, avatar, avatarClass, isGrouped, conte
       ${msgType === "user" ? "" : avatarHtml}
       <div class="conv-bubble">
         ${prefixHtml}
-        <div class="conv-markdown">${contentHtml}</div>
-        <div class="conv-time">${timeStr}</div>
+        <div class="conv-markdown" id="${contentId}">${contentHtml}</div>
+        <div class="conv-footer-line">
+          <button class="conv-copy-btn" onclick="copyConvContent('${contentId}')">复制</button>
+          <span class="conv-time">${timeStr}</span>
+        </div>
       </div>
       ${msgType === "user" ? avatarHtml : ""}
     </div>`;
 }
+
+function renderToolMessage(event, prevEvent, timeStr) {
+  const toolName = event.toolName || "unknown";
+  const callType = event.callType;
+  const content = event.content || "";
+  const config = getToolConfig(toolName);
+  const category = config.category;
+
+  // Check if previous event is the input for this result
+  const isResultForPrevInput = callType === "Tool_Result" && prevEvent && prevEvent.callType === "Tool_Call" && prevEvent.toolName === toolName;
+
+  // Determine if this is input or result
+  const isInput = callType === "Tool_Call";
+  const isError = content && ALERT_PATTERN.test(content);
+
+  // Tool class with category
+  const errorClass = isError ? "error" : "";
+
+  // Build tool content based on style
+  let toolContentHtml = "";
+
+  if (isInput) {
+    toolContentHtml = renderToolInput(event, toolName, config);
+  } else {
+    // Result - check if we should hide it
+    if (!config.showResult && !isError && config.showResult !== undefined) {
+      // Hide successful results for certain tools
+      if (isResultForPrevInput) {
+        return ""; // Don't render result separately
+      }
+    }
+    toolContentHtml = renderToolResult(event, toolName, config, isError);
+  }
+
+  // Don't render if empty
+  if (!toolContentHtml) return "";
+
+  return `
+    <div class="conv-message tool ${category} ${errorClass}">
+      <div class="conv-tool-header">
+        <span class="conv-tool-name">${escapeHtml(toolName)}</span>
+        <span class="conv-tool-label">${isInput ? "输入" : "结果"}</span>
+        <span class="conv-time">${timeStr}</span>
+      </div>
+      ${toolContentHtml}
+    </div>`;
+}
+
+function renderToolInput(event, toolName, config) {
+  const style = config.inputStyle;
+  const extra = event.extra || "";
+
+  if (style === "terminal") {
+    // Bash command style
+    let command = "";
+    try {
+      const inputObj = JSON.parse(extra);
+      command = inputObj.command || "";
+    } catch {
+      command = extra;
+    }
+    return `<div class="conv-terminal">${escapeHtml(command)}</div>`;
+  }
+
+  if (style === "one-line") {
+    // One-line display (Read, Grep, etc.)
+    let value = "";
+    try {
+      const inputObj = JSON.parse(extra);
+      if (toolName === "Read") value = inputObj.file_path || "";
+      else if (toolName === "Grep" || toolName === "Glob") value = inputObj.pattern || "";
+      else if (toolName === "TodoRead") value = "reading list";
+      else value = extra;
+    } catch {
+      value = extra;
+    }
+    return `<div class="conv-tool-one-line"><span class="tool-label">${escapeHtml(toolName)}</span><span class="tool-sep">/</span><span class="tool-value">${escapeHtml(value)}</span></div>`;
+  }
+
+  // Collapsible (default)
+  return `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${highlightJson(extra)}</div></details>`;
+}
+
+function renderToolResult(event, toolName, config, isError) {
+  const content = event.content || "";
+  const style = config.resultStyle || "collapsible";
+
+  if (isError) {
+    return `<div class="conv-tool-error"><div class="conv-error-icon">✕</div><div class="conv-error-content">${escapeHtml(content)}</div></div>`;
+  }
+
+  if (style === "collapsible") {
+    const truncatedContent = content.length > 1000 ? content.slice(0, 1000) + "..." : content;
+    return `<details class="conv-collapsible"><summary>结果</summary><div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div></details>`;
+  }
+
+  // Default: show truncated content
+  const truncatedContent = content.length > 500 ? content.slice(0, 500) + "..." : content;
+  return `<div class="conv-tool-result-text">${escapeHtml(truncatedContent)}</div>`;
+}
+
+// Global function for copy button
+window.copyConvContent = function(contentId) {
+  const el = document.getElementById(contentId);
+  if (!el) return;
+  const text = el.textContent || el.innerText;
+  const success = copyToClipboard(text);
+  if (success) {
+    // Find the button and show copied state
+    const btn = el.parentElement.querySelector(".conv-copy-btn");
+    if (btn) {
+      btn.textContent = "已复制";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = "复制";
+        btn.classList.remove("copied");
+      }, 2000);
+    }
+  }
+};
 
 function renderToolMessage(event, isGrouped, timeStr) {
   const toolName = event.toolName || "unknown";
@@ -2225,7 +2465,8 @@ function renderToolMessage(event, isGrouped, timeStr) {
 }
 
 function renderThinkingMessage(event, content, timeStr) {
-  const truncatedContent = content.length > 300 ? content.slice(0, 300) + "..." : content;
+  const contentId = `thinking-${event.callId || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const truncatedContent = content.length > 500 ? content.slice(0, 500) + "..." : content;
 
   return `
     <div class="conv-message thinking">
@@ -2233,9 +2474,12 @@ function renderThinkingMessage(event, content, timeStr) {
       <div class="conv-bubble">
         <details class="conv-collapsible">
           <summary>思考过程</summary>
-          <div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div>
+          <div class="conv-collapsible-content" id="${contentId}">${escapeHtml(truncatedContent)}</div>
         </details>
-        <div class="conv-time">${timeStr}</div>
+        <div class="conv-footer-line">
+          <button class="conv-copy-btn" onclick="copyConvContent('${contentId}')">复制</button>
+          <span class="conv-time">${timeStr}</span>
+        </div>
       </div>
     </div>`;
 }
@@ -2254,9 +2498,9 @@ function renderMarkdown(text) {
   return escapeHtml(text);
 }
 
-function closeConversationView() {
-  els.conversationModal.classList.add("hidden");
-  els.conversationModal.setAttribute("aria-hidden", "true");
+// Back to sessions button handler
+function backToSessions() {
+  switchTab("sessions");
   state.conversationSessionId = null;
   state.conversationEvents = [];
 }
@@ -2480,12 +2724,9 @@ function wireSessionMgmt() {
     }
   });
 
-  // Conversation modal events
-  els.conversationCloseBtn.addEventListener("click", closeConversationView);
-  els.conversationModal.addEventListener("click", (e) => {
-    if (e.target.closest("[data-close-conversation]")) closeConversationView();
-  });
-  els.convLoadAllBtn.addEventListener("click", loadAllConversationEvents);
+  // Conversation page view events
+  els.convBackBtn.addEventListener("click", backToSessions);
+  els.convPageLoadAllBtn.addEventListener("click", loadAllConversationEvents);
 
   // Rename modal
   els.renameModalCloseBtn.addEventListener("click", closeRenameModal);
