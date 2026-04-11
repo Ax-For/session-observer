@@ -33,6 +33,12 @@ const state = {
   lastViewedSessionId: null,
   selectedSessionIds: new Set(),
   batchConfirmAction: null,
+  // Conversation view state
+  conversationEvents: [],
+  conversationTotal: 0,
+  conversationLoaded: 0,
+  conversationSessionId: null,
+  conversationSessionInfo: null,
 };
 
 const els = {
@@ -101,6 +107,15 @@ const els = {
   batchConfirmCloseBtn: document.getElementById("batchConfirmCloseBtn"),
   batchConfirmCancelBtn: document.getElementById("batchConfirmCancelBtn"),
   batchConfirmOkBtn: document.getElementById("batchConfirmOkBtn"),
+  // Conversation modal elements
+  conversationModal: document.getElementById("conversationModal"),
+  conversationTitle: document.getElementById("conversationTitle"),
+  conversationBody: document.getElementById("conversationBody"),
+  conversationCloseBtn: document.getElementById("conversationCloseBtn"),
+  convPlatformChip: document.getElementById("convPlatformChip"),
+  convModelInfo: document.getElementById("convModelInfo"),
+  convLoadAllBtn: document.getElementById("convLoadAllBtn"),
+  convLoadStatus: document.getElementById("convLoadStatus"),
 };
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
 
@@ -1971,7 +1986,10 @@ function openSessionDetail(sessionId) {
       </span>
     </div>` : ""}
     <div class="detail-field" style="grid-column: 1 / -1; margin-top: 8px;">
-      <button class="card-btn" data-action="view-events" data-session-id="${escapeHtml(found.sessionId)}" style="width: 100%; text-align: center;">查看事件流 →</button>
+      <div style="display: flex; gap: 8px;">
+        <button class="card-btn" data-action="view-events" data-session-id="${escapeHtml(found.sessionId)}" style="flex: 1; text-align: center;">查看事件流 →</button>
+        <button class="card-btn" data-action="view-conversation" data-session-id="${escapeHtml(found.sessionId)}" style="flex: 1; text-align: center;">查看对话 →</button>
+      </div>
     </div>
   `;
   els.sessionDetailModal.classList.remove("hidden");
@@ -1982,6 +2000,268 @@ function closeSessionDetail() {
   els.sessionDetailModal.classList.add("hidden");
   els.sessionDetailModal.setAttribute("aria-hidden", "true");
 }
+
+// ==================== Conversation View ====================
+
+async function openConversationView(sessionId) {
+  if (!state.sessionMgmtData) return;
+
+  // Find session info
+  let found = null;
+  for (const sessions of Object.values(state.sessionMgmtData.groups || {})) {
+    found = sessions.find((s) => s.sessionId === sessionId);
+    if (found) break;
+  }
+  if (!found) return;
+
+  // Initialize conversation state
+  state.conversationSessionId = sessionId;
+  state.conversationSessionInfo = found;
+  state.conversationEvents = [];
+  state.conversationLoaded = 0;
+  state.conversationTotal = found.count;
+
+  // Set modal header info
+  els.conversationTitle.textContent = found.sessionTitle || found.fallbackTitle || "未命名会话";
+  els.convPlatformChip.textContent = found.sourceType;
+  els.convPlatformChip.className = `chip chip-platform chip-${found.sourceType}`;
+  const models = found.models || [];
+  els.convModelInfo.textContent = models.length > 0 ? `${models.length} 个模型` : "";
+
+  // Show loading state
+  els.conversationBody.innerHTML = '<div class="conv-loading">加载中...</div>';
+  els.convLoadStatus.textContent = `已加载 0 / 共 ${found.count}`;
+  els.conversationModal.classList.remove("hidden");
+  els.conversationModal.setAttribute("aria-hidden", "false");
+
+  // Fetch initial events
+  await loadConversationEvents(0, 100);
+}
+
+async function loadConversationEvents(offset, limit) {
+  const sessionId = state.conversationSessionId;
+  if (!sessionId) return;
+
+  try {
+    const params = new URLSearchParams({
+      sessionId,
+      mode: "observe",
+      order: "asc", // Chronological order for conversation
+      offset: String(offset),
+      limit: String(limit),
+    });
+
+    const resp = await fetch(`/api/events?${params}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    // Append events
+    state.conversationEvents = state.conversationEvents.concat(data.events || []);
+    state.conversationLoaded = state.conversationEvents.length;
+    state.conversationTotal = data.totalMatching || state.conversationSessionInfo?.count || state.conversationLoaded;
+
+    // Update status
+    els.convLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
+
+    // Render messages
+    renderConversationMessages();
+
+    // Hide load all button if all loaded
+    if (state.conversationLoaded >= state.conversationTotal) {
+      els.convLoadAllBtn.hidden = true;
+    }
+  } catch (err) {
+    console.error("Failed to load conversation events:", err);
+    els.conversationBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadAllConversationEvents() {
+  const remaining = state.conversationTotal - state.conversationLoaded;
+  if (remaining <= 0) return;
+
+  els.convLoadAllBtn.disabled = true;
+  els.convLoadAllBtn.textContent = "加载中...";
+
+  await loadConversationEvents(state.conversationLoaded, remaining);
+
+  els.convLoadAllBtn.hidden = true;
+}
+
+function renderConversationMessages() {
+  const events = state.conversationEvents;
+  if (events.length === 0) {
+    els.conversationBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
+    return;
+  }
+
+  // Filter out Token_Usage events (not part of conversation)
+  const conversationEvents = events.filter(e => e.callType !== "Token_Usage");
+
+  // Build message HTML
+  const messagesHtml = conversationEvents.map((e, idx) => {
+    const prevEvent = idx > 0 ? conversationEvents[idx - 1] : null;
+    return renderConvMessage(e, prevEvent);
+  }).join("");
+
+  els.conversationBody.innerHTML = messagesHtml;
+
+  // Scroll to bottom (most recent message)
+  els.conversationBody.scrollTop = els.conversationBody.scrollHeight;
+}
+
+function renderConvMessage(event, prevEvent) {
+  const callType = event.callType;
+  const isGrouped = prevEvent && prevEvent.callType === callType &&
+    (callType === "Agent" || callType === "User" || callType === "Prompt");
+
+  // Determine message type and position
+  let msgType = "agent";
+  let avatar = "A";
+  let avatarClass = "agent";
+
+  if (callType === "User" || callType === "Prompt") {
+    msgType = "user";
+    avatar = "U";
+    avatarClass = "user";
+  } else if (callType === "Tool_Call" || callType === "Tool_Result") {
+    msgType = "tool";
+    avatar = "T";
+    avatarClass = "tool";
+  } else if (callType === "Thinking") {
+    msgType = "thinking";
+    avatar = "💭";
+    avatarClass = "agent";
+  } else if (callType === "Raw") {
+    msgType = "agent";
+    avatar = "R";
+    avatarClass = "agent";
+  }
+
+  // Extract agent prefix if present (for subagent messages)
+  let agentPrefix = "";
+  let content = event.content || "";
+  const agentMatch = content.match(/^\[agent=([^\]]+)\]/);
+  if (agentMatch) {
+    agentPrefix = agentMatch[1];
+    content = content.slice(agentMatch[0].length).trim();
+  }
+
+  // Format timestamp
+  const timeStr = formatShanghaiTime(event.time);
+
+  // Build message HTML based on type
+  if (msgType === "tool") {
+    return renderToolMessage(event, isGrouped, timeStr);
+  } else if (msgType === "thinking") {
+    return renderThinkingMessage(event, content, timeStr);
+  } else {
+    return renderTextMessage(event, msgType, avatar, avatarClass, isGrouped, content, agentPrefix, timeStr);
+  }
+}
+
+function renderTextMessage(event, msgType, avatar, avatarClass, isGrouped, content, agentPrefix, timeStr) {
+  const groupedClass = isGrouped ? "grouped" : "";
+  const avatarHtml = isGrouped ? "" : `<div class="conv-avatar ${avatarClass}">${avatar}</div>`;
+
+  // Render content as markdown for agent messages
+  let contentHtml;
+  if (msgType === "agent") {
+    contentHtml = renderMarkdown(content);
+  } else {
+    contentHtml = escapeHtml(content);
+  }
+
+  const prefixHtml = agentPrefix ? `<div class="conv-agent-prefix">[agent=${escapeHtml(agentPrefix)}]</div>` : "";
+
+  return `
+    <div class="conv-message ${msgType} ${groupedClass}">
+      ${msgType === "user" ? "" : avatarHtml}
+      <div class="conv-bubble">
+        ${prefixHtml}
+        <div class="conv-markdown">${contentHtml}</div>
+        <div class="conv-time">${timeStr}</div>
+      </div>
+      ${msgType === "user" ? avatarHtml : ""}
+    </div>`;
+}
+
+function renderToolMessage(event, isGrouped, timeStr) {
+  const toolName = event.toolName || "unknown";
+  const callType = event.callType;
+  const content = event.content || "";
+
+  // Determine if this is input or result
+  const isInput = callType === "Tool_Call";
+  const label = isInput ? `调用: ${toolName}` : `结果: ${toolName}`;
+
+  // Parse tool input if it's a call
+  let inputHtml = "";
+  if (isInput && event.extra) {
+    try {
+      const inputObj = JSON.parse(event.extra);
+      inputHtml = `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${highlightJson(inputObj)}</div></details>`;
+    } catch {
+      inputHtml = `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${escapeHtml(event.extra)}</div></details>`;
+    }
+  }
+
+  // Show result content
+  let resultHtml = "";
+  if (!isInput) {
+    const truncatedContent = content.length > 500 ? content.slice(0, 500) + "..." : content;
+    resultHtml = `<details class="conv-collapsible"><summary>结果内容</summary><div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div></details>`;
+  }
+
+  return `
+    <div class="conv-message tool">
+      <div class="conv-tool-header">
+        <span class="conv-tool-name">${escapeHtml(label)}</span>
+        <span class="conv-time">${timeStr}</span>
+      </div>
+      ${inputHtml}
+      ${resultHtml}
+    </div>`;
+}
+
+function renderThinkingMessage(event, content, timeStr) {
+  const truncatedContent = content.length > 300 ? content.slice(0, 300) + "..." : content;
+
+  return `
+    <div class="conv-message thinking">
+      <div class="conv-avatar agent">💭</div>
+      <div class="conv-bubble">
+        <details class="conv-collapsible">
+          <summary>思考过程</summary>
+          <div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div>
+        </details>
+        <div class="conv-time">${timeStr}</div>
+      </div>
+    </div>`;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  try {
+    // Use marked library if available
+    if (typeof marked !== "undefined") {
+      return marked.parse(text);
+    }
+  } catch (err) {
+    console.error("Markdown parse error:", err);
+  }
+  // Fallback to escaped text
+  return escapeHtml(text);
+}
+
+function closeConversationView() {
+  els.conversationModal.classList.add("hidden");
+  els.conversationModal.setAttribute("aria-hidden", "true");
+  state.conversationSessionId = null;
+  state.conversationEvents = [];
+}
+
+// ==================== Rename Modal ====================
 
 function openRenameModal(sessionId, currentName) {
   state.renameTargetSessionId = sessionId;
@@ -2187,12 +2467,25 @@ function wireSessionMgmt() {
   els.sessionDetailModal.addEventListener("click", (e) => {
     if (e.target.closest("[data-close-session-detail]")) closeSessionDetail();
     // Handle view-events button inside modal
-    const viewBtn = e.target.closest("[data-action='view-events']");
-    if (viewBtn) {
+    const viewEventsBtn = e.target.closest("[data-action='view-events']");
+    if (viewEventsBtn) {
       closeSessionDetail();
-      navigateToSessionEvents(viewBtn.dataset.sessionId);
+      navigateToSessionEvents(viewEventsBtn.dataset.sessionId);
+    }
+    // Handle view-conversation button inside modal
+    const viewConvBtn = e.target.closest("[data-action='view-conversation']");
+    if (viewConvBtn) {
+      closeSessionDetail();
+      openConversationView(viewConvBtn.dataset.sessionId);
     }
   });
+
+  // Conversation modal events
+  els.conversationCloseBtn.addEventListener("click", closeConversationView);
+  els.conversationModal.addEventListener("click", (e) => {
+    if (e.target.closest("[data-close-conversation]")) closeConversationView();
+  });
+  els.convLoadAllBtn.addEventListener("click", loadAllConversationEvents);
 
   // Rename modal
   els.renameModalCloseBtn.addEventListener("click", closeRenameModal);

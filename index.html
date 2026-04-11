@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Session Observer</title>
   <link rel="stylesheet" href="./styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <main class="workspace">
@@ -225,6 +226,28 @@
         <button id="sessionDetailCloseBtn" type="button">关闭</button>
       </header>
       <div id="sessionDetailBody" class="session-detail-body"></div>
+    </section>
+  </div>
+
+  <!-- Conversation Modal -->
+  <div id="conversationModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-conversation="1"></div>
+    <section class="modal-panel modal-panel-wide" role="dialog" aria-modal="true" aria-label="对话记录">
+      <header class="modal-head conv-head">
+        <div class="conv-header-left">
+          <h2 id="conversationTitle">对话记录</h2>
+          <div class="conv-meta">
+            <span class="chip chip-platform" id="convPlatformChip"></span>
+            <span id="convModelInfo"></span>
+          </div>
+        </div>
+        <button id="conversationCloseBtn" type="button">关闭</button>
+      </header>
+      <div id="conversationBody" class="conv-body"></div>
+      <footer class="conv-footer">
+        <button id="convLoadAllBtn" type="button">加载全部</button>
+        <span id="convLoadStatus">已加载 0 / 共 0</span>
+      </footer>
     </section>
   </div>
 
