@@ -2278,8 +2278,35 @@ function renderConversationMessages() {
     return;
   }
 
-  // Filter out Token_Usage events (not part of conversation)
-  const conversationEvents = events.filter(e => e.callType !== "Token_Usage");
+  // Filter out Token_Usage events and system/internal messages (参考 claudecodeui)
+  const INTERNAL_CONTENT_MARKERS = [
+    '<command-name>',
+    '<command-message>',
+    '<command-args>',
+    '<local-command-stdout>',
+    '<system-reminder>',
+    'Caveat:',
+    'This session is being continued from a previous',
+    '[Request interrupted',
+  ];
+
+  function isInternalContent(content) {
+    if (!content || typeof content !== 'string') return false;
+    // Check if content starts with or contains any internal marker
+    return INTERNAL_CONTENT_MARKERS.some(marker =>
+      content.startsWith(marker) || content.includes(marker)
+    );
+  }
+
+  const conversationEvents = events.filter(e => {
+    // Skip Token_Usage
+    if (e.callType === "Token_Usage") return false;
+    // Skip Raw system messages
+    if (e.callType === "Raw" && isInternalContent(e.content)) return false;
+    // Skip User/Prompt messages with internal content (command outputs, subagent commands)
+    if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
+    return true;
+  });
 
   // Build message HTML
   const messagesHtml = conversationEvents.map((e, idx) => {
