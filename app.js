@@ -115,7 +115,6 @@ const els = {
   convPageModels: document.getElementById("convPageModels"),
   convPageStats: document.getElementById("convPageStats"),
   convPageLoadStatus: document.getElementById("convPageLoadStatus"),
-  convPageLoadAllBtn: document.getElementById("convPageLoadAllBtn"),
   convPageBody: document.getElementById("convPageBody"),
 };
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
@@ -2219,6 +2218,9 @@ async function openConversationView(sessionId) {
 
   // Fetch initial events
   await loadConversationEvents(0, 100);
+
+  // Setup infinite scroll
+  setupConvInfiniteScroll();
 }
 
 async function loadConversationEvents(offset, limit) {
@@ -2229,7 +2231,7 @@ async function loadConversationEvents(offset, limit) {
     const params = new URLSearchParams({
       sessionId,
       mode: "observe",
-      order: "asc", // Chronological order for conversation
+      order: "asc",
       offset: String(offset),
       limit: String(limit),
     });
@@ -2249,26 +2251,55 @@ async function loadConversationEvents(offset, limit) {
     // Render messages
     renderConversationMessages();
 
-    // Hide load all button if all loaded
-    if (state.conversationLoaded >= state.conversationTotal) {
-      els.convPageLoadAllBtn.hidden = true;
-    }
+    // Update load status indicator
+    updateConvLoadStatus();
   } catch (err) {
     console.error("Failed to load conversation events:", err);
     els.convPageBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
   }
 }
 
-async function loadAllConversationEvents() {
+function updateConvLoadStatus() {
+  if (state.conversationLoaded >= state.conversationTotal) {
+    els.convPageLoadStatus.textContent = `已全部加载 (${state.conversationTotal} 条)`;
+  } else {
+    els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
+  }
+}
+
+// Infinite scroll: load more when user scrolls near bottom
+let isLoadingMore = false;
+function setupConvInfiniteScroll() {
+  els.convPageBody.removeEventListener("scroll", handleConvScroll);
+  els.convPageBody.addEventListener("scroll", handleConvScroll);
+}
+
+function handleConvScroll() {
+  const body = els.convPageBody;
+  const scrollTop = body.scrollTop;
+  const scrollHeight = body.scrollHeight;
+  const clientHeight = body.clientHeight;
+
+  // Load more when within 300px of bottom
+  if (scrollHeight - scrollTop - clientHeight < 300) {
+    loadMoreConversationEvents();
+  }
+}
+
+async function loadMoreConversationEvents() {
+  if (isLoadingMore) return;
+  if (state.conversationLoaded >= state.conversationTotal) return;
+
+  isLoadingMore = true;
+  els.convPageLoadStatus.textContent = `加载中 ${state.conversationLoaded} / ${state.conversationTotal}...`;
+
+  const pageSize = 100;
   const remaining = state.conversationTotal - state.conversationLoaded;
-  if (remaining <= 0) return;
+  const limit = Math.min(pageSize, remaining);
 
-  els.convPageLoadAllBtn.disabled = true;
-  els.convPageLoadAllBtn.textContent = "加载中...";
+  await loadConversationEvents(state.conversationLoaded, limit);
 
-  await loadConversationEvents(state.conversationLoaded, remaining);
-
-  els.convPageLoadAllBtn.hidden = true;
+  isLoadingMore = false;
 }
 
 function renderConversationMessages() {
@@ -2326,7 +2357,11 @@ function renderConversationMessages() {
       </svg>
     </button>`;
 
-  els.convPageBody.innerHTML = messagesHtml + scrollTopBtnHtml;
+  // Add loading indicator at bottom if more to load
+  const hasMore = state.conversationLoaded < state.conversationTotal;
+  const loadingIndicatorHtml = hasMore ? `<div class="conv-loading-more" id="convLoadingMore">向下滚动加载更多...</div>` : '';
+
+  els.convPageBody.innerHTML = messagesHtml + loadingIndicatorHtml + scrollTopBtnHtml;
 
   // Setup scroll-to-top button behavior
   setupScrollToTop();
@@ -2997,7 +3032,7 @@ function wireSessionMgmt() {
 
   // Conversation page view events
   els.convBackBtn.addEventListener("click", backToSessions);
-  els.convPageLoadAllBtn.addEventListener("click", loadAllConversationEvents);
+  // Removed load all button - now using infinite scroll
 
   // Rename modal
   els.renameModalCloseBtn.addEventListener("click", closeRenameModal);

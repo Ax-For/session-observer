@@ -3350,6 +3350,14 @@ body[data-theme='dark'] .conv-markdown pre {
   height: 20px;
 }
 
+.conv-loading-more {
+  text-align: center;
+  padding: 16px;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-style: italic;
+}
+
 /* Responsive adjustments */
 @media (max-width: 640px) {
   .conv-page-header {
