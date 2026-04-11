@@ -113,6 +113,27 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
+function highlightMatch(text, query) {
+  if (!query || !text) return escapeHtml(text);
+  const escaped = escapeHtml(text);
+  const lowerEscaped = escaped.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+
+  // Find all match positions
+  let result = "";
+  let lastIdx = 0;
+  let idx = lowerEscaped.indexOf(lowerQuery, 0);
+
+  while (idx !== -1) {
+    result += escaped.slice(lastIdx, idx);
+    result += `<mark>${escaped.slice(idx, idx + query.length)}</mark>`;
+    lastIdx = idx + query.length;
+    idx = lowerEscaped.indexOf(lowerQuery, lastIdx);
+  }
+  result += escaped.slice(lastIdx);
+  return result;
+}
+
 function clip(text, max = 140) {
   const s = (text || "").trim().replace(/\s+/g, " ");
   return s.length <= max ? s : `${s.slice(0, max)}...`;
@@ -734,6 +755,7 @@ function renderVirtualRows() {
   state.rowHeight = rowHeightForDensity();
   state.viewportHeight = els.rows.clientHeight || state.viewportHeight || 640;
   const slice = getVirtualSlice();
+  const q = els.searchInput.value.trim();
   const html = state.filtered
     .slice(slice.start, slice.end)
     .map((e, localIdx) => {
@@ -751,24 +773,24 @@ function renderVirtualRows() {
         : "";
       return `<article class="log-item ${active}" data-index="${idx}">
         <header class="log-top">
-          <span class="log-type ${typeClass(e.callType)}">${escapeHtml(e.callType)}</span>
-          ${e.sourceType ? `<span class="chip chip-platform chip-${escapeHtml(e.sourceType)}">${escapeHtml(e.sourceType)}</span>` : ""}
-          ${rawLabel ? `<span class="chip chip-raw">${escapeHtml(rawLabel)}</span>` : ""}
-          <span class="chip">${escapeHtml(e.model)}</span>
-          <span class="chip">session:${escapeHtml(shortId(e.sessionId, 12))}</span>
-          ${e.cwd ? `<span class="chip chip-cwd has-tip" data-tip="${escapeHtml(e.cwd)}">${escapeHtml(cwdLabel)}</span>` : ""}
-          ${tokenLabel ? `<span class="chip chip-token has-tip" data-tip="${escapeHtml(tokenTitle)}">${escapeHtml(tokenLabel)}</span>` : ""}
-          ${e.callId ? `<span class="chip">call:${escapeHtml(shortId(e.callId, 12))}</span>` : ""}
-          ${e.turnId ? `<span class="chip">turn:${escapeHtml(shortId(e.turnId, 12))}</span>` : ""}
+          <span class="log-type ${typeClass(e.callType)}">${highlightMatch(e.callType, q)}</span>
+          ${e.sourceType ? `<span class="chip chip-platform chip-${escapeHtml(e.sourceType)}">${highlightMatch(e.sourceType, q)}</span>` : ""}
+          ${rawLabel ? `<span class="chip chip-raw">${highlightMatch(rawLabel, q)}</span>` : ""}
+          <span class="chip">${highlightMatch(e.model, q)}</span>
+          <span class="chip">session:${highlightMatch(shortId(e.sessionId, 12), q)}</span>
+          ${e.cwd ? `<span class="chip chip-cwd has-tip" data-tip="${escapeHtml(e.cwd)}">${highlightMatch(cwdLabel, q)}</span>` : ""}
+          ${tokenLabel ? `<span class="chip chip-token has-tip" data-tip="${escapeHtml(tokenTitle)}">${highlightMatch(tokenLabel, q)}</span>` : ""}
+          ${e.callId ? `<span class="chip">call:${highlightMatch(shortId(e.callId, 12), q)}</span>` : ""}
+          ${e.turnId ? `<span class="chip">turn:${highlightMatch(shortId(e.turnId, 12), q)}</span>` : ""}
           <time class="log-time has-tip" data-tip="${escapeHtml(e.time)}">${escapeHtml(shownTime)}</time>
         </header>
         <div class="log-main-wrap">
-          <div class="log-main has-tip" data-tip="${escapeHtml(e.content || e.summary || "")}" data-full-content="${escapeHtml(e.content || "")}">${escapeHtml(e.summary || "")}</div>
+          <div class="log-main has-tip" data-tip="${escapeHtml(e.content || e.summary || "")}" data-full-content="${escapeHtml(e.content || "")}">${highlightMatch(e.summary || "", q)}</div>
           ${e.content && e.content.length > (e.summary?.length || 0) ? `<button class="log-expand-btn" data-expand="true" type="button">展开</button>` : ""}
         </div>
         <footer class="log-meta">
-          <span>${escapeHtml(toolOrExtra || "-")}</span>
-          <span>${escapeHtml(shortPath(e.sourceFile || ""))}</span>
+          <span>${highlightMatch(toolOrExtra || "-", q)}</span>
+          <span>${highlightMatch(shortPath(e.sourceFile || ""), q)}</span>
         </footer>
       </article>`;
     })

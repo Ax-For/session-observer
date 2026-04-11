@@ -17,6 +17,10 @@
   --ok: #18706a;
   --warn: #8a660f;
 
+  /* Search Highlight */
+  --highlight-bg: #fff3bf;
+  --highlight-text: #92400e;
+
   /* Hero Brand */
   --hero-bg-a: #eaf3ff;
   --hero-bg-b: #dcecff;
@@ -101,6 +105,8 @@ body[data-theme='dark'] {
   --panel-tint: #152132;
   --accent: #71a7ff;
   --accent-soft: #16315a;
+  --highlight-bg: #854d0e;
+  --highlight-text: #fef3c7;
   --hero-bg-a: #070d18;
   --hero-bg-b: #0a1321;
   --hero-line: #2e4461;
@@ -170,6 +176,15 @@ body[data-theme='dark'] {
 /* Remove default focus outline when not using keyboard */
 *:focus:not(:focus-visible) {
   outline: none;
+}
+
+/* Search highlight */
+mark {
+  background: var(--highlight-bg);
+  color: var(--highlight-text);
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 500;
 }
 
 html,
