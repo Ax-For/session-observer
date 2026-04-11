@@ -2292,10 +2292,15 @@ function renderConversationMessages() {
 
   function isInternalContent(content) {
     if (!content || typeof content !== 'string') return false;
-    // Check if content starts with or contains any internal marker
     return INTERNAL_CONTENT_MARKERS.some(marker =>
       content.startsWith(marker) || content.includes(marker)
     );
+  }
+
+  // Check if content is a subagent message like "[subagent:xxx] ..."
+  function isSubagentContent(content) {
+    if (!content || typeof content !== 'string') return false;
+    return content.startsWith('[subagent:');
   }
 
   const conversationEvents = events.filter(e => {
@@ -2305,6 +2310,8 @@ function renderConversationMessages() {
     if (e.callType === "Raw" && isInternalContent(e.content)) return false;
     // Skip User/Prompt messages with internal content (command outputs, subagent commands)
     if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
+    // Skip Agent messages that are subagent outputs
+    if (e.callType === "Agent" && isSubagentContent(e.content)) return false;
     return true;
   });
 
