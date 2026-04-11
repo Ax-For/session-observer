@@ -204,11 +204,12 @@ body {
 }
 
 .workspace {
-  min-height: 100svh;
+  height: 100svh;
   padding: 20px;
   display: grid;
   grid-template-rows: auto auto auto auto auto 1fr;
   gap: var(--spacing-md);
+  overflow: hidden;
 }
 
 /* Tab Navigation */
@@ -2682,37 +2683,196 @@ body[data-theme='dark'] .conv-message.tool.error {
   margin-top: var(--spacing-xs);
 }
 
-/* Collapsible Styles */
+/* Collapsible Section - following claudecodeui CollapsibleSection pattern */
 
 .conv-collapsible {
-  border-left: 2px solid var(--line);
-  padding-left: var(--spacing-sm);
-  margin-top: var(--spacing-xs);
+  position: relative;
+  margin: 4px 0;
 }
 
 .conv-collapsible summary {
   cursor: pointer;
-  font-size: var(--font-xs);
-  color: var(--ink-soft);
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  user-select: none;
+  padding: 2px 0;
+  transition: color 0.15s;
 }
 
 .conv-collapsible summary:hover {
   color: var(--accent);
 }
 
+/* Sticky summary when expanded */
 .conv-collapsible[open] summary {
-  margin-bottom: var(--spacing-xs);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 2px 4px;
+  margin: -4px -4px 0 -4px;
+  border-radius: 2px;
 }
 
+body[data-theme='dark'] .conv-collapsible[open] summary {
+  background: var(--bg);
+}
+
+.conv-collapsible summary .coll-arrow {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--ink-soft);
+  transition: transform 0.15s;
+}
+
+.conv-collapsible[open] summary .coll-arrow {
+  transform: rotate(90deg);
+}
+
+.conv-collapsible summary .coll-tool-name {
+  font-weight: 500;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+
+.conv-collapsible summary .coll-sep {
+  color: var(--ink-soft);
+  opacity: 0.4;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.conv-collapsible summary .coll-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: #3b82f6;
+}
+
+.conv-collapsible summary .coll-title:hover {
+  text-decoration: underline;
+}
+
+.conv-collapsible summary .coll-title-plain {
+  color: var(--ink);
+  font-family: inherit;
+}
+
+/* Collapsible content area */
+
 .conv-collapsible-content {
+  margin-top: 6px;
+  padding-left: 18px;
   font-size: var(--font-sm);
+}
+
+.conv-collapsible-content pre {
+  margin: 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 400px;
+  max-height: 300px;
   overflow-y: auto;
+}
+
+/* Diff display styles */
+
+.conv-diff {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  overflow-x: auto;
+}
+
+.conv-diff-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.conv-diff-badge {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.conv-diff-badge.edit {
+  background: var(--panel-tint);
+  color: var(--ink-soft);
+}
+
+.conv-diff-badge.new {
+  background: #dcfce7;
+  color: #166534;
+}
+
+body[data-theme='dark'] .conv-diff-badge.new {
+  background: #14532d;
+  color: #bbf7d0;
+}
+
+.conv-diff-old,
+.conv-diff-new {
+  margin: var(--spacing-xs) 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conv-diff-old {
+  color: #991b1b;
+  background: rgba(239, 68, 68, 0.05);
+  padding: var(--spacing-xs);
+  border-radius: 2px;
+}
+
+body[data-theme='dark'] .conv-diff-old {
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+}
+
+.conv-diff-new {
+  color: #166534;
+  background: rgba(22, 163, 74, 0.05);
+  padding: var(--spacing-xs);
+  border-radius: 2px;
+}
+
+body[data-theme='dark'] .conv-diff-new {
+  background: rgba(22, 163, 74, 0.1);
+  color: #86efac;
+}
+
+/* File list display (Grep/Glob results) */
+
+.conv-file-list {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.conv-file-item {
+  padding: 2px 0;
+  color: var(--ink-soft);
+}
+
+.conv-file-item:hover {
+  color: var(--accent);
 }
 
 /* Markdown Content Styles */
@@ -2846,53 +3006,204 @@ body[data-theme='dark'] .conv-message.tool.error {
   color: var(--ok);
 }
 
-/* Terminal style for Bash commands */
+/* Terminal style for Bash commands - OneLineDisplay pattern */
 
-.conv-terminal {
+.conv-terminal-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-xs) 0;
+}
+
+.conv-terminal-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #22c55e;
+  font-size: 14px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.conv-terminal-pill {
+  flex: 1;
+  min-width: 0;
   background: #1a1a2a;
   border-radius: var(--radius-sm);
   padding: var(--spacing-xs) var(--spacing-sm);
-  font-family: var(--font-mono);
-  font-size: var(--font-sm);
-  color: #22c55e;
-  margin-top: var(--spacing-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
 }
 
-.conv-terminal::before {
-  content: "$ ";
-  color: #6b7280;
-}
-
-body[data-theme='dark'] .conv-terminal {
+body[data-theme='dark'] .conv-terminal-pill {
   background: #0d0d1a;
 }
 
-/* One-line tool display (Read, etc.) */
+.conv-terminal-code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: #22c55e;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+.conv-terminal-code::before {
+  content: "$ ";
+  color: #6b7280;
+  user-select: none;
+}
+
+.conv-terminal-copy-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.conv-terminal-wrap:hover .conv-terminal-copy-btn {
+  opacity: 1;
+}
+
+.conv-terminal-copy-btn:hover {
+  color: #22c55e;
+}
+
+.conv-terminal-copy-btn.copied {
+  color: #22c55e;
+}
+
+/* Bash secondary description */
+
+.conv-terminal-desc {
+  margin-left: 22px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* One-line tool display (Read, Grep, Glob, etc.) - following claudecodeui pattern */
 
 .conv-tool-one-line {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  font-size: var(--font-sm);
-  margin-top: var(--spacing-xs);
+  gap: 6px;
+  font-size: 12px;
+  margin: 4px 0;
+  border-left: 2px solid var(--line);
+  padding: 4px 0;
+  padding-left: 12px;
+}
+
+/* One-line with category colors */
+.conv-tool-one-line.bash {
+  border-left-color: #22c55e;
+}
+
+.conv-tool-one-line.read {
+  border-left-color: #6b7280;
+}
+
+.conv-tool-one-line.search {
+  border-left-color: #3b82f6;
+}
+
+.conv-tool-one-line.violet {
+  border-left-color: #8b5cf6;
 }
 
 .conv-tool-one-line .tool-label {
   color: var(--ink-soft);
   font-weight: 500;
-}
-
-.conv-tool-one-line .tool-value {
-  color: var(--accent);
-  font-family: var(--font-mono);
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .conv-tool-one-line .tool-sep {
   color: var(--ink-soft);
-  opacity: 0.5;
+  opacity: 0.4;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.conv-tool-one-line .tool-value {
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-tool-one-line .tool-value.wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conv-tool-one-line .tool-secondary {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.conv-tool-one-line .tool-copy-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 2px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.conv-tool-one-line:hover .tool-copy-btn {
+  opacity: 1;
+}
+
+.conv-tool-one-line .tool-copy-btn:hover {
+  color: var(--accent);
+}
+
+.conv-tool-one-line .tool-copy-btn.copied {
+  color: var(--ok);
+}
+
+/* File path style for Read - shows filename, full path on hover */
+
+.conv-tool-one-line.file-open .tool-value {
+  color: #3b82f6;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.conv-tool-one-line.file-open .tool-value:hover {
+  text-decoration: underline;
 }
 
 /* Tool message styles */
+
+.conv-tool-time {
+  font-size: 10px;
+  color: var(--ink-soft);
+  opacity: 0.6;
+  margin-top: 2px;
+  text-align: right;
+}
 
 .conv-tool-header {
   display: flex;
@@ -2995,6 +3306,45 @@ body[data-theme='dark'] .conv-message.agent .conv-bubble {
 
 body[data-theme='dark'] .conv-markdown pre {
   background: #0d0d1a;
+}
+
+/* Scroll-to-top button */
+
+.conv-scroll-top {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s, transform 0.2s;
+  z-index: 100;
+  box-shadow: var(--shadow-card);
+}
+
+.conv-scroll-top.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.conv-scroll-top:hover {
+  transform: translateY(-2px);
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.conv-scroll-top svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* Responsive adjustments */

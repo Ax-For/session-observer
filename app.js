@@ -120,76 +120,143 @@ const els = {
 };
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
 
-// Tool display configurations (inspired by claudecodeui toolConfigs)
+// Tool display configurations (following claudecodeui toolConfigs pattern)
 const TOOL_DISPLAY_CONFIGS = {
   Bash: {
     category: "bash",
     inputStyle: "terminal",
-    showResult: false, // Hide successful results
+    inputAction: "copy",
+    hideResult: true, // Hide successful results
   },
   Read: {
     category: "read",
     inputStyle: "one-line",
-    showResult: false,
+    inputAction: "open-file",
+    getInputValue: (input) => input.file_path || "",
+    hideResult: true,
   },
   Edit: {
     category: "edit",
     inputStyle: "collapsible",
-    showResult: false,
+    contentType: "diff",
+    getInputTitle: (input) => {
+      const filename = input.file_path?.split('/').pop() || input.file_path || 'file';
+      return filename;
+    },
+    hideResult: true,
   },
   Write: {
     category: "edit",
     inputStyle: "collapsible",
-    showResult: false,
+    contentType: "diff",
+    getInputTitle: (input) => {
+      const filename = input.file_path?.split('/').pop() || input.file_path || 'file';
+      return filename;
+    },
+    hideResult: true,
   },
   ApplyPatch: {
     category: "edit",
     inputStyle: "collapsible",
-    showResult: false,
+    contentType: "diff",
+    hideResult: true,
   },
   Grep: {
     category: "search",
     inputStyle: "one-line",
+    getInputValue: (input) => input.pattern || "",
+    getInputSecondary: (input) => input.path ? `in ${input.path}` : null,
     resultStyle: "collapsible",
+    getResultTitle: (result) => {
+      const count = result?.numFiles || result?.filenames?.length || 0;
+      return `Found ${count} ${count === 1 ? 'file' : 'files'}`;
+    },
   },
   Glob: {
     category: "search",
     inputStyle: "one-line",
+    getInputValue: (input) => input.pattern || "",
+    getInputSecondary: (input) => input.path ? `in ${input.path}` : null,
     resultStyle: "collapsible",
+    getResultTitle: (result) => {
+      const count = result?.numFiles || result?.filenames?.length || 0;
+      return `Found ${count} ${count === 1 ? 'file' : 'files'}`;
+    },
   },
   TodoWrite: {
-    category: "todo",
+    category: "violet",
     inputStyle: "collapsible",
-    showResult: false,
+    contentType: "todo",
+    getInputTitle: () => "Updating todo list",
+    hideResult: true,
   },
   TodoRead: {
-    category: "todo",
+    category: "violet",
     inputStyle: "one-line",
+    getInputValue: () => "reading list",
     resultStyle: "collapsible",
   },
   TaskCreate: {
-    category: "task",
+    category: "violet",
     inputStyle: "one-line",
-    showResult: false,
+    getInputValue: (input) => input.subject || "Creating task",
+    getInputSecondary: (input) => input.status || null,
+    hideResult: true,
   },
   TaskUpdate: {
-    category: "task",
+    category: "violet",
     inputStyle: "one-line",
-    showResult: false,
+    getInputValue: (input) => {
+      const parts = [];
+      if (input.taskId) parts.push(`#${input.taskId}`);
+      if (input.status) parts.push(input.status);
+      if (input.subject) parts.push(`"${input.subject}"`);
+      return parts.join(' → ') || 'updating';
+    },
+    hideResult: true,
   },
   TaskList: {
-    category: "task",
+    category: "violet",
     inputStyle: "one-line",
+    getInputValue: () => "listing tasks",
+    resultStyle: "collapsible",
+  },
+  TaskGet: {
+    category: "violet",
+    inputStyle: "one-line",
+    getInputValue: (input) => input.taskId ? `#${input.taskId}` : "fetching",
     resultStyle: "collapsible",
   },
   Agent: {
-    category: "agent",
+    category: "purple",
     inputStyle: "collapsible",
+    contentType: "markdown",
+    getInputTitle: (input) => {
+      const subagentType = input.subagent_type || "Agent";
+      const description = input.description || "Running task";
+      return `Subagent / ${subagentType}: ${description}`;
+    },
     resultStyle: "collapsible",
+  },
+  AskUserQuestion: {
+    category: "interactive",
+    inputStyle: "collapsible",
+    contentType: "question",
+    getInputTitle: (input) => {
+      const count = input.questions?.length || 0;
+      const hasAnswers = input.answers && Object.keys(input.answers).length > 0;
+      if (count === 1) {
+        const header = input.questions[0]?.header || "Question";
+        return hasAnswers ? `${header} — answered` : header;
+      }
+      return hasAnswers ? `${count} questions — answered` : `${count} questions`;
+    },
+    hideResult: true,
   },
   Default: {
     category: "default",
     inputStyle: "collapsible",
+    getInputTitle: () => "Parameters",
     resultStyle: "collapsible",
   }
 };
@@ -2220,10 +2287,44 @@ function renderConversationMessages() {
     return renderConvMessage(e, prevEvent);
   }).join("");
 
-  els.convPageBody.innerHTML = messagesHtml;
+  // Add scroll-to-top button HTML
+  const scrollTopBtnHtml = `
+    <button class="conv-scroll-top" id="convScrollTop" title="回到顶部">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+      </svg>
+    </button>`;
 
-  // Scroll to bottom (most recent message)
+  els.convPageBody.innerHTML = messagesHtml + scrollTopBtnHtml;
+
+  // Setup scroll-to-top button behavior
+  setupScrollToTop();
+
+  // Scroll to bottom (most recent message) initially
   els.convPageBody.scrollTop = els.convPageBody.scrollHeight;
+}
+
+function setupScrollToTop() {
+  const btn = document.getElementById("convScrollTop");
+  if (!btn) return;
+
+  // Show/hide button based on scroll position
+  els.convPageBody.addEventListener("scroll", () => {
+    const scrollTop = els.convPageBody.scrollTop;
+    if (scrollTop > 300) {
+      btn.classList.add("visible");
+    } else {
+      btn.classList.remove("visible");
+    }
+  });
+
+  // Click to scroll to top
+  btn.addEventListener("click", () => {
+    els.convPageBody.scrollTo({
+      top: 0,
+      behavior: "smooth"
+    });
+  });
 }
 
 function renderConvMessage(event, prevEvent) {
@@ -2311,7 +2412,7 @@ function renderToolMessage(event, prevEvent, timeStr) {
   const callType = event.callType;
   const content = event.content || "";
   const config = getToolConfig(toolName);
-  const category = config.category;
+  const category = config.category || "default";
 
   // Check if previous event is the input for this result
   const isResultForPrevInput = callType === "Tool_Result" && prevEvent && prevEvent.callType === "Tool_Call" && prevEvent.toolName === toolName;
@@ -2329,12 +2430,9 @@ function renderToolMessage(event, prevEvent, timeStr) {
   if (isInput) {
     toolContentHtml = renderToolInput(event, toolName, config);
   } else {
-    // Result - check if we should hide it
-    if (!config.showResult && !isError && config.showResult !== undefined) {
-      // Hide successful results for certain tools
-      if (isResultForPrevInput) {
-        return ""; // Don't render result separately
-      }
+    // Result - check if we should hide it (hideOnSuccess pattern)
+    if (config.hideResult && !isError) {
+      return ""; // Don't render successful results for tools like Bash, Read, Edit
     }
     toolContentHtml = renderToolResult(event, toolName, config, isError);
   }
@@ -2342,68 +2440,227 @@ function renderToolMessage(event, prevEvent, timeStr) {
   // Don't render if empty
   if (!toolContentHtml) return "";
 
+  // Simplified header - just tool name and time, no separate "input/result" label
   return `
     <div class="conv-message tool ${category} ${errorClass}">
-      <div class="conv-tool-header">
-        <span class="conv-tool-name">${escapeHtml(toolName)}</span>
-        <span class="conv-tool-label">${isInput ? "输入" : "结果"}</span>
-        <span class="conv-time">${timeStr}</span>
-      </div>
       ${toolContentHtml}
+      <div class="conv-tool-time">${timeStr}</div>
     </div>`;
 }
 
 function renderToolInput(event, toolName, config) {
-  const style = config.inputStyle;
+  const style = config.inputStyle || "collapsible";
   const extra = event.extra || "";
+  const category = config.category || "default";
+  const content = event.content || "";
 
+  // Parse input JSON - content has format "tool=name\nargs={json}"
+  // Also check extra field for JSON args
+  let inputObj = {};
+
+  // Try to parse from content first
+  const argsMatch = content.match(/args=(.+)$/m);
+  if (argsMatch) {
+    try {
+      inputObj = JSON.parse(argsMatch[1]);
+    } catch {
+      // argsMatch[1] might be clipped or not full JSON
+    }
+  }
+
+  // Also try to parse extra field (some events have JSON there)
+  if (!inputObj || Object.keys(inputObj).length === 0) {
+    try {
+      inputObj = JSON.parse(extra);
+    } catch {
+      inputObj = {};
+    }
+  }
+
+  // Terminal style for Bash (OneLineDisplay terminal pattern)
   if (style === "terminal") {
-    // Bash command style
-    let command = "";
-    try {
-      const inputObj = JSON.parse(extra);
-      command = inputObj.command || "";
-    } catch {
-      command = extra;
-    }
-    return `<div class="conv-terminal">${escapeHtml(command)}</div>`;
+    const command = inputObj.command || content.replace(/^tool=Bash\nargs=/, "").replace(/^tool=\w+\n/, "") || extra || "";
+    const description = inputObj.description || null;
+    const contentId = `bash-${event.callId || Date.now()}`;
+
+    return `
+      <div class="conv-terminal-wrap" data-content-id="${contentId}">
+        <div class="conv-terminal-icon">⌘</div>
+        <div class="conv-terminal-pill">
+          <code class="conv-terminal-code">${escapeHtml(command)}</code>
+          <button class="conv-terminal-copy-btn" onclick="copyConvTerminal('${contentId}')">⧉</button>
+        </div>
+      </div>
+      ${description ? `<div class="conv-terminal-desc">${escapeHtml(description)}</div>` : ""}`;
   }
 
+  // One-line display (Read, Grep, Glob, Task, etc.)
   if (style === "one-line") {
-    // One-line display (Read, Grep, etc.)
-    let value = "";
-    try {
-      const inputObj = JSON.parse(extra);
-      if (toolName === "Read") value = inputObj.file_path || "";
-      else if (toolName === "Grep" || toolName === "Glob") value = inputObj.pattern || "";
-      else if (toolName === "TodoRead") value = "reading list";
-      else value = extra;
-    } catch {
-      value = extra;
+    const getValue = config.getInputValue || ((i) => i);
+    const getSecondary = config.getInputSecondary || null;
+    const action = config.inputAction || "none";
+
+    const value = getValue(inputObj) || extra || "";
+    const secondary = getSecondary ? getSecondary(inputObj) : null;
+
+    // File path style for Read
+    if (action === "open-file") {
+      const filename = value.split('/').pop() || value;
+      return `
+        <div class="conv-tool-one-line ${category} file-open">
+          <span class="tool-label">${toolName}</span>
+          <span class="tool-sep">/</span>
+          <span class="tool-value" title="${escapeHtml(value)}">${escapeHtml(filename)}</span>
+        </div>`;
     }
-    return `<div class="conv-tool-one-line"><span class="tool-label">${escapeHtml(toolName)}</span><span class="tool-sep">/</span><span class="tool-value">${escapeHtml(value)}</span></div>`;
+
+    return `
+      <div class="conv-tool-one-line ${category}">
+        <span class="tool-label">${toolName}</span>
+        <span class="tool-sep">/</span>
+        <span class="tool-value wrap">${escapeHtml(value)}</span>
+        ${secondary ? `<span class="tool-secondary">${escapeHtml(secondary)}</span>` : ""}
+      </div>`;
   }
 
-  // Collapsible (default)
-  return `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${highlightJson(extra)}</div></details>`;
+  // Collapsible style (Edit, Write, Agent, etc.) - CollapsibleSection pattern
+  if (style === "collapsible") {
+    const getTitle = config.getInputTitle || (() => "Parameters");
+    const title = getTitle(inputObj);
+    const contentType = config.contentType || "text";
+
+    // Diff display for Edit/Write
+    if (contentType === "diff") {
+      const oldContent = inputObj.old_string || "";
+      const newContent = inputObj.new_string || inputObj.content || "";
+      const filePath = inputObj.file_path || "";
+      const badge = toolName === "Write" ? "New" : "Edit";
+      const badgeColor = toolName === "Write" ? "new" : "edit";
+
+      return `
+        <details class="conv-collapsible">
+          <summary>
+            <span class="coll-arrow">▶</span>
+            <span class="coll-tool-name">${toolName}</span>
+            <span class="coll-sep">/</span>
+            <span class="coll-title">${escapeHtml(title)}</span>
+          </summary>
+          <div class="conv-collapsible-content">
+            <div class="conv-diff">
+              <div class="conv-diff-header">
+                <span class="conv-diff-badge ${badgeColor}">${badge}</span>
+                <span>${escapeHtml(filePath)}</span>
+              </div>
+              ${oldContent ? `<div class="conv-diff-old">--- old\n${escapeHtml(oldContent)}</div>` : ""}
+              <div class="conv-diff-new">+++ new\n${escapeHtml(newContent)}</div>
+            </div>
+          </div>
+        </details>`;
+    }
+
+    // Markdown content for Agent prompts
+    if (contentType === "markdown") {
+      let content = "";
+      if (inputObj.prompt) {
+        content = inputObj.prompt;
+      } else {
+        content = typeof inputObj === 'string' ? inputObj : JSON.stringify(inputObj, null, 2);
+      }
+
+      return `
+        <details class="conv-collapsible">
+          <summary>
+            <span class="coll-arrow">▶</span>
+            <span class="coll-tool-name">${toolName}</span>
+            <span class="coll-sep">/</span>
+            <span class="coll-title">${escapeHtml(title)}</span>
+          </summary>
+          <div class="conv-collapsible-content">
+            <div class="conv-markdown">${renderMarkdown(content)}</div>
+          </div>
+        </details>`;
+    }
+
+    // Default: show JSON
+    return `
+      <details class="conv-collapsible">
+        <summary>
+          <span class="coll-arrow">▶</span>
+          <span class="coll-tool-name">${toolName}</span>
+          <span class="coll-sep">/</span>
+          <span class="coll-title-plain">${escapeHtml(title)}</span>
+        </summary>
+        <div class="conv-collapsible-content">
+          <pre>${highlightJson(inputObj)}</pre>
+        </div>
+      </details>`;
+  }
+
+  // Fallback
+  return `<div class="conv-tool-one-line ${category}"><span class="tool-value">${escapeHtml(extra)}</span></div>`;
 }
 
 function renderToolResult(event, toolName, config, isError) {
   const content = event.content || "";
   const style = config.resultStyle || "collapsible";
+  const category = config.category || "default";
 
+  // Check if we should hide result (hideOnSuccess pattern)
+  if (config.hideResult && !isError) {
+    return "";
+  }
+
+  // Error display
   if (isError) {
-    return `<div class="conv-tool-error"><div class="conv-error-icon">✕</div><div class="conv-error-content">${escapeHtml(content)}</div></div>`;
+    return `
+      <div class="conv-tool-error">
+        <div class="conv-error-icon">✕</div>
+        <div class="conv-error-content">${escapeHtml(content)}</div>
+      </div>`;
   }
 
-  if (style === "collapsible") {
-    const truncatedContent = content.length > 1000 ? content.slice(0, 1000) + "..." : content;
-    return `<details class="conv-collapsible"><summary>结果</summary><div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div></details>`;
+  // File list display (Grep/Glob results)
+  if (style === "collapsible" && (toolName === "Grep" || toolName === "Glob")) {
+    let filenames = [];
+    try {
+      // Try to parse tool result
+      const parsed = JSON.parse(content);
+      filenames = parsed.filenames || [];
+    } catch {
+      // Content might be a list format
+      filenames = content.split('\n').filter(line => line.trim());
+    }
+
+    const getResultTitle = config.getResultTitle || (() => "Result");
+    const title = getResultTitle({ filenames, numFiles: filenames.length });
+
+    return `
+      <details class="conv-collapsible">
+        <summary>
+          <span class="coll-arrow">▶</span>
+          <span class="coll-title">${escapeHtml(title)}</span>
+        </summary>
+        <div class="conv-collapsible-content">
+          <div class="conv-file-list">
+            ${filenames.map(f => `<div class="conv-file-item">${escapeHtml(f)}</div>`).join("")}
+          </div>
+        </div>
+      </details>`;
   }
 
-  // Default: show truncated content
-  const truncatedContent = content.length > 500 ? content.slice(0, 500) + "..." : content;
-  return `<div class="conv-tool-result-text">${escapeHtml(truncatedContent)}</div>`;
+  // Default collapsible result
+  const truncatedContent = content.length > 2000 ? content.slice(0, 2000) + "..." : content;
+
+  return `
+    <details class="conv-collapsible">
+      <summary>
+        <span class="coll-arrow">▶</span>
+        <span class="coll-title">Result</span>
+      </summary>
+      <div class="conv-collapsible-content">
+        <pre>${escapeHtml(truncatedContent)}</pre>
+      </div>
+    </details>`;
 }
 
 // Global function for copy button
@@ -2426,43 +2683,26 @@ window.copyConvContent = function(contentId) {
   }
 };
 
-function renderToolMessage(event, isGrouped, timeStr) {
-  const toolName = event.toolName || "unknown";
-  const callType = event.callType;
-  const content = event.content || "";
-
-  // Determine if this is input or result
-  const isInput = callType === "Tool_Call";
-  const label = isInput ? `调用: ${toolName}` : `结果: ${toolName}`;
-
-  // Parse tool input if it's a call
-  let inputHtml = "";
-  if (isInput && event.extra) {
-    try {
-      const inputObj = JSON.parse(event.extra);
-      inputHtml = `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${highlightJson(inputObj)}</div></details>`;
-    } catch {
-      inputHtml = `<details class="conv-collapsible"><summary>参数</summary><div class="conv-collapsible-content">${escapeHtml(event.extra)}</div></details>`;
+// Global function for terminal copy button
+window.copyConvTerminal = function(contentId) {
+  const wrap = document.querySelector(`[data-content-id="${contentId}"]`);
+  if (!wrap) return;
+  const code = wrap.querySelector(".conv-terminal-code");
+  if (!code) return;
+  const text = code.textContent || "";
+  const success = copyToClipboard(text);
+  if (success) {
+    const btn = wrap.querySelector(".conv-terminal-copy-btn");
+    if (btn) {
+      btn.textContent = "✓";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = "⧉";
+        btn.classList.remove("copied");
+      }, 2000);
     }
   }
-
-  // Show result content
-  let resultHtml = "";
-  if (!isInput) {
-    const truncatedContent = content.length > 500 ? content.slice(0, 500) + "..." : content;
-    resultHtml = `<details class="conv-collapsible"><summary>结果内容</summary><div class="conv-collapsible-content">${escapeHtml(truncatedContent)}</div></details>`;
-  }
-
-  return `
-    <div class="conv-message tool">
-      <div class="conv-tool-header">
-        <span class="conv-tool-name">${escapeHtml(label)}</span>
-        <span class="conv-time">${timeStr}</span>
-      </div>
-      ${inputHtml}
-      ${resultHtml}
-    </div>`;
-}
+};
 
 function renderThinkingMessage(event, content, timeStr) {
   const contentId = `thinking-${event.callId || Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
