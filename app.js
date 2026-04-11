@@ -2248,7 +2248,7 @@ async function loadConversationEvents(offset, limit) {
     // Update status
     els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
 
-    // Render messages (scrollToBottom only on initial load)
+    // Render messages (scrollToTop only on initial load with offset=0)
     renderConversationMessages(offset === 0);
 
     // Update load status indicator
@@ -2302,14 +2302,16 @@ async function loadMoreConversationEvents() {
   isLoadingMore = false;
 }
 
-function renderConversationMessages(scrollToBottom = false) {
+function renderConversationMessages(scrollToTop = true) {
   const events = state.conversationEvents;
   if (events.length === 0) {
     els.convPageBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
     return;
   }
 
-  // Filter out Token_Usage events and system/internal messages (参考 claudecodeui)
+  // Filter out Token_Usage events and system/internal messages
+  // Reference: Codex CLI adds <environment_context> blocks to user messages
+  // Claude Code adds various system markers like <command-name>, <local-command-stdout>, etc.
   const INTERNAL_CONTENT_MARKERS = [
     '[subagent:',
     '<command-name>',
@@ -2319,10 +2321,14 @@ function renderConversationMessages(scrollToBottom = false) {
     '<system-reminder>',
     '<task-notification>',
     '<local-command-caveat>',
+    '<environment_context>',
     'Caveat:',
     'This session is being continued from a previous',
     '[Request interrupted',
   ];
+
+  // Regex to strip XML-like context blocks from content
+  const CONTEXT_BLOCK_PATTERN = /<environment_context>[\s\S]*?<\/environment_context>/gi;
 
   function isInternalContent(content) {
     if (!content || typeof content !== 'string') return false;
@@ -2331,17 +2337,31 @@ function renderConversationMessages(scrollToBottom = false) {
     );
   }
 
-  const conversationEvents = events.filter(e => {
-    // Skip Token_Usage
-    if (e.callType === "Token_Usage") return false;
-    // Skip Raw system messages
-    if (e.callType === "Raw" && isInternalContent(e.content)) return false;
-    // Skip User/Prompt messages with internal content (command outputs, subagent commands, task notifications)
-    if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
-    // Skip Agent messages that are subagent outputs
-    if (e.callType === "Agent" && isInternalContent(e.content)) return false;
-    return true;
-  });
+  // Clean content by removing system-injected context blocks
+  function cleanContent(content) {
+    if (!content || typeof content !== 'string') return content;
+    return content.replace(CONTEXT_BLOCK_PATTERN, '').trim();
+  }
+
+  const conversationEvents = events
+    .filter(e => {
+      // Skip Token_Usage
+      if (e.callType === "Token_Usage") return false;
+      // Skip Raw system messages
+      if (e.callType === "Raw" && isInternalContent(e.content)) return false;
+      // Skip User/Prompt messages with internal content
+      if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
+      // Skip Agent messages that are subagent outputs
+      if (e.callType === "Agent" && isInternalContent(e.content)) return false;
+      return true;
+    })
+    .map(e => {
+      // Clean environment context blocks from User/Prompt/Agent messages
+      if (e.callType === "User" || e.callType === "Prompt" || e.callType === "Agent") {
+        return { ...e, content: cleanContent(e.content) };
+      }
+      return e;
+    });
 
   // Build message HTML
   const messagesHtml = conversationEvents.map((e, idx) => {
@@ -2366,9 +2386,9 @@ function renderConversationMessages(scrollToBottom = false) {
   // Setup scroll-to-top button behavior
   setupScrollToTop();
 
-  // Only scroll to bottom on initial load
-  if (scrollToBottom) {
-    els.convPageBody.scrollTop = els.convPageBody.scrollHeight;
+  // Scroll to top on initial load, stay in place on subsequent loads
+  if (scrollToTop) {
+    els.convPageBody.scrollTop = 0;
   }
 }
 
