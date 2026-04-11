@@ -2280,6 +2280,7 @@ function renderConversationMessages() {
 
   // Filter out Token_Usage events and system/internal messages (参考 claudecodeui)
   const INTERNAL_CONTENT_MARKERS = [
+    '[subagent:',
     '<command-name>',
     '<command-message>',
     '<command-args>',
