@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session Observer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="workspace">
+    <section class="hero">
+      <div class="hero-brand">
+        <div class="brand-platforms">
+          <span class="platform-tag platform-codex">Codex</span>
+          <span class="platform-sep">+</span>
+          <span class="platform-tag platform-claude">Claude Code</span>
+        </div>
+        <h1>Session Observer</h1>
+        <p class="hero-sub">实时追踪 Prompt、Agent 与 Tool 调用流，按 Session 维度快速定位上下文。</p>
+      </div>
+      <div class="top-actions">
+        <button id="manualRefreshBtn" type="button">手动刷新</button>
+        <button id="autoRefreshBtn" type="button">自动刷新(5s)</button>
+        <button id="modeToggleBtn" type="button">原始模式</button>
+        <button id="themeToggleBtn" type="button">夜间模式</button>
+        <button id="densityToggleBtn" type="button">紧凑视图</button>
+        <button id="helpBtn" type="button" title="键盘快捷键帮助">?</button>
+        <button id="exportBtn" type="button" title="导出当前筛选的事件">导出 JSONL</button>
+        <label class="file-btn">
+          导入 JSONL
+          <input id="fileInput" type="file" accept=".jsonl,.log,.txt" multiple>
+        </label>
+      </div>
+      <div id="realtimeStatus" class="status-chip">自动刷新未启用</div>
+    </section>
+
+    <section class="tabs" id="tabBar">
+      <button class="tab-btn active" data-tab="stream">事件流</button>
+      <button class="tab-btn" data-tab="sessions">会话管理</button>
+    </section>
+
+    <section class="filters" id="streamFilters">
+      <label>
+        搜索
+        <input id="searchInput" type="text" placeholder="搜索内容 / session / tool / call_id">
+      </label>
+      <label>
+        模型
+        <select id="modelSelect">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>
+        类型
+        <select id="typeSelect">
+          <option value="">全部</option>
+        </select>
+      </label>
+      <label>
+        平台
+        <select id="platformSelect">
+          <option value="">全部</option>
+          <option value="codex">Codex</option>
+          <option value="claude">Claude Code</option>
+        </select>
+      </label>
+      <label>
+        时间范围
+        <div class="time-quick-btns">
+          <button type="button" class="time-quick-btn" data-time-quick="1h">1小时</button>
+          <button type="button" class="time-quick-btn" data-time-quick="today">今天</button>
+          <button type="button" class="time-quick-btn" data-time-quick="week">本周</button>
+          <button type="button" class="time-quick-btn" data-time-quick="month">本月</button>
+        </div>
+      </label>
+      <label>
+        开始时间
+        <input id="startTime" type="datetime-local">
+      </label>
+      <label>
+        结束时间
+        <input id="endTime" type="datetime-local">
+      </label>
+      <label>
+        时间排序
+        <select id="sortOrder">
+          <option value="desc" selected>倒序（最新在前）</option>
+          <option value="asc">正序（最早在前）</option>
+        </select>
+      </label>
+      <button id="resetFiltersBtn" type="button">重置筛选</button>
+      <button id="clearBtn" type="button">清空数据</button>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="dashboard" id="stats">
+      <div class="dash-header">
+        <span class="dash-title">统计概览</span>
+        <span class="dash-scope has-tip" id="dashScope" data-tip="统计基于当前筛选条件和已加载的数据">当前筛选范围</span>
+      </div>
+      <div class="dash-grid">
+        <div class="dash-card dash-token">
+          <h3 class="has-tip" data-tip="所有会话中 Token_Usage 事件的累计汇总值，来源于服务端聚合统计">Token 使用</h3>
+          <div class="token-summary">
+            <div class="token-row"><span class="token-label has-tip" data-tip="模型接收的输入文本 Token 数（包含历史对话）">输入</span><span class="token-value" id="tokenInput">-</span></div>
+            <div class="token-row"><span class="token-label has-tip" data-tip="模型生成的输出文本 Token 数">输出</span><span class="token-value" id="tokenOutput">-</span></div>
+            <div class="token-row"><span class="token-label has-tip" data-tip="输入 + 输出的总和">总计</span><span class="token-value token-total" id="tokenTotal">-</span></div>
+            <div class="token-row"><span class="token-label has-tip" data-tip="从缓存中读取的输入 Token，可节省计费">缓存</span><span class="token-value" id="tokenCached">-</span></div>
+            <div class="token-row"><span class="token-label has-tip" data-tip="推理过程消耗的 Token（仅部分模型支持）">推理</span><span class="token-value" id="tokenReason">-</span></div>
+          </div>
+        </div>
+        <div class="dash-card dash-types">
+          <h3 class="has-tip" data-tip="已加载事件的 callType 字段统计，按事件类型计数">事件类型分布</h3>
+          <div class="type-bars" id="typeBars"></div>
+        </div>
+        <div class="dash-card dash-models">
+          <h3 class="has-tip" data-tip="已加载事件的 model 字段统计，显示使用次数最多的模型">模型分布</h3>
+          <div class="model-list" id="modelList"></div>
+        </div>
+        <div class="dash-card dash-platforms">
+          <h3 class="has-tip" data-tip="会话的平台来源统计（Claude Code 或 Codex）">平台分布</h3>
+          <div class="platform-bars" id="platformBars"></div>
+        </div>
+        <div class="dash-card dash-counts">
+          <h3 class="has-tip" data-tip="事件和会话的数量统计">数量统计</h3>
+          <div class="count-grid">
+            <div class="count-item"><span class="count-label has-tip" data-tip="服务端记录的事件总数（未筛选）">总事件</span><span class="count-value" id="countTotal">-</span></div>
+            <div class="count-item"><span class="count-label has-tip" data-tip="符合当前筛选条件的事件数量">匹配事件</span><span class="count-value" id="countMatch">-</span></div>
+            <div class="count-item"><span class="count-label has-tip" data-tip="当前筛选范围内的会话数量">会话数</span><span class="count-value" id="countSessions">-</span></div>
+            <div class="count-item"><span class="count-label has-tip" data-tip="当前已加载到前端的事件数量（分页加载）">已加载</span><span class="count-value" id="countLoaded">-</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="quick-filters" id="quickFilters">
+      <span class="quick-title">快速过滤</span>
+      <button type="button" class="quick-filter-btn active" data-quick-filter="all">全部</button>
+      <button type="button" class="quick-filter-btn" data-quick-filter="alert">仅异常</button>
+      <button type="button" class="quick-filter-btn" data-quick-filter="high_token">高 Token</button>
+      <label class="quick-threshold">
+        阈值
+        <input id="tokenThresholdInput" type="number" min="0" step="1000" value="20000">
+      </label>
+    </section>
+
+    <!-- Stream View (existing) -->
+    <section class="content-grid" id="streamView">
+      <aside class="session-pane">
+        <div class="pane-head">
+          <h2>Session 分组</h2>
+          <button id="allSessionsBtn" type="button">全部</button>
+        </div>
+        <ul id="sessionList" class="session-list"></ul>
+      </aside>
+      <div class="main-pane">
+        <div class="table-wrap">
+          <div class="stream-head">
+            <span>事件流</span>
+            <span id="streamHeadMeta">类型标签 / 模型标签 / 会话标签 / 调用标签</span>
+          </div>
+          <div id="rows" class="log-stream"></div>
+        </div>
+        <div class="stream-footer">
+          <button id="loadMoreBtn" type="button" hidden>加载更多</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sessions Management View -->
+    <section class="session-mgmt" id="sessionsView" hidden>
+      <div class="session-mgmt-toolbar">
+        <label>
+          搜索
+          <input id="sessionMgmtSearch" type="text" placeholder="搜索会话名称 / cwd / session ID">
+        </label>
+        <label>
+          平台
+          <select id="sessionMgmtPlatform">
+            <option value="">全部</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude Code</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input id="sessionMgmtNamedOnly" type="checkbox">
+          仅显示已命名
+        </label>
+        <button id="sessionMgmtRefreshBtn" type="button">刷新列表</button>
+        <div class="batch-actions" id="batchActions">
+          <label class="checkbox-label">
+            <input id="selectAllCheckbox" type="checkbox">
+            全选
+          </label>
+          <button id="batchDeleteBtn" type="button" class="btn-batch btn-danger" disabled>批量删除 (0)</button>
+          <button id="batchExportBtn" type="button" class="btn-batch" disabled>批量导出 (0)</button>
+        </div>
+      </div>
+      <div id="sessionGroups" class="session-groups"></div>
+    </section>
+  </main>
+
+  <!-- Detail Modal -->
+  <div id="detailModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close="1"></div>
+    <section class="modal-panel" role="dialog" aria-modal="true" aria-label="日志详情">
+      <header class="modal-head">
+        <h2>日志详情</h2>
+        <div class="modal-nav-btns">
+          <button id="prevEventBtn" type="button" class="btn-nav" title="上一条事件 (k)">↑</button>
+          <button id="nextEventBtn" type="button" class="btn-nav" title="下一条事件 (j)">↓</button>
+        </div>
+        <button id="copyJsonBtn" type="button" class="btn-copy">复制 JSON</button>
+        <button id="modalCloseBtn" type="button">关闭</button>
+      </header>
+      <pre id="modalJson" class="json-view"></pre>
+    </section>
+  </div>
+
+  <!-- Session Detail Modal -->
+  <div id="sessionDetailModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-session-detail="1"></div>
+    <section class="modal-panel" role="dialog" aria-modal="true" aria-label="会话详情">
+      <header class="modal-head">
+        <h2>会话详情</h2>
+        <button id="sessionDetailCloseBtn" type="button">关闭</button>
+      </header>
+      <div id="sessionDetailBody" class="session-detail-body"></div>
+    </section>
+  </div>
+
+  <!-- Keyboard Shortcuts Modal -->
+  <div id="helpModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-help="1"></div>
+    <section class="modal-panel modal-small" role="dialog" aria-modal="true" aria-label="快捷键帮助">
+      <header class="modal-head">
+        <h2>键盘快捷键</h2>
+        <button id="helpModalCloseBtn" type="button">关闭</button>
+      </header>
+      <div class="help-body">
+        <div class="help-group">
+          <h3>全局操作</h3>
+          <div class="help-row"><kbd>/</kbd> 或 <kbd>f</kbd><span>聚焦搜索框</span></div>
+          <div class="help-row"><kbd>r</kbd><span>手动刷新数据</span></div>
+          <div class="help-row"><kbd>a</kbd><span>切换自动刷新</span></div>
+          <div class="help-row"><kbd>t</kbd><span>切换夜间/白天模式</span></div>
+          <div class="help-row"><kbd>m</kbd><span>切换观测/原始模式</span></div>
+          <div class="help-row"><kbd>Esc</kbd><span>关闭弹窗</span></div>
+        </div>
+        <div class="help-group">
+          <h3>事件流导航</h3>
+          <div class="help-row"><kbd>j</kbd> / <kbd>↓</kbd><span>下一条事件</span></div>
+          <div class="help-row"><kbd>k</kbd> / <kbd>↑</kbd><span>上一条事件</span></div>
+          <div class="help-row"><kbd>Enter</kbd><span>打开选中事件详情</span></div>
+          <div class="help-row"><kbd>g</kbd><kbd>g</kbd><span>跳转到第一条</span></div>
+          <div class="help-row"><kbd>G</kbd><span>跳转到最后一条</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Rename Modal -->
+  <div id="renameModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-rename="1"></div>
+    <section class="modal-panel modal-small" role="dialog" aria-modal="true" aria-label="重命名会话">
+      <header class="modal-head">
+        <h2>重命名会话</h2>
+        <button id="renameModalCloseBtn" type="button">取消</button>
+      </header>
+      <div class="rename-body">
+        <input id="renameInput" type="text" placeholder="输入新名称">
+        <div class="rename-actions">
+          <button id="renameConfirmBtn" type="button">确认</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="deleteModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-delete="1"></div>
+    <section class="modal-panel modal-small" role="dialog" aria-modal="true" aria-label="确认删除">
+      <header class="modal-head">
+        <h2>确认删除</h2>
+        <button id="deleteModalCloseBtn" type="button">取消</button>
+      </header>
+      <div class="delete-body">
+        <p id="deleteMessage">确定要删除此会话吗？此操作不可撤销。</p>
+        <div class="rename-actions">
+          <button id="deleteConfirmBtn" type="button" class="btn-danger">删除</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Batch Confirm Modal -->
+  <div id="batchConfirmModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-batch-confirm="1"></div>
+    <section class="modal-panel modal-small" role="dialog" aria-modal="true" aria-label="批量操作确认">
+      <header class="modal-head">
+        <h2 id="batchConfirmTitle">批量操作确认</h2>
+        <button id="batchConfirmCloseBtn" type="button">取消</button>
+      </header>
+      <div class="batch-confirm-body">
+        <p id="batchConfirmMessage"></p>
+        <div class="batch-confirm-list" id="batchConfirmList"></div>
+        <div class="batch-confirm-actions">
+          <button id="batchConfirmCancelBtn" type="button">取消</button>
+          <button id="batchConfirmOkBtn" type="button" class="btn-danger">确认</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
