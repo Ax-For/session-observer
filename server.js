@@ -208,7 +208,10 @@ function isAlertEvent(event) {
 
 function eventMatchesMode(event, mode) {
   if (mode === "raw") return true;
-  return event.callType !== "Raw";
+  // Filter out Raw events and sidechain events (from subagent files)
+  if (event.callType === "Raw") return false;
+  if ((event.extra || "").startsWith("sidechain/")) return false;
+  return true;
 }
 
 function eventMatchesFilters(event, filters) {
