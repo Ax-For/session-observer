@@ -355,6 +355,18 @@ function shortPathN(v, n = 3) {
   return `.../${parts.slice(-n).join("/")}`;
 }
 
+function shortModel(v) {
+  if (!v) return "-";
+  // qwen3.6-plus -> qwen3.6, claude-sonnet-4-6 -> sonnet-4, gpt-5.4 -> gpt-5.4
+  const m = v.match(/^(qwen\d+\.\d+)/);
+  if (m) return m[1];
+  const m2 = v.match(/^(claude-)?(sonnet|opus|haiku)-(\d+)/i);
+  if (m2) return `${m2[2]}-${m2[3]}`;
+  const m3 = v.match(/^(gpt-\d+\.\d+)/);
+  if (m3) return m3[1];
+  return v.length > 12 ? v.slice(0, 12) : v;
+}
+
 function fmtNum(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "-";
@@ -390,7 +402,7 @@ function addTokenUsage(base, next) {
 }
 
 function rowHeightForDensity() {
-  return state.density === "compact" ? 132 : 156;
+  return state.density === "compact" ? 60 : 72;
 }
 
 function sessionRowHeightForDensity() {
@@ -949,35 +961,24 @@ function renderVirtualRows() {
       const toolOrExtra = e.toolName ? `tool:${e.toolName}` : e.extra;
       const rawLabel = e.callType === "Raw" ? `${e.rawType || "-"}/${e.rawSubType || "-"}` : "";
       const shownTime = formatShanghaiTime(e.time);
-      const cwdLabel = e.cwd ? `cwd:${e.cwd}` : "cwd:-";
       const tokenLabel = e.tokenUsage
         ? `Tok ${fmtTokenHuman(e.tokenUsage.total)} total · ${fmtTokenHuman(e.tokenUsage.input)} in · ${fmtTokenHuman(e.tokenUsage.output)} out`
         : "";
       const tokenTitle = e.tokenUsage
         ? `In ${fmtNum(e.tokenUsage.input)} | Out ${fmtNum(e.tokenUsage.output)} | Total ${fmtNum(e.tokenUsage.total)} | Cache ${fmtNum(e.tokenUsage.cachedInput)} | Reason ${fmtNum(e.tokenUsage.reasoningOutput)}`
         : "";
-      return `<article class="log-item ${active}" data-index="${idx}">
-        <header class="log-top">
-          <span class="log-type ${typeClass(e.callType)}">${highlightMatch(e.callType, q)}</span>
-          ${e.sourceType ? `<span class="chip chip-platform chip-${escapeHtml(e.sourceType)}">${highlightMatch(e.sourceType, q)}</span>` : ""}
-          ${rawLabel ? `<span class="chip chip-raw">${highlightMatch(rawLabel, q)}</span>` : ""}
-          <span class="chip">${highlightMatch(e.model, q)}</span>
-          <span class="chip">session:${highlightMatch(shortId(e.sessionId, 12), q)}</span>
-          ${e.cwd ? `<span class="chip chip-cwd has-tip" data-tip="${escapeHtml(e.cwd)}">${highlightMatch(cwdLabel, q)}</span>` : ""}
-          ${tokenLabel ? `<span class="chip chip-token has-tip" data-tip="${escapeHtml(tokenTitle)}">${highlightMatch(tokenLabel, q)}</span>` : ""}
-          ${e.callId ? `<span class="chip">call:${highlightMatch(shortId(e.callId, 12), q)}</span>` : ""}
-          ${e.turnId ? `<span class="chip">turn:${highlightMatch(shortId(e.turnId, 12), q)}</span>` : ""}
-          <time class="log-time has-tip" data-tip="${escapeHtml(e.time)}">${escapeHtml(shownTime)}</time>
-        </header>
-        <div class="log-main-wrap">
-          <div class="log-main has-tip" data-tip="${escapeHtml(e.content || e.summary || "")}" data-full-content="${escapeHtml(e.content || "")}">${highlightMatch(e.summary || "", q)}</div>
-          ${e.content && e.content.length > (e.summary?.length || 0) ? `<button class="log-expand-btn" data-expand="true" type="button">展开</button>` : ""}
-        </div>
-        <footer class="log-meta">
-          <span>${highlightMatch(toolOrExtra || "-", q)}</span>
-          <span>${highlightMatch(shortPath(e.sourceFile || ""), q)}</span>
-        </footer>
-      </article>`;
+      const hasExpandable = e.content && e.content.length > (e.summary?.length || 0);
+      return `<article class="log-row ${active}" data-index="${idx}">
+  <span class="log-row-time">${escapeHtml(shownTime)}</span>
+  <span class="log-row-type ${typeClass(e.callType)}">${highlightMatch(e.callType, q)}</span>
+  ${e.sourceType ? `<span class="log-row-chip chip-${escapeHtml(e.sourceType)}">${highlightMatch(e.sourceType === "claude" ? "CC" : e.sourceType === "codex" ? "CX" : e.sourceType, q)}</span>` : ""}
+  <span class="log-row-model">${highlightMatch(shortModel(e.model), q)}</span>
+  <span class="log-row-session">${highlightMatch(shortId(e.sessionId, 8), q)}</span>
+  <span class="log-row-summary">${highlightMatch(e.summary || "", q)}</span>
+  ${tokenLabel ? `<span class="log-row-token has-tip" data-tip="${escapeHtml(tokenTitle)}">${highlightMatch(`Tok ${fmtTokenHuman(e.tokenUsage.total)}`, q)}</span>` : ""}
+  <span class="log-row-meta">${highlightMatch(toolOrExtra || "-", q)}</span>
+  ${hasExpandable ? `<button class="log-row-expand" data-expand="true" type="button">▸</button>` : ""}
+</article>`;
     })
     .join("");
 
@@ -1703,7 +1704,7 @@ function wireEvents() {
       return;
     }
 
-    const item = e.target.closest(".log-item");
+    const item = e.target.closest(".log-row, .log-item");
     if (!item || item.dataset.index == null) return;
     showDetail(Number(item.dataset.index));
   });
