@@ -782,13 +782,26 @@ function computeDashboardStats() {
     }
   }
 
-  // Platform distribution
-  const platformCounts = { codex: 0, claude: 0 };
+  // Platform distribution - collect sessions, events, and models per platform
+  const platformData = {
+    codex: { sessions: 0, events: 0, models: new Set() },
+    claude: { sessions: 0, events: 0, models: new Set() },
+  };
   if (isServerMode()) {
     for (const s of state.sessions) {
       const p = s.sourceType || "unknown";
       if (p === "codex" || p === "claude") {
-        platformCounts[p]++;
+        platformData[p].sessions++;
+        if (s.models) {
+          for (const m of s.models) platformData[p].models.add(m);
+        }
+      }
+    }
+    // Count events per platform from filtered events
+    for (const e of state.filtered) {
+      const p = e.sourceType || "unknown";
+      if (p === "codex" || p === "claude") {
+        platformData[p].events++;
       }
     }
   } else {
@@ -796,7 +809,8 @@ function computeDashboardStats() {
     for (const e of visibleEvents) {
       const p = e.sourceType || "unknown";
       if (p === "codex" || p === "claude") {
-        platformCounts[p]++;
+        platformData[p].events++;
+        if (e.model) platformData[p].models.add(e.model);
       }
     }
   }
@@ -805,7 +819,7 @@ function computeDashboardStats() {
     tokenTotal,
     typeCounts,
     modelCounts,
-    platformCounts,
+    platformCounts: platformData,
     totalVisible: isServerMode() ? state.totalVisible : state.events.filter(isVisibleInCurrentMode).length,
     totalMatching: isServerMode() ? state.totalMatching : state.filtered.length,
     sessionCount: isServerMode() ? state.sessions.length : state.sessionGroups.length,
@@ -893,21 +907,34 @@ function renderModelList(modelCounts) {
     .join("");
 }
 
-function renderPlatformBars(platformCounts) {
+function renderPlatformBars(platformData) {
   const container = document.getElementById("platformBars");
   if (!container) return;
 
-  const codexTip = "Codex 是 OpenAI 的 CLI 工具，日志存储在 ~/.codex/sessions/";
-  const claudeTip = "Claude Code 是 Anthropic 的 CLI 工具，日志存储在 ~/.claude/projects/";
+  const codexModels = [...(platformData.codex.models || [])];
+  const claudeModels = [...(platformData.claude.models || [])];
+
+  const codexTip = `Codex\n会话: ${fmtNum(platformData.codex.sessions)}\n事件: ${fmtNum(platformData.codex.events)}\n模型: ${codexModels.length > 0 ? codexModels.join(", ") : "-"}`;
+  const claudeTip = `Claude Code\n会话: ${fmtNum(platformData.claude.sessions)}\n事件: ${fmtNum(platformData.claude.events)}\n模型: ${claudeModels.length > 0 ? claudeModels.join(", ") : "-"}`;
 
   container.innerHTML = `
     <div class="platform-bar">
-      <div class="platform-bar-fill codex has-tip" data-tip="${codexTip}">${fmtNum(platformCounts.codex || 0)}</div>
+      <div class="platform-bar-fill codex has-tip" data-tip="${escapeHtml(codexTip)}">
+        <span class="platform-bar-value">${fmtNum(platformData.codex.sessions)}</span>
+        <span class="platform-bar-sub">会话</span>
+      </div>
       <span class="platform-label">Codex</span>
+      <span class="platform-bar-meta">${fmtNum(platformData.codex.events)} 事件</span>
+      <span class="platform-bar-models">${codexModels.length > 0 ? codexModels.map(shortModel).join(", ") : "-"}</span>
     </div>
     <div class="platform-bar">
-      <div class="platform-bar-fill claude has-tip" data-tip="${claudeTip}">${fmtNum(platformCounts.claude || 0)}</div>
+      <div class="platform-bar-fill claude has-tip" data-tip="${escapeHtml(claudeTip)}">
+        <span class="platform-bar-value">${fmtNum(platformData.claude.sessions)}</span>
+        <span class="platform-bar-sub">会话</span>
+      </div>
       <span class="platform-label">Claude</span>
+      <span class="platform-bar-meta">${fmtNum(platformData.claude.events)} 事件</span>
+      <span class="platform-bar-models">${claudeModels.length > 0 ? claudeModels.map(shortModel).join(", ") : "-"}</span>
     </div>`;
 }
 
