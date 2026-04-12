@@ -55,7 +55,7 @@ function AppContent() {
       locale={zhCN}
       theme={state.theme === 'dark' ? darkTheme : lightTheme}
     >
-      <div className="workspace">
+      <div className="workspace" data-theme={state.theme}>
         <TopBar />
         <Toolbar />
         <FilterPanel />
