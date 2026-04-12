@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Space, Input, Select, Checkbox, message } from 'antd';
+import { Button, Space, Input, Select, Checkbox, message, Tooltip, Modal } from 'antd';
+import { CopyOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useApp } from '../../store/context';
 import { api } from '../../api/client';
 import RenameModal, { DeleteModal, BatchDeleteModal } from '../../components/Modals';
@@ -15,6 +16,8 @@ export default function SessionsView() {
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
   const [showBatchDelete, setShowBatchDelete] = useState(false);
+  const [viewSession, setViewSession] = useState<Session | null>(null);
+  const [showConvPanel, setShowConvPanel] = useState(false);
 
   useEffect(() => {
     loadSessions();
@@ -154,6 +157,9 @@ export default function SessionsView() {
                       </div>
                     </div>
                     <div className="card-actions">
+                      <Tooltip title="查看会话详情"><Button size="small" icon={<EyeOutlined />} onClick={() => setViewSession(s)} /></Tooltip>
+                      <Tooltip title="复制 Session ID"><Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(s.sessionId); message.success('已复制'); }} /></Tooltip>
+                      <Tooltip title="查看会话内容"><Button size="small" icon={<FileTextOutlined />} onClick={() => { setViewSession(s); setShowConvPanel(true); }} /></Tooltip>
                       <Button size="small" onClick={() => setRenameTarget(s)}>重命名</Button>
                       <Button size="small" danger onClick={() => setDeleteTarget(s)}>删除</Button>
                     </div>
@@ -189,6 +195,29 @@ export default function SessionsView() {
           onClose={() => setShowBatchDelete(false)}
           onSuccess={() => loadSessions()}
         />
+      )}
+
+      {viewSession && (
+        <Modal
+          open={!!viewSession}
+          title="会话详情"
+          onCancel={() => setViewSession(null)}
+          footer={[
+            <Button key="close" onClick={() => setViewSession(null)}>关闭</Button>,
+          ]}
+          width={600}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div><strong>平台：</strong>{viewSession.sourceType === 'claude' ? 'Claude Code' : 'Codex'}</div>
+            <div><strong>会话数：</strong>{viewSession.count}</div>
+            <div><strong>模型：</strong>{viewSession.models?.join(', ') || '-'}</div>
+            {viewSession.aggregateToken?.total && <div><strong>Token：</strong>{fmtTokenHuman(viewSession.aggregateToken.total)}</div>}
+            <div style={{ gridColumn: '1 / -1' }}><strong>Session ID：</strong><code>{viewSession.sessionId}</code></div>
+            <div style={{ gridColumn: '1 / -1' }}><strong>名称：</strong>{viewSession.sessionTitle || viewSession.fallbackTitle || '-'}</div>
+            <div style={{ gridColumn: '1 / -1' }}><strong>目录：</strong><code>{viewSession.cwd}</code></div>
+            <div><strong>最近活跃：</strong>{viewSession.latest ? formatShanghaiTime(viewSession.latest) : '-'}</div>
+          </div>
+        </Modal>
       )}
     </div>
   );

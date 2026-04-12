@@ -1,6 +1,6 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Empty, Button } from 'antd';
-import { FixedSizeList as List } from 'react-window';
+import { FixedSizeList as List, ListOnScrollProps } from 'react-window';
 import { useApp } from '../../store/context';
 import { api } from '../../api/client';
 import EventDetailModal from '../../components/EventDetailModal';
@@ -45,10 +45,26 @@ function EventRow({ index, style, data }: EventRowProps) {
   );
 }
 
+const ROW_HEIGHT = 48;
+
 export default function StreamView() {
   const { state, dispatch } = useApp();
   const listRef = useRef<List>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
+  const [listHeight, setListHeight] = useState(400);
+
+  // Measure container height
+  useEffect(() => {
+    const measure = () => {
+      if (containerRef.current) {
+        setListHeight(containerRef.current.clientHeight);
+      }
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [state.filtered.length]);
 
   useEffect(() => {
     loadData();
@@ -159,9 +175,16 @@ export default function StreamView() {
     }
   }, [state.selectedRowIndex]);
 
+  // Re-measure on data change
+  useEffect(() => {
+    if (containerRef.current) {
+      setListHeight(containerRef.current.clientHeight);
+    }
+  }, [state.filtered.length, state.activeTab]);
+
   if (state.events.length === 0 && !loadingRef.current) {
     return (
-      <section className="content-grid">
+      <section className="content-grid" style={{ '--session-pane-width': `${state.sessionPaneWidth}px` } as React.CSSProperties}>
         <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'center', padding: 80 }}>
           <Empty description="暂无数据" />
         </div>
@@ -169,11 +192,9 @@ export default function StreamView() {
     );
   }
 
-  const itemSize = 48;
-
   return (
-    <section className="content-grid">
-      <aside className="session-pane" style={{ width: state.sessionPaneWidth, flexShrink: 0 }}>
+    <section className="content-grid" style={{ '--session-pane-width': `${state.sessionPaneWidth}px` } as React.CSSProperties}>
+      <aside className="session-pane">
         <div className="pane-head">
           <h2>Session 分组</h2>
           <Button size="small" onClick={() => dispatch({ type: 'SET_SELECTED_SESSION', payload: '' })}>全部</Button>
@@ -225,12 +246,12 @@ export default function StreamView() {
           </div>
           {state.filtered.length > 0 ? (
             <>
-              <div className="log-stream">
+              <div ref={containerRef} className="log-stream" style={{ flex: 1, minHeight: 0 }}>
                 <List
                   ref={listRef}
-                  height={Math.min(window.innerHeight - 380, 600)}
+                  height={Math.max(100, listHeight)}
                   itemCount={state.filtered.length}
-                  itemSize={itemSize}
+                  itemSize={ROW_HEIGHT}
                   width="100%"
                   itemData={{
                     events: state.filtered,
