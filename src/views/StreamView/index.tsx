@@ -40,7 +40,6 @@ function EventRow({ index, style, data }: EventRowProps) {
       {event.tokenUsage?.total != null && (
         <span className="event-token">Tok {Math.round(event.tokenUsage.total / 1000)}k</span>
       )}
-      <span className="event-extra">{event.toolName || event.extra || ''}</span>
     </div>
   );
 }
@@ -194,7 +193,7 @@ export default function StreamView() {
               </div>
               <div className="session-detail-row">
                 <span className="sid">{s.sessionId.slice(0, 12)}...</span>
-                <span className="cwd-line">{s.cwd.split('/').slice(-3).join('/')}</span>
+                <span className="cwd-line" title={s.cwd}>{s.cwd.split('/').slice(-4).join('/')}</span>
               </div>
             </div>
           ))}

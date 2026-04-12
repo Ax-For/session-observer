@@ -306,19 +306,21 @@ body {
 
 .platform-bar {
   flex: 1;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto auto auto;
-  gap: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--ant-color-bg-layout);
+}
+
+.platform-bar-header {
+  display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .platform-bar-fill {
-  grid-column: 1;
-  grid-row: 1;
   width: 56px;
   height: 28px;
   border-radius: 6px;
@@ -327,6 +329,8 @@ body {
   justify-content: center;
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
+  font-size: 0.84rem;
+  flex-shrink: 0;
 }
 
 .platform-bar-fill.codex {
@@ -339,13 +343,7 @@ body {
   color: #c0a0e0;
 }
 
-.platform-bar-value {
-  font-size: 0.84rem;
-}
-
 .platform-bar-sessions {
-  grid-column: 2;
-  grid-row: 1;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.84rem;
   color: var(--ant-color-text);
@@ -353,8 +351,6 @@ body {
 }
 
 .platform-label {
-  grid-column: 1 / -1;
-  grid-row: 2;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.75rem;
   color: var(--ant-color-text-secondary);
@@ -364,16 +360,12 @@ body {
 }
 
 .platform-bar-meta {
-  grid-column: 1 / -1;
-  grid-row: 3;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.68rem;
   color: var(--ant-color-text-secondary);
 }
 
 .platform-bar-models {
-  grid-column: 1 / -1;
-  grid-row: 4;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.68rem;
   color: var(--ant-color-text-quaternary);
@@ -632,7 +624,8 @@ body {
 
 /* ==================== Event Row ==================== */
 .event-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 62px auto auto auto auto 1fr auto;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
@@ -643,6 +636,7 @@ body {
   font-family: 'IBM Plex Mono', monospace;
   white-space: nowrap;
   overflow: hidden;
+  min-width: 0;
 }
 
 .event-row:hover {
@@ -728,6 +722,9 @@ body {
   color: var(--ant-color-text-quaternary);
   flex-shrink: 0;
   font-size: 0.68rem;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .event-session {
@@ -737,7 +734,6 @@ body {
 }
 
 .event-summary {
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--ant-color-text);
@@ -745,6 +741,7 @@ body {
   font-size: 0.84rem;
   line-height: 1.4;
   min-width: 0;
+  max-width: 100%;
 }
 
 .event-token {
@@ -757,7 +754,7 @@ body {
   color: var(--ant-color-text-secondary);
   flex-shrink: 0;
   font-size: 0.68rem;
-  max-width: 120px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

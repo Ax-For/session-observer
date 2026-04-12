@@ -92,26 +92,26 @@ function PlatformBarsCard() {
   const claudeSessions = state.sessions.filter((s) => s.sourceType === 'claude');
   const codexModels = [...new Set(codexSessions.flatMap((s) => s.models || []))];
   const claudeModels = [...new Set(claudeSessions.flatMap((s) => s.models || []))];
-  const codexEvents = state.events.filter((e) => e.sourceType === 'codex').length;
-  const claudeEvents = state.events.filter((e) => e.sourceType === 'claude').length;
+  const codexEvents = codexSessions.reduce((sum, s) => sum + (s.count || 0), 0);
+  const claudeEvents = claudeSessions.reduce((sum, s) => sum + (s.count || 0), 0);
 
   return (
     <Card size="small" title="平台分布">
       <div className="platform-bars">
         <div className="platform-bar">
-          <div className="platform-bar-fill codex">
-            <span className="platform-bar-value">{codexSessions.length}</span>
+          <div className="platform-bar-header">
+            <div className="platform-bar-fill codex">{codexSessions.length}</div>
+            <span className="platform-bar-sessions">{codexSessions.length} 会话</span>
           </div>
-          <span className="platform-bar-sessions">{codexSessions.length} 会话</span>
           <span className="platform-label">Codex</span>
           <span className="platform-bar-meta">{fmtNum(codexEvents)} 事件 · {state.codexVersion}</span>
           <span className="platform-bar-models">{codexModels.length > 0 ? codexModels.join(', ') : '-'}</span>
         </div>
         <div className="platform-bar">
-          <div className="platform-bar-fill claude">
-            <span className="platform-bar-value">{claudeSessions.length}</span>
+          <div className="platform-bar-header">
+            <div className="platform-bar-fill claude">{claudeSessions.length}</div>
+            <span className="platform-bar-sessions">{claudeSessions.length} 会话</span>
           </div>
-          <span className="platform-bar-sessions">{claudeSessions.length} 会话</span>
           <span className="platform-label">Claude Code</span>
           <span className="platform-bar-meta">{fmtNum(claudeEvents)} 事件 · {state.claudeVersion}</span>
           <span className="platform-bar-models">{claudeModels.length > 0 ? claudeModels.join(', ') : '-'}</span>
@@ -142,7 +142,11 @@ export default function Dashboard() {
     <section className={`dashboard ${state.dashboardCollapsed ? 'collapsed' : ''}`}>
       <div className="dash-header">
         <div className="dash-header-left">
-          <button className="dash-collapse-btn" onClick={() => dispatch({ type: 'SET_DASHBOARD_COLLAPSED', payload: !state.dashboardCollapsed })}>
+          <button
+            className="dash-collapse-btn"
+            onClick={() => dispatch({ type: 'SET_DASHBOARD_COLLAPSED', payload: !state.dashboardCollapsed })}
+            type="button"
+          >
             {state.dashboardCollapsed ? '(+)' : '(-)'}
           </button>
           <span className="dash-title">统计概览</span>
