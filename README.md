@@ -5,6 +5,13 @@
 - Codex: `~/.codex/sessions/**/*.jsonl`
 - Claude Code: `~/.claude/projects/**/*.jsonl`
 
+## 环境要求
+
+- **Node.js ≥ 16**（使用了 `fs.rmSync`、`replaceAll` 等 API）
+- **sqlite3 CLI**（Codex 会话标题读取依赖，Mac 通常自带，Ubuntu/Debian: `sudo apt install sqlite3`）
+- 现代浏览器（Chrome 85+ / Firefox 77+ / Safari 13.1+）
+- 前端 Markdown 渲染依赖 [marked.js](https://marked.js.org/)（通过 jsDelivr CDN 加载，需网络可用）
+
 ## 功能
 
 ### 核心功能

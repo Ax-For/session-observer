@@ -820,7 +820,12 @@ function loadThreadMetadataMap() {
 
   const sql = "select id, coalesce(title, ''), coalesce(cwd, '') from threads;";
   const proc = spawnSync("sqlite3", ["-separator", "\t", STATE_DB, sql], { encoding: "utf8" });
-  if (proc.status !== 0 || !proc.stdout) return map;
+  if (proc.status !== 0 || !proc.stdout) {
+    if (proc.error?.code === "ENOENT") {
+      console.warn("[sqlite3] Command not found — Codex session titles will be empty. Install sqlite3 to fix.");
+    }
+    return map;
+  }
 
   const lines = proc.stdout.split(/\r?\n/).filter(Boolean);
   for (const line of lines) {

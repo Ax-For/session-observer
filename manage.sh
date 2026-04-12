@@ -123,6 +123,12 @@ open_ui() {
   if command -v open >/dev/null 2>&1; then
     open "${url}" >/dev/null 2>&1 || true
     echo "Opened: ${url}"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${url}" >/dev/null 2>&1 || true
+    echo "Opened: ${url}"
+  elif command -v wslview >/dev/null 2>&1; then
+    wslview "${url}" >/dev/null 2>&1 || true
+    echo "Opened: ${url}"
   else
     echo "Open this URL in your browser:"
     echo "${url}"
