@@ -310,10 +310,12 @@ function buildSessionGroups(events) {
     groups.set(e.sessionId, g);
   }
   // Convert models Set to array for JSON serialization
-  return [...groups.values()].map((g) => {
-    g.models = [...g.models].sort();
-    return g;
-  }).sort((a, b) => (a.latest < b.latest ? 1 : -1));
+  return [...groups.values()]
+    .filter((g) => g.sessionId !== "unknown")
+    .map((g) => {
+      g.models = [...g.models].sort();
+      return g;
+    }).sort((a, b) => (a.latest < b.latest ? 1 : -1));
 }
 
 function collectMeta(events) {
@@ -716,6 +718,8 @@ function parseClaudeCodeLineToEvent(obj, context) {
       const events = [];
       for (const tc of toolCalls) {
         const argsStr = typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input || "");
+        // Keep full args for Edit/Write tool calls so the UI can show diff details
+        const clipLimit = (tc.name === "Edit" || tc.name === "Write" || tc.name === "ApplyPatch") ? 16000 : 200;
         events.push({
           time: ts, sessionId, model,
           turnId: uuid, callId: tc.id, toolName: tc.name, cwd,
@@ -723,7 +727,7 @@ function parseClaudeCodeLineToEvent(obj, context) {
           extra: `${obj.isSidechain ? "sidechain/" : ""}tool_call${agentTag ? ` agent=${agentTag}` : ""}`,
           sourceFile, sourceType: "claude",
           callType: "Tool_Call", rawType: "assistant", rawSubType: "tool_use",
-          content: `${agentPrefix}tool=${tc.name}\nargs=${clip(argsStr, 200)}`,
+          content: `${agentPrefix}tool=${tc.name}\nargs=${clip(argsStr, clipLimit)}`,
           summary: clip(`${agentPrefix}tool=${tc.name}`),
         });
       }

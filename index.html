@@ -37,8 +37,7 @@
 
     <section class="tabs" id="tabBar">
       <button class="tab-btn active" data-tab="stream">事件流</button>
-      <button class="tab-btn" data-tab="sessions">会话管理</button>
-      <button class="tab-btn" data-tab="conversation">对话详情</button>
+      <button class="tab-btn" data-tab="sessions">会话</button>
     </section>
 
     <section class="filters" id="streamFilters">
@@ -97,10 +96,13 @@
     <!-- Dashboard -->
     <section class="dashboard" id="stats">
       <div class="dash-header">
-        <span class="dash-title">统计概览</span>
+        <div class="dash-header-left">
+          <button id="dashCollapseBtn" type="button" class="dash-collapse-btn" title="折叠/展开统计">(−)</button>
+          <span class="dash-title">统计概览</span>
+        </div>
         <span class="dash-scope has-tip" id="dashScope" data-tip="统计基于当前筛选条件和已加载的数据">当前筛选范围</span>
       </div>
-      <div class="dash-grid">
+      <div class="dash-grid" id="dashGrid">
         <div class="dash-card dash-token">
           <h3 class="has-tip" data-tip="所有会话中 Token_Usage 事件的累计汇总值，来源于服务端聚合统计">Token 使用</h3>
           <div class="token-summary">
@@ -154,6 +156,7 @@
         </div>
         <ul id="sessionList" class="session-list"></ul>
       </aside>
+      <div class="resize-handle" id="resizeHandle"></div>
       <div class="main-pane">
         <div class="table-wrap">
           <div class="stream-head">
@@ -169,7 +172,8 @@
     </section>
 
     <!-- Sessions Management View -->
-    <section class="session-mgmt" id="sessionsView" hidden>
+    <div id="sessionsWrapper" hidden>
+    <section class="session-mgmt" id="sessionsView">
       <div class="session-mgmt-toolbar">
         <label>
           搜索
@@ -197,27 +201,27 @@
           <button id="batchExportBtn" type="button" class="btn-batch" disabled>批量导出 (0)</button>
         </div>
       </div>
-      <div id="sessionGroups" class="session-groups"></div>
+      <div class="session-mgmt-content" id="sessionMgmtContent">
+        <div id="sessionGroups" class="session-groups"></div>
+      </div>
     </section>
 
-    <!-- Conversation View (page view, not modal) -->
-    <section class="conversation-view" id="conversationView" hidden>
-      <header class="conv-page-header">
-        <button id="convBackBtn" type="button" class="conv-back-btn">← 返回会话列表</button>
-        <div class="conv-header-info">
-          <h2 id="convPageTitle">对话详情</h2>
-          <div class="conv-header-meta">
-            <span class="chip chip-platform" id="convPagePlatform"></span>
-            <span id="convPageModels"></span>
-            <span id="convPageStats"></span>
-          </div>
+    <!-- Conversation Panel -->
+    <section class="inline-conv-panel" id="inlineConvPanel" hidden>
+      <header class="inline-conv-header">
+        <h3 id="inlineConvTitle">对话详情</h3>
+        <div class="inline-conv-meta">
+          <span class="chip chip-platform" id="inlineConvPlatform"></span>
+          <span id="inlineConvStats"></span>
+          <button class="card-btn" id="inlineConvClose">关闭</button>
         </div>
       </header>
-      <div class="conv-page-toolbar">
-        <span id="convPageLoadStatus">已加载 0 / 共 0</span>
+      <div class="inline-conv-toolbar">
+        <span id="inlineConvLoadStatus">已加载 0 / 共 0</span>
       </div>
-      <div id="convPageBody" class="conv-page-body"></div>
+      <div id="inlineConvBody" class="inline-conv-body"></div>
     </section>
+    </div>
   </main>
 
   <!-- Detail Modal -->

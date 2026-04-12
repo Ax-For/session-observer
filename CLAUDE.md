@@ -129,6 +129,29 @@ Default: `http://127.0.0.1:8787`
 | `G` | Jump to last event |
 | `Esc` | Close modal |
 
+## URL State Sharing
+
+The current view state is encoded into URL search params so that URLs can be copied and shared:
+
+| Param | Meaning | Omitted when |
+|-------|---------|-------------|
+| `tab` | Active tab (`stream` / `sessions`) | `stream` |
+| `session` | Selected session ID | none |
+| `q` | Search text | empty |
+| `model` | Model filter | all |
+| `type` | Type filter | all |
+| `platform` | Platform filter (`codex` / `claude`) | all |
+| `qf` | Quick filter (`all` / `alert` / `high_token`) | `all` |
+| `mode` | View mode (`observe` / `raw`) | `observe` |
+| `sort` | Sort order (`asc` / `desc`) | `desc` |
+| `from` / `to` | Time range | empty |
+| `dash` | Dashboard collapsed (`1`) | expanded |
+| `ar` | Auto-refresh enabled (`1`) | disabled |
+
+Appearance preferences (theme, density, pane width) are stored in `localStorage` only — not URL-encoded.
+
+State is synced via `history.replaceState` with a 150ms debounce. On page load, `decodeStateFromUrl()` restores state before the initial data fetch.
+
 ## Development Notes
 
 - **No build step** — edit files directly, refresh browser (or use auto-refresh)

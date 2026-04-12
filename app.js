@@ -18,6 +18,8 @@ const state = {
   filterTimer: null,
   theme: "light",
   density: "cozy",
+  dashboardCollapsed: false,
+  sessionPaneWidth: 320,
   rowHeight: 156,
   scrollTop: 0,
   viewportHeight: 0,
@@ -33,12 +35,12 @@ const state = {
   lastViewedSessionId: null,
   selectedSessionIds: new Set(),
   batchConfirmAction: null,
-  // Conversation view state
-  conversationEvents: [],
-  conversationTotal: 0,
-  conversationLoaded: 0,
-  conversationSessionId: null,
-  conversationSessionInfo: null,
+  // Inline conversation panel state
+  inlineConvEvents: [],
+  inlineConvTotal: 0,
+  inlineConvOffset: 0,
+  inlineConvSessionId: null,
+  inlineConvSessionInfo: null,
 };
 
 const els = {
@@ -63,6 +65,9 @@ const els = {
   modeToggleBtn: document.getElementById("modeToggleBtn"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
   densityToggleBtn: document.getElementById("densityToggleBtn"),
+  dashCollapseBtn: document.getElementById("dashCollapseBtn"),
+  dashGrid: document.getElementById("dashGrid"),
+  resizeHandle: document.getElementById("resizeHandle"),
   realtimeStatus: document.getElementById("realtimeStatus"),
   quickFilters: document.getElementById("quickFilters"),
   tokenThresholdInput: document.getElementById("tokenThresholdInput"),
@@ -107,15 +112,14 @@ const els = {
   batchConfirmCloseBtn: document.getElementById("batchConfirmCloseBtn"),
   batchConfirmCancelBtn: document.getElementById("batchConfirmCancelBtn"),
   batchConfirmOkBtn: document.getElementById("batchConfirmOkBtn"),
-  // Conversation page view elements
-  conversationView: document.getElementById("conversationView"),
-  convBackBtn: document.getElementById("convBackBtn"),
-  convPageTitle: document.getElementById("convPageTitle"),
-  convPagePlatform: document.getElementById("convPagePlatform"),
-  convPageModels: document.getElementById("convPageModels"),
-  convPageStats: document.getElementById("convPageStats"),
-  convPageLoadStatus: document.getElementById("convPageLoadStatus"),
-  convPageBody: document.getElementById("convPageBody"),
+  // Inline conversation panel elements
+  inlineConvPanel: document.getElementById("inlineConvPanel"),
+  inlineConvClose: document.getElementById("inlineConvClose"),
+  inlineConvTitle: document.getElementById("inlineConvTitle"),
+  inlineConvPlatform: document.getElementById("inlineConvPlatform"),
+  inlineConvStats: document.getElementById("inlineConvStats"),
+  inlineConvLoadStatus: document.getElementById("inlineConvLoadStatus"),
+  inlineConvBody: document.getElementById("inlineConvBody"),
 };
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
 
@@ -1167,6 +1171,7 @@ function applyViewMode(mode) {
     els.modeToggleBtn.classList.toggle("active", state.viewMode === "raw");
   }
   localStorage.setItem("observer_view_mode", state.viewMode);
+  syncUrl();
 }
 
 function applyTheme(theme) {
@@ -1189,14 +1194,194 @@ function applyDensity(mode) {
   }
 }
 
+function initResizeHandle() {
+  const handle = els.resizeHandle;
+  if (!handle) return;
+
+  // Restore saved width
+  const savedWidth = localStorage.getItem("observer_session_pane_width");
+  if (savedWidth) {
+    state.sessionPaneWidth = parseInt(savedWidth, 10) || 320;
+    applySessionPaneWidth();
+  }
+
+  let startX = 0;
+  let startWidth = 0;
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = state.sessionPaneWidth;
+    handle.classList.add("dragging");
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
+
+  function onMouseMove(e) {
+    const container = document.querySelector(".content-grid");
+    if (!container) return;
+    const containerWidth = container.offsetWidth;
+    const delta = e.clientX - startX;
+    const newWidth = Math.max(260, Math.min(startWidth + delta, containerWidth / 2));
+    state.sessionPaneWidth = newWidth;
+    applySessionPaneWidth();
+  }
+
+  function onMouseUp() {
+    handle.classList.remove("dragging");
+    localStorage.setItem("observer_session_pane_width", String(state.sessionPaneWidth));
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  }
+}
+
+function applySessionPaneWidth() {
+  document.documentElement.style.setProperty("--session-pane-width", `${state.sessionPaneWidth}px`);
+}
+
+// --- URL State Synchronization ---
+
+let urlSyncTimer = null;
+
+function encodeStateToUrl() {
+  try {
+    const params = new URLSearchParams();
+    if (state.activeTab !== "stream") params.set("tab", state.activeTab);
+    if (state.selectedSessionId) params.set("session", state.selectedSessionId);
+    if (els.searchInput?.value) params.set("q", els.searchInput.value);
+    if (els.modelSelect?.value) params.set("model", els.modelSelect.value);
+    if (els.typeSelect?.value) params.set("type", els.typeSelect.value);
+    if (els.platformSelect?.value) params.set("platform", els.platformSelect.value);
+    if (state.quickFilter !== "all") params.set("qf", state.quickFilter);
+    if (state.viewMode !== "observe") params.set("mode", state.viewMode);
+    if (els.sortOrder?.value && els.sortOrder.value !== "desc") params.set("sort", els.sortOrder.value);
+    if (els.startTime?.value) params.set("from", els.startTime.value);
+    if (els.endTime?.value) params.set("to", els.endTime.value);
+    if (state.dashboardCollapsed) params.set("dash", "1");
+    if (state.autoRefreshEnabled) params.set("ar", "1");
+
+    const newSearch = params.toString();
+    const currentSearch = window.location.search.slice(1);
+    if (newSearch !== currentSearch) {
+      const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+      history.replaceState(null, "", newUrl);
+    }
+  } catch (e) {
+    // Silently ignore if history API unavailable
+  }
+}
+
+function decodeStateFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.toString()) return false;
+
+    let applied = false;
+
+    if (params.has("tab")) {
+      const tab = params.get("tab");
+      if (tab === "stream" || tab === "sessions") {
+        state.activeTab = tab;
+        applied = true;
+      }
+    }
+
+    if (params.has("session")) {
+      state.selectedSessionId = params.get("session");
+      applied = true;
+    }
+
+    if (params.has("q") && els.searchInput) {
+      els.searchInput.value = params.get("q");
+      applied = true;
+    }
+
+    if (params.has("model") && els.modelSelect) {
+      els.modelSelect.value = params.get("model");
+      applied = true;
+    }
+
+    if (params.has("type") && els.typeSelect) {
+      els.typeSelect.value = params.get("type");
+      applied = true;
+    }
+
+    if (params.has("platform") && els.platformSelect) {
+      els.platformSelect.value = params.get("platform");
+      applied = true;
+    }
+
+    if (params.has("qf")) {
+      const qf = params.get("qf");
+      if (qf === "all" || qf === "alert" || qf === "high_token") {
+        state.quickFilter = qf;
+        applied = true;
+      }
+    }
+
+    if (params.has("mode")) {
+      const mode = params.get("mode");
+      if (mode === "observe" || mode === "raw") {
+        state.viewMode = mode;
+        applied = true;
+      }
+    }
+
+    if (params.has("sort") && els.sortOrder) {
+      const sort = params.get("sort");
+      if (sort === "asc" || sort === "desc") {
+        els.sortOrder.value = sort;
+        applied = true;
+      }
+    }
+
+    if (params.has("from") && els.startTime) {
+      els.startTime.value = params.get("from");
+      applied = true;
+    }
+
+    if (params.has("to") && els.endTime) {
+      els.endTime.value = params.get("to");
+      applied = true;
+    }
+
+    if (params.has("dash")) {
+      state.dashboardCollapsed = params.get("dash") === "1";
+      applied = true;
+    }
+
+    if (params.has("ar")) {
+      state.autoRefreshEnabled = params.get("ar") === "1";
+      applied = true;
+    }
+
+    return applied;
+  } catch (e) {
+    return false;
+  }
+}
+
+function syncUrl() {
+  if (urlSyncTimer) clearTimeout(urlSyncTimer);
+  urlSyncTimer = setTimeout(() => {
+    encodeStateToUrl();
+    urlSyncTimer = null;
+  }, 150);
+}
+
 function initAppearance() {
   const savedTheme = localStorage.getItem("observer_theme") || "light";
   const savedDensity = localStorage.getItem("observer_density") || "cozy";
   const savedViewMode = localStorage.getItem("observer_view_mode") || "observe";
   const savedThreshold = localStorage.getItem("observer_high_token_threshold") || "20000";
+  const savedDashCollapsed = localStorage.getItem("observer_dash_collapsed") === "true";
   applyViewMode(savedViewMode);
   applyTheme(savedTheme);
   applyDensity(savedDensity);
+  if (savedDashCollapsed) {
+    state.dashboardCollapsed = true;
+    els.stats?.classList.add("collapsed");
+  }
   if (els.tokenThresholdInput) {
     els.tokenThresholdInput.value = savedThreshold;
   }
@@ -1207,6 +1392,7 @@ function applyFilters() {
     state.scrollTop = 0;
     els.rows.scrollTop = 0;
     refreshOnce("筛选刷新");
+    syncUrl();
     return;
   }
   state.filtered = state.events.filter(matchFilters);
@@ -1222,6 +1408,7 @@ function applyFilters() {
   state.scrollTop = 0;
   els.rows.scrollTop = 0;
   renderRows();
+  syncUrl();
 }
 
 function buildRealtimeQuery(offset = 0) {
@@ -1874,6 +2061,17 @@ function wireEvents() {
     renderRows();
   });
 
+  // Dashboard collapse toggle
+  if (els.dashCollapseBtn) {
+    els.dashCollapseBtn.addEventListener("click", () => {
+      state.dashboardCollapsed = !state.dashboardCollapsed;
+      els.stats.classList.toggle("collapsed", state.dashboardCollapsed);
+      els.dashCollapseBtn.textContent = state.dashboardCollapsed ? "(+)" : "(−)";
+      localStorage.setItem("observer_dash_collapsed", state.dashboardCollapsed ? "true" : "false");
+      syncUrl();
+    });
+  }
+
   els.quickFilters.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-quick-filter]");
     if (!btn) return;
@@ -1916,6 +2114,7 @@ function setAutoRefreshUi(enabled) {
   state.autoRefreshEnabled = enabled;
   els.autoRefreshBtn.classList.toggle("active", enabled);
   els.autoRefreshBtn.textContent = enabled ? "停止自动刷新" : "自动刷新(5s)";
+  syncUrl();
 }
 
 function setStatus(message) {
@@ -2000,11 +2199,14 @@ function switchTab(tab) {
 
   // Hide all views
   els.streamView.hidden = true;
-  els.sessionsView.hidden = true;
-  els.conversationView.hidden = true;
+  document.getElementById("sessionsWrapper").hidden = true;
+  els.inlineConvPanel.hidden = true;
   els.streamFilters.hidden = true;
   document.getElementById("stats").hidden = true;
   document.getElementById("quickFilters").hidden = true;
+  // Reset conv layout
+  const wrapper = document.getElementById("sessionsWrapper");
+  wrapper.classList.remove("with-conv");
 
   // Show the selected view
   if (tab === "stream") {
@@ -2013,11 +2215,10 @@ function switchTab(tab) {
     document.getElementById("stats").hidden = false;
     document.getElementById("quickFilters").hidden = false;
   } else if (tab === "sessions") {
-    els.sessionsView.hidden = false;
+    document.getElementById("sessionsWrapper").hidden = false;
     loadSessionMgmtData();
-  } else if (tab === "conversation") {
-    els.conversationView.hidden = false;
   }
+  syncUrl();
 }
 
 // --- Session Management ---
@@ -2106,7 +2307,8 @@ function sessionCardHtml(s) {
       </div>
     </div>
     <div class="card-actions">
-      <button class="card-btn" data-action="detail" data-session-id="${escapeHtml(s.sessionId)}">详情</button>
+      <button class="card-btn" data-action="copy-id" data-session-id="${escapeHtml(s.sessionId)}" title="复制 Session ID">复制</button>
+      <button class="card-btn" data-action="view-conversation" data-session-id="${escapeHtml(s.sessionId)}">查看对话</button>
       <button class="card-btn" data-action="rename" data-session-id="${escapeHtml(s.sessionId)}" data-session-name="${escapeHtml(s.sessionTitle || "")}">重命名</button>
       <button class="card-btn btn-danger" data-action="delete" data-session-id="${escapeHtml(s.sessionId)}" data-session-name="${escapeHtml(title)}">删除</button>
     </div>
@@ -2178,12 +2380,18 @@ function closeSessionDetail() {
   els.sessionDetailModal.setAttribute("aria-hidden", "true");
 }
 
-// ==================== Conversation View ====================
+// ==================== Inline Conversation Panel ====================
 
-async function openConversationView(sessionId) {
+function copySessionId(sessionId) {
+  navigator.clipboard.writeText(sessionId).then(() => {
+    setStatus("已复制 Session ID");
+  }).catch(() => {
+    setStatus("复制失败，请手动复制");
+  });
+}
+
+async function openInlineConversation(sessionId) {
   if (!state.sessionMgmtData) return;
-
-  // Find session info
   let found = null;
   for (const sessions of Object.values(state.sessionMgmtData.groups || {})) {
     found = sessions.find((s) => s.sessionId === sessionId);
@@ -2191,228 +2399,110 @@ async function openConversationView(sessionId) {
   }
   if (!found) return;
 
-  // Close session detail modal if open
-  closeSessionDetail();
+  // Show dual layout: sessions on left, conversation on right
+  const wrapper = document.getElementById("sessionsWrapper");
+  wrapper.classList.add("with-conv");
+  els.inlineConvPanel.hidden = false;
 
-  // Initialize conversation state
-  state.conversationSessionId = sessionId;
-  state.conversationSessionInfo = found;
-  state.conversationEvents = [];
-  state.conversationLoaded = 0;
-  state.conversationTotal = found.count;
+  state.inlineConvSessionId = sessionId;
+  state.inlineConvSessionInfo = found;
+  state.inlineConvEvents = [];
+  state.inlineConvOffset = 0;
+  state.inlineConvTotal = found.count;
 
-  // Set page header info
-  els.convPageTitle.textContent = found.sessionTitle || found.fallbackTitle || "未命名会话";
-  els.convPagePlatform.textContent = found.sourceType;
-  els.convPagePlatform.className = `chip chip-platform chip-${found.sourceType}`;
-  const models = found.models || [];
-  els.convPageModels.textContent = models.length > 0 ? `${models.length} 个模型` : "";
-  els.convPageStats.textContent = `${found.count} 个事件`;
+  els.inlineConvTitle.textContent = found.sessionTitle || found.fallbackTitle || "未命名会话";
+  els.inlineConvPlatform.textContent = found.sourceType;
+  els.inlineConvPlatform.className = `chip chip-platform chip-${found.sourceType}`;
+  els.inlineConvStats.textContent = `${found.count} 个事件`;
+  els.inlineConvLoadStatus.textContent = `已加载 0 / 共 ${found.count}`;
+  els.inlineConvBody.innerHTML = '<div class="conv-loading">加载中...</div>';
 
-  // Show loading state
-  els.convPageBody.innerHTML = '<div class="conv-loading">加载中...</div>';
-  els.convPageLoadStatus.textContent = `已加载 0 / 共 ${found.count}`;
-
-  // Switch to conversation tab
-  switchTab("conversation");
-
-  // Fetch initial events
-  await loadConversationEvents(0, 100);
-
-  // Setup infinite scroll
-  setupConvInfiniteScroll();
+  await loadInlineConversationEvents(0, 100);
 }
 
-async function loadConversationEvents(offset, limit) {
-  const sessionId = state.conversationSessionId;
+function closeInlineConversation() {
+  els.inlineConvPanel.hidden = true;
+  const wrapper = document.getElementById("sessionsWrapper");
+  wrapper.classList.remove("with-conv");
+  state.inlineConvSessionId = null;
+  state.inlineConvEvents = [];
+  state.inlineConvOffset = 0;
+  inlineConvIsLoading = false;
+}
+
+async function loadInlineConversationEvents(offset, limit) {
+  const sessionId = state.inlineConvSessionId;
   if (!sessionId) return;
-
   try {
-    const params = new URLSearchParams({
-      sessionId,
-      mode: "observe",
-      order: "asc",
-      offset: String(offset),
-      limit: String(limit),
-    });
-
+    const params = new URLSearchParams({ sessionId, mode: "observe", order: "asc", offset: String(offset), limit: String(limit) });
     const resp = await fetch(`/api/events?${params}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-
-    // Append events
-    state.conversationEvents = state.conversationEvents.concat(data.events || []);
-    state.conversationLoaded = state.conversationEvents.length;
-    state.conversationTotal = data.totalMatching || state.conversationSessionInfo?.count || state.conversationLoaded;
-
-    // Update status
-    els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
-
-    // Render messages (scrollToTop only on initial load with offset=0)
-    renderConversationMessages(offset === 0);
-
-    // Update load status indicator
-    updateConvLoadStatus();
+    state.inlineConvEvents = state.inlineConvEvents.concat(data.events || []);
+    state.inlineConvOffset = state.inlineConvEvents.length;
+    state.inlineConvTotal = data.totalMatching || state.inlineConvSessionInfo?.count || state.inlineConvOffset;
+    els.inlineConvLoadStatus.textContent = `已加载 ${state.inlineConvOffset} / 共 ${state.inlineConvTotal}`;
+    renderInlineConversationMessages(offset === 0);
   } catch (err) {
-    console.error("Failed to load conversation events:", err);
-    els.convPageBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
+    console.error("Failed to load inline conversation events:", err);
+    els.inlineConvBody.innerHTML = `<div class="conv-empty">加载失败: ${escapeHtml(err.message)}</div>`;
   }
 }
 
-function updateConvLoadStatus() {
-  if (state.conversationLoaded >= state.conversationTotal) {
-    els.convPageLoadStatus.textContent = `已全部加载 (${state.conversationTotal} 条)`;
-  } else {
-    els.convPageLoadStatus.textContent = `已加载 ${state.conversationLoaded} / 共 ${state.conversationTotal}`;
-  }
+// Infinite scroll for inline conversation panel
+let inlineConvIsLoading = false;
+function setupInlineConvInfiniteScroll() {
+  const body = els.inlineConvBody;
+  if (!body) return;
+  body.removeEventListener("scroll", handleInlineConvScroll);
+  body.addEventListener("scroll", handleInlineConvScroll);
 }
 
-// Infinite scroll: load more when user scrolls near bottom
-let isLoadingMore = false;
-function setupConvInfiniteScroll() {
-  els.convPageBody.removeEventListener("scroll", handleConvScroll);
-  els.convPageBody.addEventListener("scroll", handleConvScroll);
-}
-
-function handleConvScroll() {
-  const body = els.convPageBody;
+function handleInlineConvScroll() {
+  const body = els.inlineConvBody;
+  if (!body) return;
   const scrollTop = body.scrollTop;
   const scrollHeight = body.scrollHeight;
   const clientHeight = body.clientHeight;
-
   // Load more when within 300px of bottom
   if (scrollHeight - scrollTop - clientHeight < 300) {
-    loadMoreConversationEvents();
+    loadMoreInlineConversationEvents();
   }
 }
 
-async function loadMoreConversationEvents() {
-  if (isLoadingMore) return;
-  if (state.conversationLoaded >= state.conversationTotal) return;
-
-  isLoadingMore = true;
-  els.convPageLoadStatus.textContent = `加载中 ${state.conversationLoaded} / ${state.conversationTotal}...`;
-
-  const pageSize = 100;
-  const remaining = state.conversationTotal - state.conversationLoaded;
-  const limit = Math.min(pageSize, remaining);
-
-  await loadConversationEvents(state.conversationLoaded, limit);
-
-  isLoadingMore = false;
+async function loadMoreInlineConversationEvents() {
+  if (inlineConvIsLoading) return;
+  if (state.inlineConvOffset >= state.inlineConvTotal) return;
+  inlineConvIsLoading = true;
+  els.inlineConvLoadStatus.textContent = `加载中 ${state.inlineConvOffset} / ${state.inlineConvTotal}...`;
+  await loadInlineConversationEvents(state.inlineConvOffset, 100);
+  inlineConvIsLoading = false;
 }
 
-function renderConversationMessages(scrollToTop = true) {
-  const events = state.conversationEvents;
-  if (events.length === 0) {
-    els.convPageBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>';
-    return;
-  }
+function renderInlineConversationMessages(isInitial) {
+  const events = state.inlineConvEvents;
+  if (events.length === 0) { els.inlineConvBody.innerHTML = '<div class="conv-empty">暂无对话记录</div>'; return; }
 
-  // Filter out Token_Usage events and system/internal messages
-  // Reference: Codex CLI adds <environment_context> blocks to user messages
-  // Claude Code adds various system markers like <command-name>, <local-command-stdout>, etc.
-  const INTERNAL_CONTENT_MARKERS = [
-    '[subagent:',
-    '<command-name>',
-    '<command-message>',
-    '<command-args>',
-    '<local-command-stdout>',
-    '<system-reminder>',
-    '<task-notification>',
-    '<local-command-caveat>',
-    '<environment_context>',
-    'Caveat:',
-    'This session is being continued from a previous',
-    '[Request interrupted',
-  ];
-
-  // Regex to strip XML-like context blocks from content
+  const INTERNAL_CONTENT_MARKERS = ['[subagent:', '<command-name>', '<command-message>', '<command-args>', '<local-command-stdout>', '<system-reminder>', '<task-notification>', '<local-command-caveat>', '<environment_context>', 'Caveat:', 'This session is being continued from a previous', '[Request interrupted'];
   const CONTEXT_BLOCK_PATTERN = /<environment_context>[\s\S]*?<\/environment_context>/gi;
+  function isInternalContent(content) { return content && typeof content === 'string' && INTERNAL_CONTENT_MARKERS.some(m => content.includes(m)); }
+  function cleanContent(content) { return content && typeof content === 'string' ? content.replace(CONTEXT_BLOCK_PATTERN, '').trim() : content; }
 
-  function isInternalContent(content) {
-    if (!content || typeof content !== 'string') return false;
-    return INTERNAL_CONTENT_MARKERS.some(marker =>
-      content.startsWith(marker) || content.includes(marker)
-    );
-  }
+  const conversationEvents = events.filter(e => {
+    if (e.callType === "Token_Usage") return false;
+    if (e.callType === "Raw" && isInternalContent(e.content)) return false;
+    if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
+    if (e.callType === "Agent" && isInternalContent(e.content)) return false;
+    return true;
+  }).map(e => (e.callType === "User" || e.callType === "Prompt" || e.callType === "Agent") ? { ...e, content: cleanContent(e.content) } : e);
 
-  // Clean content by removing system-injected context blocks
-  function cleanContent(content) {
-    if (!content || typeof content !== 'string') return content;
-    return content.replace(CONTEXT_BLOCK_PATTERN, '').trim();
-  }
+  const messagesHtml = conversationEvents.map((e, idx) => renderConvMessage(e, idx > 0 ? conversationEvents[idx - 1] : null)).join("");
+  const hasMore = state.inlineConvOffset < state.inlineConvTotal;
+  const loadingIndicatorHtml = hasMore ? `<div class="conv-loading-more" id="inlineConvLoadingMore">向下滚动加载更多...</div>` : `<div style="text-align:center;padding:12px;color:var(--ink-soft);font-size:var(--font-xs);">已全部加载</div>`;
 
-  const conversationEvents = events
-    .filter(e => {
-      // Skip Token_Usage
-      if (e.callType === "Token_Usage") return false;
-      // Skip Raw system messages
-      if (e.callType === "Raw" && isInternalContent(e.content)) return false;
-      // Skip User/Prompt messages with internal content
-      if ((e.callType === "User" || e.callType === "Prompt") && isInternalContent(e.content)) return false;
-      // Skip Agent messages that are subagent outputs
-      if (e.callType === "Agent" && isInternalContent(e.content)) return false;
-      return true;
-    })
-    .map(e => {
-      // Clean environment context blocks from User/Prompt/Agent messages
-      if (e.callType === "User" || e.callType === "Prompt" || e.callType === "Agent") {
-        return { ...e, content: cleanContent(e.content) };
-      }
-      return e;
-    });
-
-  // Build message HTML
-  const messagesHtml = conversationEvents.map((e, idx) => {
-    const prevEvent = idx > 0 ? conversationEvents[idx - 1] : null;
-    return renderConvMessage(e, prevEvent);
-  }).join("");
-
-  // Add scroll-to-top button HTML
-  const scrollTopBtnHtml = `
-    <button class="conv-scroll-top" id="convScrollTop" title="回到顶部">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-      </svg>
-    </button>`;
-
-  // Add loading indicator at bottom if more to load
-  const hasMore = state.conversationLoaded < state.conversationTotal;
-  const loadingIndicatorHtml = hasMore ? `<div class="conv-loading-more" id="convLoadingMore">向下滚动加载更多...</div>` : '';
-
-  els.convPageBody.innerHTML = messagesHtml + loadingIndicatorHtml + scrollTopBtnHtml;
-
-  // Setup scroll-to-top button behavior
-  setupScrollToTop();
-
-  // Scroll to top on initial load, stay in place on subsequent loads
-  if (scrollToTop) {
-    els.convPageBody.scrollTop = 0;
-  }
-}
-
-function setupScrollToTop() {
-  const btn = document.getElementById("convScrollTop");
-  if (!btn) return;
-
-  // Show/hide button based on scroll position
-  els.convPageBody.addEventListener("scroll", () => {
-    const scrollTop = els.convPageBody.scrollTop;
-    if (scrollTop > 300) {
-      btn.classList.add("visible");
-    } else {
-      btn.classList.remove("visible");
-    }
-  });
-
-  // Click to scroll to top
-  btn.addEventListener("click", () => {
-    els.convPageBody.scrollTo({
-      top: 0,
-      behavior: "smooth"
-    });
-  });
+  els.inlineConvBody.innerHTML = messagesHtml + loadingIndicatorHtml;
+  setupInlineConvInfiniteScroll();
+  if (isInitial) els.inlineConvBody.scrollTop = 0;
 }
 
 function renderConvMessage(event, prevEvent) {
@@ -2826,11 +2916,9 @@ function renderMarkdown(text) {
   return escapeHtml(text);
 }
 
-// Back to sessions button handler
-function backToSessions() {
-  switchTab("sessions");
-  state.conversationSessionId = null;
-  state.conversationEvents = [];
+// Close inline conversation panel handler
+function closeInlineConversationHandler() {
+  closeInlineConversation();
 }
 
 // ==================== Rename Modal ====================
@@ -3012,7 +3100,8 @@ function wireSessionMgmt() {
       e.stopPropagation();
       const action = actionBtn.dataset.action;
       const sessionId = actionBtn.dataset.sessionId;
-      if (action === "detail") openSessionDetail(sessionId);
+      if (action === "copy-id") copySessionId(sessionId);
+      else if (action === "view-conversation") openInlineConversation(sessionId);
       else if (action === "rename") openRenameModal(sessionId, actionBtn.dataset.sessionName);
       else if (action === "delete") openDeleteModal(sessionId, actionBtn.dataset.sessionName);
       else if (action === "view-events") navigateToSessionEvents(sessionId);
@@ -3048,13 +3137,12 @@ function wireSessionMgmt() {
     const viewConvBtn = e.target.closest("[data-action='view-conversation']");
     if (viewConvBtn) {
       closeSessionDetail();
-      openConversationView(viewConvBtn.dataset.sessionId);
+      openInlineConversation(viewConvBtn.dataset.sessionId);
     }
   });
 
-  // Conversation page view events
-  els.convBackBtn.addEventListener("click", backToSessions);
-  // Removed load all button - now using infinite scroll
+  // Inline conversation panel events
+  els.inlineConvClose.addEventListener("click", closeInlineConversation);
 
   // Rename modal
   els.renameModalCloseBtn.addEventListener("click", closeRenameModal);
@@ -3312,9 +3400,26 @@ async function executeBatchExport() {
 wireEvents();
 wireSessionMgmt();
 initAppearance();
+decodeStateFromUrl();
+// Apply URL-overridden state
+if (state.viewMode) {
+  applyViewMode(state.viewMode);
+}
+if (state.dashboardCollapsed) {
+  els.stats?.classList.add("collapsed");
+}
+if (state.autoRefreshEnabled) {
+  setAutoRefreshUi(true);
+}
+initResizeHandle();
 renderQuickFilterUi();
 renderSessionGroups();
 renderStats();
+
+// Apply URL-specified tab after initial render
+if (state.activeTab && state.activeTab !== "stream") {
+  switchTab(state.activeTab);
+}
 
 // 自动加载初始数据
 setStatus("正在加载数据...");
