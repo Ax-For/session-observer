@@ -1,8 +1,9 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { Empty, Spin, Button, Input } from 'antd';
+import { Empty, Button } from 'antd';
 import { FixedSizeList as List } from 'react-window';
 import { useApp } from '../../store/context';
 import { api } from '../../api/client';
+import EventDetailModal from '../../components/EventDetailModal';
 import type { Event } from '../../types';
 
 interface EventRowProps {
@@ -254,6 +255,13 @@ export default function StreamView() {
           )}
         </div>
       </div>
+      <EventDetailModal
+        event={state.detailModalEvent}
+        index={state.detailModalIndex}
+        total={state.filtered.length}
+        onNavigate={(idx) => dispatch({ type: 'SET_DETAIL_MODAL', payload: { event: state.filtered[idx], index: idx } })}
+        onClose={() => dispatch({ type: 'SET_DETAIL_MODAL', payload: { event: null, index: -1 } })}
+      />
     </section>
   );
 }

@@ -950,3 +950,10 @@ body {
   align-self: center;
 }
 
+/* ==================== JSON Viewer ==================== */
+.json-key { color: #9fd1ff; }
+.json-string { color: #f8c88b; }
+.json-number { color: #a9e4bf; }
+.json-boolean { color: #d6b8ff; }
+.json-null { color: #9a8f80; }
+
