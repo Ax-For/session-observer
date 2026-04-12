@@ -237,14 +237,13 @@ body {
   border-radius: var(--radius-lg);
   background: var(--panel);
   min-height: 0;
-  overflow: hidden;
 }
 
 .topbar-brand {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -273,7 +272,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 200px;
+  max-width: 400px;
 }
 
 .topbar-actions {
@@ -2569,10 +2568,16 @@ body[data-density='compact'] .log-meta {
 
   .topbar {
     padding: 6px 10px;
+    flex-wrap: wrap;
+  }
+
+  .topbar-status {
+    max-width: 260px;
   }
 
   .topbar-actions {
     justify-content: flex-start;
+    width: 100%;
   }
 
   .filter-panel {
