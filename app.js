@@ -9,6 +9,7 @@ const state = {
   pageLimit: 250,
   hasMore: false,
   dataSource: "server",
+  claudeVersion: "unknown",
   selectedSessionId: "",
   selectedRowIndex: -1,
   quickFilter: "all",
@@ -913,9 +914,9 @@ function renderPlatformBars(platformData) {
 
   const codexModels = [...(platformData.codex.models || [])];
   const claudeModels = [...(platformData.claude.models || [])];
-
+  const claudeVer = state.claudeVersion || "unknown";
+  const claudeTip = `Claude Code\n版本: ${claudeVer}\n会话: ${fmtNum(platformData.claude.sessions)}\n事件: ${fmtNum(platformData.claude.events)}\n模型: ${claudeModels.length > 0 ? claudeModels.join(", ") : "-"}`;
   const codexTip = `Codex\n会话: ${fmtNum(platformData.codex.sessions)}\n事件: ${fmtNum(platformData.codex.events)}\n模型: ${codexModels.length > 0 ? codexModels.join(", ") : "-"}`;
-  const claudeTip = `Claude Code\n会话: ${fmtNum(platformData.claude.sessions)}\n事件: ${fmtNum(platformData.claude.events)}\n模型: ${claudeModels.length > 0 ? claudeModels.join(", ") : "-"}`;
 
   container.innerHTML = `
     <div class="platform-bar">
@@ -932,8 +933,8 @@ function renderPlatformBars(platformData) {
         <span class="platform-bar-value">${fmtNum(platformData.claude.sessions)}</span>
         <span class="platform-bar-sub">会话</span>
       </div>
-      <span class="platform-label">Claude</span>
-      <span class="platform-bar-meta">${fmtNum(platformData.claude.events)} 事件</span>
+      <span class="platform-label">Claude Code</span>
+      <span class="platform-bar-meta">${fmtNum(platformData.claude.events)} 事件 · ${escapeHtml(claudeVer)}</span>
       <span class="platform-bar-models">${claudeModels.length > 0 ? claudeModels.map(shortModel).join(", ") : "-"}</span>
     </div>`;
 }
@@ -2168,6 +2169,7 @@ async function loadRealtimeEventsPage({ append }) {
   state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
   state.meta = data.meta || { models: [], types: [] };
   state.totalVisible = Number(data.totalVisible) || 0;
+  if (data.claudeVersion) state.claudeVersion = data.claudeVersion;
   state.totalMatching = Number(data.totalMatching) || state.filtered.length;
   state.pageOffset = Number(data.page?.offset) || 0;
   state.pageLimit = Number(data.page?.limit) || state.pageLimit;

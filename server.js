@@ -19,6 +19,15 @@ const INDEX_WARMUP_INTERVAL_MS = 3000;
 const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
 const fileEventCache = new Map();
 let aggregateCache = { key: "", events: [] };
+
+// Read Claude Code version at startup
+let claudeVersion = "unknown";
+try {
+  const proc = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000 });
+  if (proc.status === 0 && proc.stdout.trim()) {
+    claudeVersion = proc.stdout.trim();
+  }
+} catch { /* ignore */ }
 const indexState = {
   events: [],
   aggregateKey: "",
@@ -1074,6 +1083,7 @@ function queryEvents(filters) {
     generatedAt: new Date().toISOString(),
     sessionsDir: SESSIONS_DIR,
     mode: filters.mode,
+    claudeVersion,
     index: {
       dirty: indexState.dirty,
       lastBuiltAt: indexState.lastBuiltAt,
