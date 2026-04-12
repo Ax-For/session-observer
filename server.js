@@ -28,6 +28,15 @@ try {
     claudeVersion = proc.stdout.trim();
   }
 } catch { /* ignore */ }
+
+// Read Codex version at startup
+let codexVersion = "unknown";
+try {
+  const proc = spawnSync("codex", ["--version"], { encoding: "utf8", timeout: 3000 });
+  if (proc.status === 0 && proc.stdout.trim()) {
+    codexVersion = proc.stdout.trim();
+  }
+} catch { /* ignore */ }
 const indexState = {
   events: [],
   aggregateKey: "",
@@ -1084,6 +1093,7 @@ function queryEvents(filters) {
     sessionsDir: SESSIONS_DIR,
     mode: filters.mode,
     claudeVersion,
+    codexVersion,
     index: {
       dirty: indexState.dirty,
       lastBuiltAt: indexState.lastBuiltAt,

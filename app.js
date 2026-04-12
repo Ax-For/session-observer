@@ -10,6 +10,7 @@ const state = {
   hasMore: false,
   dataSource: "server",
   claudeVersion: "unknown",
+  codexVersion: "unknown",
   selectedSessionId: "",
   selectedRowIndex: -1,
   quickFilter: "all",
@@ -793,16 +794,10 @@ function computeDashboardStats() {
       const p = s.sourceType || "unknown";
       if (p === "codex" || p === "claude") {
         platformData[p].sessions++;
+        platformData[p].events += s.count || 0;
         if (s.models) {
           for (const m of s.models) platformData[p].models.add(m);
         }
-      }
-    }
-    // Count events per platform from filtered events
-    for (const e of state.filtered) {
-      const p = e.sourceType || "unknown";
-      if (p === "codex" || p === "claude") {
-        platformData[p].events++;
       }
     }
   } else {
@@ -812,6 +807,13 @@ function computeDashboardStats() {
       if (p === "codex" || p === "claude") {
         platformData[p].events++;
         if (e.model) platformData[p].models.add(e.model);
+      }
+    }
+    // Count sessions from local session groups
+    for (const g of state.sessionGroups) {
+      const p = g.sourceType || "unknown";
+      if (p === "codex" || p === "claude") {
+        platformData[p].sessions++;
       }
     }
   }
@@ -915,8 +917,9 @@ function renderPlatformBars(platformData) {
   const codexModels = [...(platformData.codex.models || [])];
   const claudeModels = [...(platformData.claude.models || [])];
   const claudeVer = state.claudeVersion || "unknown";
+  const codexVer = state.codexVersion || "unknown";
   const claudeTip = `Claude Code\n版本: ${claudeVer}\n会话: ${fmtNum(platformData.claude.sessions)}\n事件: ${fmtNum(platformData.claude.events)}\n模型: ${claudeModels.length > 0 ? claudeModels.join(", ") : "-"}`;
-  const codexTip = `Codex\n会话: ${fmtNum(platformData.codex.sessions)}\n事件: ${fmtNum(platformData.codex.events)}\n模型: ${codexModels.length > 0 ? codexModels.join(", ") : "-"}`;
+  const codexTip = `Codex\n版本: ${codexVer}\n会话: ${fmtNum(platformData.codex.sessions)}\n事件: ${fmtNum(platformData.codex.events)}\n模型: ${codexModels.length > 0 ? codexModels.join(", ") : "-"}`;
 
   container.innerHTML = `
     <div class="platform-bar">
@@ -925,7 +928,7 @@ function renderPlatformBars(platformData) {
       </div>
       <span class="platform-bar-sessions">${fmtNum(platformData.codex.sessions)} 会话</span>
       <span class="platform-label">Codex</span>
-      <span class="platform-bar-meta">${fmtNum(platformData.codex.events)} 事件</span>
+      <span class="platform-bar-meta">${fmtNum(platformData.codex.events)} 事件 · ${escapeHtml(codexVer)}</span>
       <span class="platform-bar-models">${codexModels.length > 0 ? codexModels.map(shortModel).join(", ") : "-"}</span>
     </div>
     <div class="platform-bar">
@@ -2170,6 +2173,7 @@ async function loadRealtimeEventsPage({ append }) {
   state.meta = data.meta || { models: [], types: [] };
   state.totalVisible = Number(data.totalVisible) || 0;
   if (data.claudeVersion) state.claudeVersion = data.claudeVersion;
+  if (data.codexVersion) state.codexVersion = data.codexVersion;
   state.totalMatching = Number(data.totalMatching) || state.filtered.length;
   state.pageOffset = Number(data.page?.offset) || 0;
   state.pageLimit = Number(data.page?.limit) || state.pageLimit;
