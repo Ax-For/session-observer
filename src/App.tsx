@@ -1,6 +1,9 @@
 import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useApp } from './store/context';
+import { useUrlState } from './hooks/useUrlState';
+import { useAutoRefresh } from './hooks/useAutoRefresh';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import TopBar from './components/TopBar';
 import Toolbar from './components/Toolbar';
 import FilterPanel from './components/FilterPanel';
@@ -8,10 +11,8 @@ import Dashboard from './components/Dashboard';
 import StreamView from './views/StreamView';
 import SessionsView from './views/SessionsView';
 
-// Sentry-inspired dark theme
 const darkAlgorithm = theme.darkAlgorithm;
 
-// Custom theme tokens mapped from existing styles.css
 const lightTheme = {
   token: {
     colorPrimary: '#2f6fba',
@@ -43,6 +44,11 @@ const darkTheme = {
 
 function AppContent() {
   const { state } = useApp();
+
+  // Initialize hooks
+  useUrlState();
+  useAutoRefresh();
+  useKeyboardShortcuts();
 
   return (
     <ConfigProvider
