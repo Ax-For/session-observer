@@ -922,8 +922,8 @@ function renderPlatformBars(platformData) {
     <div class="platform-bar">
       <div class="platform-bar-fill codex has-tip" data-tip="${escapeHtml(codexTip)}">
         <span class="platform-bar-value">${fmtNum(platformData.codex.sessions)}</span>
-        <span class="platform-bar-sub">会话</span>
       </div>
+      <span class="platform-bar-sessions">${fmtNum(platformData.codex.sessions)} 会话</span>
       <span class="platform-label">Codex</span>
       <span class="platform-bar-meta">${fmtNum(platformData.codex.events)} 事件</span>
       <span class="platform-bar-models">${codexModels.length > 0 ? codexModels.map(shortModel).join(", ") : "-"}</span>
@@ -931,8 +931,8 @@ function renderPlatformBars(platformData) {
     <div class="platform-bar">
       <div class="platform-bar-fill claude has-tip" data-tip="${escapeHtml(claudeTip)}">
         <span class="platform-bar-value">${fmtNum(platformData.claude.sessions)}</span>
-        <span class="platform-bar-sub">会话</span>
       </div>
+      <span class="platform-bar-sessions">${fmtNum(platformData.claude.sessions)} 会话</span>
       <span class="platform-label">Claude Code</span>
       <span class="platform-bar-meta">${fmtNum(platformData.claude.events)} 事件 · ${escapeHtml(claudeVer)}</span>
       <span class="platform-bar-models">${claudeModels.length > 0 ? claudeModels.map(shortModel).join(", ") : "-"}</span>
