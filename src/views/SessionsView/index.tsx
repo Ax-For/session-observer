@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button, Space, Input, Select, Checkbox, message } from 'antd';
 import { useApp } from '../../store/context';
 import { api } from '../../api/client';
@@ -16,6 +16,10 @@ export default function SessionsView() {
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
   const [showBatchDelete, setShowBatchDelete] = useState(false);
 
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
   async function loadSessions() {
     setLoading(true);
     try {
@@ -29,8 +33,20 @@ export default function SessionsView() {
   }
 
   const filteredGroups = (() => {
-    if (!state.sessionMgmtData) return [];
-    return Object.entries(state.sessionMgmtData)
+    // Build session data from either sessionMgmtData (local) or state.sessions (server)
+    const sessionMap: Record<string, Session[]> = {};
+    const source = state.sessionMgmtData || {};
+    if (Object.keys(source).length > 0) {
+      Object.assign(sessionMap, source);
+    } else if (state.sessions.length > 0) {
+      for (const s of state.sessions) {
+        const cwd = s.cwd || 'unknown';
+        if (!sessionMap[cwd]) sessionMap[cwd] = [];
+        sessionMap[cwd].push(s);
+      }
+    }
+    if (Object.keys(sessionMap).length === 0) return [];
+    return Object.entries(sessionMap)
       .map(([cwd, sessions]) => {
         let filtered = sessions;
         if (platform) filtered = filtered.filter((s) => s.sourceType === platform);
