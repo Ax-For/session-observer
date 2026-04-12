@@ -70,6 +70,7 @@ const els = {
   resizeHandle: document.getElementById("resizeHandle"),
   realtimeStatus: document.getElementById("realtimeStatus"),
   quickFilters: document.getElementById("quickFilters"),
+  filterToggleBtn: document.getElementById("filterToggleBtn"),
   tokenThresholdInput: document.getElementById("tokenThresholdInput"),
   rows: document.getElementById("rows"),
   loadMoreBtn: document.getElementById("loadMoreBtn"),
@@ -80,11 +81,9 @@ const els = {
   prevEventBtn: document.getElementById("prevEventBtn"),
   nextEventBtn: document.getElementById("nextEventBtn"),
   stats: document.getElementById("stats"),
-  tabBar: document.getElementById("tabBar"),
   streamView: document.getElementById("streamView"),
   sessionsView: document.getElementById("sessionsView"),
   streamFilters: document.getElementById("streamFilters"),
-  quickFiltersSection: document.getElementById("quickFilters"),
   statsSection: document.querySelector(".stats"),
   sessionMgmtSearch: document.getElementById("sessionMgmtSearch"),
   sessionMgmtPlatform: document.getElementById("sessionMgmtPlatform"),
@@ -2202,9 +2201,6 @@ function switchTab(tab) {
   els.streamView.hidden = true;
   document.getElementById("sessionsWrapper").hidden = true;
   els.inlineConvPanel.hidden = true;
-  els.streamFilters.hidden = true;
-  document.getElementById("stats").hidden = true;
-  document.getElementById("quickFilters").hidden = true;
   // Reset conv layout
   const wrapper = document.getElementById("sessionsWrapper");
   wrapper.classList.remove("with-conv");
@@ -2212,9 +2208,6 @@ function switchTab(tab) {
   // Show the selected view
   if (tab === "stream") {
     els.streamView.hidden = false;
-    els.streamFilters.hidden = false;
-    document.getElementById("stats").hidden = false;
-    document.getElementById("quickFilters").hidden = false;
   } else if (tab === "sessions") {
     document.getElementById("sessionsWrapper").hidden = false;
     loadSessionMgmtData();
@@ -3067,12 +3060,21 @@ function highlightAndScrollToSessionCard(sessionId) {
 
 // --- Wire session management events ---
 function wireSessionMgmt() {
-  // Tab switching
-  els.tabBar.addEventListener("click", (e) => {
-    const btn = e.target.closest(".tab-btn");
-    if (!btn) return;
-    switchTab(btn.dataset.tab);
+  // Tab switching (toolbar tabs)
+  document.querySelectorAll(".toolbar-tabs .tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
+
+  // Filter toggle
+  if (els.filterToggleBtn) {
+    els.filterToggleBtn.addEventListener("click", () => {
+      const panel = els.streamFilters;
+      const isHidden = panel.hidden;
+      panel.hidden = !isHidden;
+      els.filterToggleBtn.classList.toggle("open", isHidden);
+      els.filterToggleBtn.textContent = isHidden ? "筛选 ▴" : "筛选 ▾";
+    });
+  }
 
   // Session mgmt filters
   els.sessionMgmtSearch.addEventListener("input", () => renderSessionMgmtView());

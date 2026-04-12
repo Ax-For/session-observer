@@ -9,88 +9,97 @@
 </head>
 <body>
   <main class="workspace">
-    <section class="hero">
-      <div class="hero-brand">
-        <div class="brand-platforms">
-          <span class="platform-tag platform-codex">Codex</span>
-          <span class="platform-sep">+</span>
-          <span class="platform-tag platform-claude">Claude Code</span>
-        </div>
+    <!-- Compact Top Bar -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="topbar-logo">SO</span>
         <h1>Session Observer</h1>
-        <p class="hero-sub">实时追踪 Prompt、Agent 与 Tool 调用流，按 Session 维度快速定位上下文。</p>
+        <span id="realtimeStatus" class="topbar-status">就绪</span>
       </div>
-      <div class="top-actions">
-        <button id="manualRefreshBtn" type="button">手动刷新</button>
-        <button id="autoRefreshBtn" type="button">自动刷新(5s)</button>
-        <button id="modeToggleBtn" type="button">原始模式</button>
-        <button id="themeToggleBtn" type="button">夜间模式</button>
-        <button id="densityToggleBtn" type="button">紧凑视图</button>
-        <button id="helpBtn" type="button" title="键盘快捷键帮助">?</button>
-        <button id="exportBtn" type="button" title="导出当前筛选的事件">导出 JSONL</button>
-        <label class="file-btn">
-          导入 JSONL
-          <input id="fileInput" type="file" accept=".jsonl,.log,.txt" multiple>
+      <div class="topbar-actions">
+        <button id="autoRefreshBtn" type="button" class="icon-btn" title="自动刷新(5s)">⟳</button>
+        <button id="manualRefreshBtn" type="button" class="icon-btn" title="手动刷新">↻</button>
+        <button id="modeToggleBtn" type="button" class="icon-btn" title="切换观测/原始模式">M</button>
+        <button id="themeToggleBtn" type="button" class="icon-btn" title="切换白天/夜间模式">◑</button>
+        <button id="densityToggleBtn" type="button" class="icon-btn" title="切换紧凑/舒展视图">▤</button>
+        <button id="helpBtn" type="button" class="icon-btn" title="键盘快捷键帮助">?</button>
+        <button id="exportBtn" type="button" class="icon-btn" title="导出 JSONL">↓</button>
+        <label class="icon-btn file-btn" title="导入 JSONL">
+          ↑
+          <input id="fileInput" type="file" accept=".jsonl,.log,.txt" multiple hidden>
         </label>
       </div>
-      <div id="realtimeStatus" class="status-chip">自动刷新未启用</div>
-    </section>
+    </header>
 
-    <section class="tabs" id="tabBar">
-      <button class="tab-btn active" data-tab="stream">事件流</button>
-      <button class="tab-btn" data-tab="sessions">会话</button>
-    </section>
+    <!-- Toolbar: Tabs + Filter Toggle + Quick Filters -->
+    <nav class="toolbar" id="toolbar">
+      <div class="toolbar-tabs">
+        <button class="tab-btn active" data-tab="stream">事件流</button>
+        <button class="tab-btn" data-tab="sessions">会话</button>
+      </div>
+      <button id="filterToggleBtn" class="filter-toggle-btn" type="button">筛选 ▾</button>
+      <div class="toolbar-quick" id="quickFilters">
+        <button type="button" class="quick-btn active" data-quick-filter="all">全部</button>
+        <button type="button" class="quick-btn" data-quick-filter="alert">异常</button>
+        <button type="button" class="quick-btn" data-quick-filter="high_token">高 Token</button>
+        <input id="tokenThresholdInput" type="number" class="quick-threshold-input" min="0" step="1000" value="20000" title="高 Token 阈值">
+      </div>
+    </nav>
 
-    <section class="filters" id="streamFilters">
-      <label>
-        搜索
-        <input id="searchInput" type="text" placeholder="搜索内容 / session / tool / call_id">
-      </label>
-      <label>
-        模型
-        <select id="modelSelect">
-          <option value="">全部</option>
-        </select>
-      </label>
-      <label>
-        类型
-        <select id="typeSelect">
-          <option value="">全部</option>
-        </select>
-      </label>
-      <label>
-        平台
-        <select id="platformSelect">
-          <option value="">全部</option>
-          <option value="codex">Codex</option>
-          <option value="claude">Claude Code</option>
-        </select>
-      </label>
-      <label>
-        时间范围
-        <div class="time-quick-btns">
-          <button type="button" class="time-quick-btn" data-time-quick="1h">1小时</button>
-          <button type="button" class="time-quick-btn" data-time-quick="today">今天</button>
-          <button type="button" class="time-quick-btn" data-time-quick="week">本周</button>
-          <button type="button" class="time-quick-btn" data-time-quick="month">本月</button>
-        </div>
-      </label>
-      <label>
-        开始时间
-        <input id="startTime" type="datetime-local">
-      </label>
-      <label>
-        结束时间
-        <input id="endTime" type="datetime-local">
-      </label>
-      <label>
-        时间排序
-        <select id="sortOrder">
-          <option value="desc" selected>倒序（最新在前）</option>
-          <option value="asc">正序（最早在前）</option>
-        </select>
-      </label>
-      <button id="resetFiltersBtn" type="button">重置筛选</button>
-      <button id="clearBtn" type="button">清空数据</button>
+    <!-- Collapsible Filter Panel -->
+    <section class="filter-panel" id="streamFilters" hidden>
+      <div class="filter-row">
+        <label class="filter-field filter-wide">
+          <span>搜索</span>
+          <input id="searchInput" type="text" placeholder="搜索内容 / session / tool / call_id">
+        </label>
+        <label class="filter-field">
+          <span>模型</span>
+          <select id="modelSelect"><option value="">全部</option></select>
+        </label>
+        <label class="filter-field">
+          <span>类型</span>
+          <select id="typeSelect"><option value="">全部</option></select>
+        </label>
+        <label class="filter-field">
+          <span>平台</span>
+          <select id="platformSelect">
+            <option value="">全部</option>
+            <option value="codex">Codex</option>
+            <option value="claude">Claude Code</option>
+          </select>
+        </label>
+      </div>
+      <div class="filter-row">
+        <label class="filter-field filter-time">
+          <span>时间范围</span>
+          <div class="time-quick-btns">
+            <button type="button" class="time-quick-btn" data-time-quick="1h">1h</button>
+            <button type="button" class="time-quick-btn" data-time-quick="today">今天</button>
+            <button type="button" class="time-quick-btn" data-time-quick="week">本周</button>
+            <button type="button" class="time-quick-btn" data-time-quick="month">本月</button>
+          </div>
+        </label>
+        <label class="filter-field">
+          <span>开始</span>
+          <input id="startTime" type="datetime-local">
+        </label>
+        <label class="filter-field">
+          <span>结束</span>
+          <input id="endTime" type="datetime-local">
+        </label>
+        <label class="filter-field">
+          <span>排序</span>
+          <select id="sortOrder">
+            <option value="desc">↓ 最新在前</option>
+            <option value="asc">↑ 最早在前</option>
+          </select>
+        </label>
+      </div>
+      <div class="filter-actions">
+        <button id="resetFiltersBtn" type="button">重置</button>
+        <button id="clearBtn" type="button">清空</button>
+      </div>
     </section>
 
     <!-- Dashboard -->
@@ -135,16 +144,6 @@
           </div>
         </div>
       </div>
-    </section>
-    <section class="quick-filters" id="quickFilters">
-      <span class="quick-title">快速过滤</span>
-      <button type="button" class="quick-filter-btn active" data-quick-filter="all">全部</button>
-      <button type="button" class="quick-filter-btn" data-quick-filter="alert">仅异常</button>
-      <button type="button" class="quick-filter-btn" data-quick-filter="high_token">高 Token</button>
-      <label class="quick-threshold">
-        阈值
-        <input id="tokenThresholdInput" type="number" min="0" step="1000" value="20000">
-      </label>
     </section>
 
     <!-- Stream View (existing) -->
