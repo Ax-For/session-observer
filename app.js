@@ -401,11 +401,11 @@ function addTokenUsage(base, next) {
 }
 
 function rowHeightForDensity() {
-  return state.density === "compact" ? 60 : 72;
+  return state.density === "compact" ? 40 : 48;
 }
 
 function sessionRowHeightForDensity() {
-  return state.density === "compact" ? 108 : 136;
+  return state.density === "compact" ? 72 : 84;
 }
 
 function summarizeRawObject(obj) {
