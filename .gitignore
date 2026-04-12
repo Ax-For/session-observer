@@ -11,9 +11,9 @@ Thumbs.db
 *.swp
 *.swo
 .idea/
-.vscode/node_modules/
-dist/
-*.tsbuildinfo
+.vscode/
+
+# Build
 node_modules/
 dist/
 *.tsbuildinfo
