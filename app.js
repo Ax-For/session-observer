@@ -405,7 +405,7 @@ function rowHeightForDensity() {
 }
 
 function sessionRowHeightForDensity() {
-  return state.density === "compact" ? 122 : 152;
+  return state.density === "compact" ? 108 : 136;
 }
 
 function summarizeRawObject(obj) {
@@ -1021,25 +1021,24 @@ function sessionItemHtml(g) {
   const active = g.sessionId === state.selectedSessionId ? "active" : "";
   const title = g.sessionTitle || g.fallbackTitle || "未命名会话";
   const tokenMeta = hasTokenUsageData(g.aggregateToken) ? `Tok ${fmtTokenHuman(g.aggregateToken.total)}` : "Tok -";
-  const sidShort = shortId(g.sessionId, 18);
-  const cwdShort = shortPathN(g.cwd, 4);
-  const compactMeta = `事件 ${g.count} · ${tokenMeta} · 最近 ${formatShanghaiTime(g.latest)}`;
+  const sidShort = shortId(g.sessionId, 12);
+  const cwdShort = shortPathN(g.cwd, 3);
+  const compactMeta = `${g.count} · ${tokenMeta} · ${formatShanghaiTime(g.latest)}`;
   const platform = g.sourceType || "unknown";
   const platformLabel = platform === "claude" ? "CC" : platform === "codex" ? "CX" : platform;
   const platformFullName = platform === "claude" ? "Claude Code" : platform === "codex" ? "Codex" : platform;
   return `<li class="session-row">
     <div class="session-item ${active}" data-session-id="${escapeHtml(g.sessionId)}" role="button" tabindex="0">
       <div class="session-title-row">
-        <span class="chip chip-platform chip-${escapeHtml(platform)} session-platform" title="${escapeHtml(platformFullName)}">${escapeHtml(platformLabel)}</span>
+        <span class="session-icon session-icon-${escapeHtml(platform)}" title="${escapeHtml(platformFullName)}">${escapeHtml(platformLabel)}</span>
         <span class="sname has-tip" data-tip="${escapeHtml(title)}">${escapeHtml(title)}</span>
-        <span class="session-nav-hint" title="点击查看事件流">→</span>
+        <span class="session-meta">${escapeHtml(compactMeta)}</span>
+        <button class="session-copy-btn" data-copy-session-id="${escapeHtml(g.sessionId)}" type="button" title="复制 Session ID">⎘</button>
       </div>
-      <div class="sid-line">
-        <span class="sid has-tip" data-tip="${escapeHtml(g.sessionId)}">${escapeHtml(sidShort)}</span>
-        <button class="session-copy-inline" data-copy-session-id="${escapeHtml(g.sessionId)}" type="button" title="复制 Session ID">复制</button>
+      <div class="session-detail-row">
+        <span class="sid">${escapeHtml(sidShort)}</span>
+        <span class="cwd-line">${escapeHtml(cwdShort)}</span>
       </div>
-      <span class="meta meta-compact has-tip" data-tip="${escapeHtml(compactMeta)}">${escapeHtml(compactMeta)}</span>
-      <span class="meta cwd-line has-tip" data-tip="${escapeHtml(g.cwd || "-")}">cwd <span class="cwd-value">${escapeHtml(cwdShort)}</span></span>
     </div>
   </li>`;
 }
