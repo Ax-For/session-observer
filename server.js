@@ -72,8 +72,13 @@ function listJsonlFiles(dir) {
     const entries = fs.readdirSync(current, { withFileTypes: true });
     for (const e of entries) {
       const full = path.join(current, e.name);
-      if (e.isDirectory()) stack.push(full);
-      else if (e.isFile() && full.endsWith(".jsonl")) out.push(full);
+      if (e.isDirectory()) {
+        // Skip subagent directories — their events are already merged into parent sessions
+        if (e.name === "subagents") continue;
+        stack.push(full);
+      } else if (e.isFile() && full.endsWith(".jsonl")) {
+        out.push(full);
+      }
     }
   }
   return out;
