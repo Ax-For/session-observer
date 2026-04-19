@@ -39,6 +39,28 @@ ensure_node() {
   fi
 }
 
+ensure_frontend_build() {
+  if [[ ! -f "${ROOT_DIR}/package.json" ]]; then
+    return 0
+  fi
+
+  local dist_index="${ROOT_DIR}/dist/index.html"
+  local needs_build=0
+
+  if [[ ! -f "${dist_index}" ]]; then
+    needs_build=1
+  elif find "${ROOT_DIR}/src" -type f -newer "${dist_index}" | grep -q .; then
+    needs_build=1
+  elif [[ "${ROOT_DIR}/index.html" -nt "${dist_index}" ]]; then
+    needs_build=1
+  fi
+
+  if [[ "${needs_build}" -eq 1 ]]; then
+    echo "Building frontend..."
+    (cd "${ROOT_DIR}" && npm run build >/dev/null)
+  fi
+}
+
 is_running() {
   if [[ -f "${PID_FILE}" ]]; then
     local pid
@@ -52,6 +74,7 @@ is_running() {
 
 start_server() {
   ensure_node
+  ensure_frontend_build
   mkdir -p "${RUNTIME_DIR}"
 
   if is_running; then
@@ -137,6 +160,7 @@ open_ui() {
 
 run_foreground() {
   ensure_node
+  ensure_frontend_build
   cd "${ROOT_DIR}"
   HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" node server.js
 }

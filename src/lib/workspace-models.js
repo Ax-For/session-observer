@@ -1,0 +1,193 @@
+const PLATFORM_LABELS = {
+  codex: "Codex",
+  claude: "Claude Code",
+};
+
+const QUICK_FILTER_LABELS = {
+  all: "全部事件",
+  alert: "告警视图",
+  high_token: "高 Token",
+};
+
+function toFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function compareKeyValuePairs(left, right) {
+  if (right.value !== left.value) return right.value - left.value;
+  return String(left.key).localeCompare(String(right.key), "zh-CN");
+}
+
+function flattenSessions(groupsOrSessions) {
+  if (Array.isArray(groupsOrSessions)) return groupsOrSessions;
+  if (!groupsOrSessions || typeof groupsOrSessions !== "object") return [];
+  return Object.values(groupsOrSessions).flat();
+}
+
+export function buildDashboardSummary({
+  events,
+  sessions,
+  totalVisible,
+  totalMatching,
+  totalLoaded,
+}) {
+  const flattenedSessions = flattenSessions(sessions);
+  const totals = {
+    input: 0,
+    output: 0,
+    total: 0,
+    cachedInput: 0,
+    reasoningOutput: 0,
+  };
+
+  const typeCounts = new Map();
+  const modelCounts = new Map();
+  const platformEvents = new Map();
+  const platformSessions = new Map();
+  const hasSessionAggregates = flattenedSessions.some((session) => (
+    toFiniteNumber(session?.count) > 0
+    || toFiniteNumber(session?.aggregateToken?.total) > 0
+    || (session?.models || []).length > 0
+  ));
+
+  for (const session of flattenedSessions) {
+    const key = session?.sourceType || "unknown";
+    platformSessions.set(key, (platformSessions.get(key) || 0) + 1);
+  }
+
+  for (const event of events || []) {
+    const typeKey = event?.callType || "Unknown";
+    const modelKey = event?.model || "unknown";
+    const platformKey = event?.sourceType || "unknown";
+    typeCounts.set(typeKey, (typeCounts.get(typeKey) || 0) + 1);
+
+    if (!hasSessionAggregates) {
+      modelCounts.set(modelKey, (modelCounts.get(modelKey) || 0) + 1);
+      platformEvents.set(platformKey, (platformEvents.get(platformKey) || 0) + 1);
+
+      const token = event?.tokenUsage;
+      if (!token) continue;
+      totals.input += toFiniteNumber(token.input);
+      totals.output += toFiniteNumber(token.output);
+      totals.total += toFiniteNumber(token.total);
+      totals.cachedInput += toFiniteNumber(token.cachedInput);
+      totals.reasoningOutput += toFiniteNumber(token.reasoningOutput);
+    }
+  }
+
+  if (hasSessionAggregates) {
+    for (const session of flattenedSessions) {
+      const platformKey = session?.sourceType || "unknown";
+      const sessionToken = session?.aggregateToken;
+      const sessionModels = Array.isArray(session?.models) ? session.models : [];
+
+      platformEvents.set(platformKey, (platformEvents.get(platformKey) || 0) + toFiniteNumber(session?.count));
+
+      totals.input += toFiniteNumber(sessionToken?.input);
+      totals.output += toFiniteNumber(sessionToken?.output);
+      totals.total += toFiniteNumber(sessionToken?.total);
+      totals.cachedInput += toFiniteNumber(sessionToken?.cachedInput);
+      totals.reasoningOutput += toFiniteNumber(sessionToken?.reasoningOutput);
+
+      sessionModels.forEach((model) => {
+        modelCounts.set(model, (modelCounts.get(model) || 0) + 1);
+      });
+    }
+  }
+
+  return {
+    totals,
+    counts: {
+      totalVisible: toFiniteNumber(totalVisible),
+      totalMatching: toFiniteNumber(totalMatching),
+      totalLoaded: toFiniteNumber(totalLoaded),
+      sessions: flattenedSessions.length,
+    },
+    topTypes: [...typeCounts.entries()]
+      .map(([key, value]) => ({ key, value }))
+      .sort(compareKeyValuePairs),
+    topModels: [...modelCounts.entries()]
+      .map(([key, value]) => ({ key, value }))
+      .sort(compareKeyValuePairs),
+    platforms: [...new Set([...platformSessions.keys(), ...platformEvents.keys()])]
+      .map((key) => ({
+        key,
+        sessions: platformSessions.get(key) || 0,
+        events: platformEvents.get(key) || 0,
+      }))
+      .sort((left, right) => {
+        if (right.events !== left.events) return right.events - left.events;
+        if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+        return String(left.key).localeCompare(String(right.key), "zh-CN");
+      }),
+  };
+}
+
+export function buildSessionSections(groups, filters = {}) {
+  const query = String(filters.query || "").trim().toLowerCase();
+  const platform = filters.platform || "";
+  const namedOnly = Boolean(filters.namedOnly);
+
+  return Object.entries(groups || {})
+    .map(([cwd, items]) => {
+      const sessions = (items || [])
+        .filter((session) => {
+          if (platform && session?.sourceType !== platform) return false;
+          if (namedOnly && !String(session?.sessionTitle || "").trim()) return false;
+
+          if (!query) return true;
+          const haystack = [
+            session?.sessionTitle,
+            session?.fallbackTitle,
+            session?.cwd,
+            session?.sessionId,
+            ...(session?.models || []),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          return haystack.includes(query);
+        })
+        .map((session) => ({
+          ...session,
+          title: session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话",
+          totalTokens: toFiniteNumber(session?.aggregateToken?.total),
+        }))
+        .sort((left, right) => String(right.latest).localeCompare(String(left.latest)));
+
+      return { cwd, total: sessions.length, sessions };
+    })
+    .filter((section) => section.total > 0)
+    .sort((left, right) => {
+      const rightLatest = right.sessions[0]?.latest || "";
+      const leftLatest = left.sessions[0]?.latest || "";
+      return String(rightLatest).localeCompare(String(leftLatest));
+    });
+}
+
+export function buildStreamScope({
+  selectedSessionId,
+  sessions,
+  quickFilter,
+  platform,
+  query,
+  mode,
+}) {
+  const activeSession = flattenSessions(sessions).find((session) => session?.sessionId === selectedSessionId) || null;
+  const title = activeSession?.sessionTitle?.trim()
+    || activeSession?.fallbackTitle?.trim()
+    || "全部会话";
+  const scopePlatform = activeSession?.sourceType || platform || "";
+
+  return {
+    title,
+    subtitle: [
+      PLATFORM_LABELS[scopePlatform] || "跨平台",
+      QUICK_FILTER_LABELS[quickFilter] || QUICK_FILTER_LABELS.all,
+      mode || "observe",
+    ].join(" · "),
+    tags: [query || "", activeSession?.cwd || ""].filter(Boolean),
+  };
+}

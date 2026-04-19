@@ -22,9 +22,11 @@ const {
   toTimeMs: toTimeMsCore,
 } = ObserverCore;
 
-const HOST = "127.0.0.1";
+const HOST = process.env.HOST || "127.0.0.1";
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
 const ROOT = __dirname;
+const DIST_ROOT = path.join(ROOT, "dist");
+const DIST_INDEX = path.join(DIST_ROOT, "index.html");
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
@@ -62,6 +64,31 @@ const indexState = {
   lastBuiltAt: "",
   lastError: "",
 };
+
+function ensureFrontendBuild() {
+  const packageJsonPath = path.join(ROOT, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return;
+  if (fs.existsSync(DIST_INDEX)) return;
+
+  console.log("[frontend] dist not found, running npm build...");
+  const proc = spawnSync("npm", ["run", "build"], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: process.env,
+  });
+
+  if (proc.status !== 0 || !fs.existsSync(DIST_INDEX)) {
+    throw new Error("Frontend build failed; dist/index.html is missing.");
+  }
+}
+
+function resolveStaticRoot() {
+  ensureFrontendBuild();
+  if (fs.existsSync(DIST_INDEX)) return DIST_ROOT;
+  return ROOT;
+}
+
+const STATIC_ROOT = resolveStaticRoot();
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -457,8 +484,8 @@ function queryEvents(filters) {
 function serveStatic(reqPath, res) {
   let filePath = reqPath === "/" ? "/index.html" : reqPath;
   filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  const abs = path.join(ROOT, filePath);
-  if (!abs.startsWith(ROOT)) {
+  const abs = path.join(STATIC_ROOT, filePath);
+  if (!abs.startsWith(STATIC_ROOT)) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
