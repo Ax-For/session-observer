@@ -249,6 +249,38 @@
       .sort((a, b) => (a.latest < b.latest ? 1 : -1));
   }
 
+  function mergeSessionMetaRecords(base, incoming) {
+    const left = base && typeof base === "object" ? base : {};
+    const right = incoming && typeof incoming === "object" ? incoming : {};
+    const leftUpdatedAtMs = Number.isFinite(Number(left.updatedAtMs)) ? Number(left.updatedAtMs) : 0;
+    const rightUpdatedAtMs = Number.isFinite(Number(right.updatedAtMs)) ? Number(right.updatedAtMs) : 0;
+
+    return {
+      title:
+        (typeof right.title === "string" && right.title.trim()) ||
+        (typeof left.title === "string" && left.title.trim()) ||
+        "",
+      cwd:
+        (typeof right.cwd === "string" && right.cwd.trim()) ||
+        (typeof left.cwd === "string" && left.cwd.trim()) ||
+        "",
+      updatedAtMs: Math.max(leftUpdatedAtMs, rightUpdatedAtMs),
+    };
+  }
+
+  function applyEventSessionMeta(event, meta, options = {}) {
+    if (!event || !meta || typeof meta !== "object") return event;
+    const title = typeof meta.title === "string" ? meta.title.trim() : "";
+    const cwd = typeof meta.cwd === "string" ? meta.cwd.trim() : "";
+    const titleStrategy = options.titleStrategy === "always" ? "always" : "missing-only";
+
+    if (cwd && !event.cwd) event.cwd = cwd;
+    if (title && (titleStrategy === "always" || !String(event.sessionTitle || "").trim())) {
+      event.sessionTitle = title;
+    }
+    return event;
+  }
+
   function applySessionTitleOverrides(groups, overrides, sourceType = "") {
     if (!Array.isArray(groups) || !groups.length || !overrides) return groups;
     for (const group of groups) {
@@ -861,6 +893,7 @@
   }
 
   return {
+    applyEventSessionMeta,
     addTokenUsage,
     applySessionTitleOverrides,
     buildSessionGroups,
@@ -873,6 +906,7 @@
     fmtTokenHuman,
     hasTokenUsageData,
     isAlertEvent,
+    mergeSessionMetaRecords,
     parseClaudeCodeLineToEvent,
     parseCodexLineToEvent,
     toPositiveInt,

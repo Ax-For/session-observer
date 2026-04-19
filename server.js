@@ -8,12 +8,14 @@ const { spawnSync } = require("child_process");
 const ObserverCore = require("./shared/observer-core");
 
 const {
+  applyEventSessionMeta: applyEventSessionMetaCore,
   applySessionTitleOverrides: applySessionTitleOverridesCore,
   buildSessionGroups: buildSessionGroupsCore,
   collectMeta: collectMetaCore,
   dedupeEvents: dedupeEventsCore,
   eventMatchesFilters: eventMatchesFiltersCore,
   eventMatchesMode: eventMatchesModeCore,
+  mergeSessionMetaRecords: mergeSessionMetaRecordsCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
   parseCodexLineToEvent: parseCodexLineToEventCore,
   toPositiveInt: toPositiveIntCore,
@@ -25,6 +27,8 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
 const ROOT = __dirname;
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
+const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
+const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1000;
@@ -126,7 +130,7 @@ function loadThreadMetadataMap() {
   const map = new Map();
   if (!fs.existsSync(STATE_DB)) return map;
 
-  const sql = "select id, coalesce(title, ''), coalesce(cwd, '') from threads;";
+  const sql = "select id, coalesce(title, ''), coalesce(cwd, ''), coalesce(updated_at_ms, updated_at * 1000, 0) from threads;";
   const proc = spawnSync("sqlite3", ["-separator", "\t", STATE_DB, sql], { encoding: "utf8" });
   if (proc.status !== 0 || !proc.stdout) {
     if (proc.error?.code === "ENOENT") {
@@ -137,22 +141,25 @@ function loadThreadMetadataMap() {
 
   const lines = proc.stdout.split(/\r?\n/).filter(Boolean);
   for (const line of lines) {
-    const [id, title, cwd] = line.split("\t");
+    const [id, title, cwd, updatedAtMs] = line.split("\t");
     if (!id) continue;
-    map.set(id, { title: title || "", cwd: cwd || "" });
+    map.set(id, {
+      title: title || "",
+      cwd: cwd || "",
+      updatedAtMs: Number.isFinite(Number(updatedAtMs)) ? Number(updatedAtMs) : 0,
+    });
   }
   return map;
 }
 
 function loadClaudeCodeSessionMeta() {
   const map = new Map();
-  const claudeSessionsDir = path.join(os.homedir(), ".claude", "sessions");
-  if (!fs.existsSync(claudeSessionsDir)) return map;
+  if (!fs.existsSync(CLAUDE_SESSIONS_DIR)) return map;
 
-  const sessionFiles = fs.readdirSync(claudeSessionsDir).filter((f) => f.endsWith(".json"));
+  const sessionFiles = fs.readdirSync(CLAUDE_SESSIONS_DIR).filter((f) => f.endsWith(".json"));
   for (const file of sessionFiles) {
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(claudeSessionsDir, file), "utf8"));
+      const data = JSON.parse(fs.readFileSync(path.join(CLAUDE_SESSIONS_DIR, file), "utf8"));
       if (data.sessionId) {
         map.set(data.sessionId, {
           title: data.name || "",
@@ -166,10 +173,46 @@ function loadClaudeCodeSessionMeta() {
   return map;
 }
 
-function getStateSignature() {
-  if (!fs.existsSync(STATE_DB)) return "missing";
-  const stat = fs.statSync(STATE_DB);
+function loadCodexSessionIndexMeta() {
+  const map = new Map();
+  if (!fs.existsSync(CODEX_SESSION_INDEX)) return map;
+  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      const id = typeof obj.id === "string" ? obj.id.trim() : "";
+      const title = typeof obj.thread_name === "string" ? obj.thread_name.trim() : "";
+      if (!id || !title) continue;
+      const updatedAtMs = Date.parse(obj.updated_at || "");
+      map.set(id, mergeSessionMetaRecordsCore(map.get(id), {
+        title,
+        cwd: "",
+        updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
+      }));
+    } catch {
+      // skip invalid lines
+    }
+  }
+  return map;
+}
+
+function loadCodexSessionMeta() {
+  const merged = loadThreadMetadataMap();
+  const indexed = loadCodexSessionIndexMeta();
+  for (const [id, meta] of indexed) {
+    merged.set(id, mergeSessionMetaRecordsCore(merged.get(id), meta));
+  }
+  return merged;
+}
+
+function getPathSignature(target) {
+  if (!fs.existsSync(target)) return "missing";
+  const stat = fs.statSync(target);
   return `${stat.size}:${stat.mtimeMs}`;
+}
+
+function getStateSignature() {
+  return getPathSignature(STATE_DB);
 }
 
 function computeAggregateSignature() {
@@ -177,6 +220,7 @@ function computeAggregateSignature() {
   const claudeFiles = listJsonlFiles(CLAUDE_PROJECTS_DIR);
   const files = [...codexFiles, ...claudeFiles];
   const stateSignature = getStateSignature();
+  const codexIndexSignature = getPathSignature(CODEX_SESSION_INDEX);
   const parts = files.map((file) => {
     const stat = fs.statSync(file);
     return `${file}:${stat.size}:${stat.mtimeMs}`;
@@ -184,7 +228,7 @@ function computeAggregateSignature() {
   return {
     files,
     stateSignature,
-    aggregateKey: `${stateSignature}|${parts.join("|")}`,
+    aggregateKey: `${stateSignature}|${codexIndexSignature}|${parts.join("|")}`,
   };
 }
 
@@ -233,11 +277,11 @@ function parseFileEvents(file, stateSignature, threadMeta) {
       const obj = JSON.parse(line);
       const evtOrArray = parser(obj, context);
       const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
+      const titleStrategy = parser === parseCodexLineToEventCore ? "always" : "missing-only";
       for (const evt of events) {
         const meta = threadMeta.get(evt.sessionId);
         if (meta) {
-          if (!evt.sessionTitle && meta.title) evt.sessionTitle = meta.title;
-          if (!evt.cwd && meta.cwd) evt.cwd = meta.cwd;
+          applyEventSessionMetaCore(evt, meta, { titleStrategy });
         }
         parsed.push(evt);
       }
@@ -268,7 +312,7 @@ function parseFileEvents(file, stateSignature, threadMeta) {
 }
 
 function computeAggregate() {
-  const threadMeta = loadThreadMetadataMap();
+  const threadMeta = loadCodexSessionMeta();
   const claudeMeta = loadClaudeCodeSessionMeta();
   // Merge Claude Code metadata into threadMeta (no key collisions expected since session IDs are unique)
   for (const [id, meta] of claudeMeta) {
@@ -421,25 +465,6 @@ function serveStatic(reqPath, res) {
   fs.createReadStream(abs).pipe(res);
 }
 
-function loadCodexSessionIndex() {
-  const indexPath = path.join(os.homedir(), ".codex", "session_index.jsonl");
-  const map = new Map();
-  if (!fs.existsSync(indexPath)) return map;
-  const lines = fs.readFileSync(indexPath, "utf8").split("\n").filter((l) => l.trim());
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      // Get the most recent entry for each session (last one wins)
-      if (obj.id && obj.thread_name) {
-        map.set(obj.id, obj.thread_name);
-      }
-    } catch {
-      // skip
-    }
-  }
-  return map;
-}
-
 function loadClaudeSessionIndex() {
   const claudeSessionsDir = path.join(os.homedir(), ".claude", "sessions");
   const map = new Map();
@@ -462,7 +487,6 @@ function querySessions() {
   const ready = ensureIndexReady();
   const groups = buildSessionGroupsCore(ready.events);
 
-  applySessionTitleOverridesCore(groups, loadCodexSessionIndex(), "codex");
   applySessionTitleOverridesCore(groups, loadClaudeSessionIndex(), "claude");
 
   // Group by cwd
@@ -550,18 +574,17 @@ function findCodexSessionFiles(sessionId) {
 }
 
 function updateCodexSessionIndex(sessionId, newName) {
-  const indexPath = path.join(os.homedir(), ".codex", "session_index.jsonl");
-  if (!fs.existsSync(indexPath)) {
+  if (!fs.existsSync(CODEX_SESSION_INDEX)) {
     // Create new index file with the session entry
     const entry = JSON.stringify({
       id: sessionId,
       thread_name: newName,
       updated_at: new Date().toISOString(),
     });
-    fs.writeFileSync(indexPath, entry + "\n", "utf8");
+    fs.writeFileSync(CODEX_SESSION_INDEX, entry + "\n", "utf8");
     return true;
   }
-  const lines = fs.readFileSync(indexPath, "utf8").split("\n").filter((l) => l.trim());
+  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
   const updated = [];
   let found = false;
   for (const line of lines) {
@@ -585,14 +608,32 @@ function updateCodexSessionIndex(sessionId, newName) {
       updated_at: new Date().toISOString(),
     }));
   }
-  fs.writeFileSync(indexPath, updated.join("\n") + "\n", "utf8");
+  fs.writeFileSync(CODEX_SESSION_INDEX, updated.join("\n") + "\n", "utf8");
   return true;
 }
 
+function escapeSqliteString(value) {
+  return `'${String(value || "").replace(/'/g, "''")}'`;
+}
+
+function updateCodexThreadTitle(sessionId, newName) {
+  if (!fs.existsSync(STATE_DB)) return false;
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
+  const sql = [
+    `update threads set title = ${escapeSqliteString(newName)}, updated_at = ${nowSec}, updated_at_ms = ${nowMs}`,
+    `where id = ${escapeSqliteString(sessionId)};`,
+    "select changes();",
+  ].join(" ");
+  const proc = spawnSync("sqlite3", [STATE_DB, sql], { encoding: "utf8" });
+  if (proc.status !== 0) return false;
+  const changes = Number.parseInt((proc.stdout || "").trim().split(/\r?\n/).pop() || "0", 10);
+  return Number.isFinite(changes) && changes > 0;
+}
+
 function removeCodexSessionFromIndex(sessionId) {
-  const indexPath = path.join(os.homedir(), ".codex", "session_index.jsonl");
-  if (!fs.existsSync(indexPath)) return;
-  const lines = fs.readFileSync(indexPath, "utf8").split("\n").filter((l) => l.trim());
+  if (!fs.existsSync(CODEX_SESSION_INDEX)) return;
+  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
   const updated = lines.filter((line) => {
     try {
       const obj = JSON.parse(line);
@@ -601,7 +642,7 @@ function removeCodexSessionFromIndex(sessionId) {
       return true;
     }
   });
-  fs.writeFileSync(indexPath, updated.join("\n") + (updated.length > 0 ? "\n" : ""), "utf8");
+  fs.writeFileSync(CODEX_SESSION_INDEX, updated.join("\n") + (updated.length > 0 ? "\n" : ""), "utf8");
 }
 
 function deleteClaudeSessionFiles(sessionId) {
@@ -687,7 +728,9 @@ const server = http.createServer((req, res) => {
         }
 
         // Try Codex
-        if (updateCodexSessionIndex(sessionId, newName)) {
+        const codexDbUpdated = updateCodexThreadTitle(sessionId, newName);
+        const codexIndexUpdated = updateCodexSessionIndex(sessionId, newName);
+        if (codexDbUpdated || codexIndexUpdated) {
           scheduleIndexRefresh("session-renamed");
           return sendJson(res, 200, { success: true, sessionId, name: newName, platform: "codex" });
         }

@@ -2,10 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  applyEventSessionMeta,
   applySessionTitleOverrides,
   buildSessionGroups,
   dedupeEvents,
   eventMatchesMode,
+  mergeSessionMetaRecords,
   parseClaudeCodeLineToEvent,
   parseCodexLineToEvent,
 } = require("../shared/observer-core");
@@ -250,6 +252,37 @@ test("applySessionTitleOverrides updates only matching source groups", () => {
 
   assert.equal(groups[0].sessionTitle, "Claude Active Title");
   assert.equal(groups[1].sessionTitle, "");
+});
+
+test("applyEventSessionMeta lets Codex metadata overwrite stale transcript titles", () => {
+  const event = {
+    sessionId: "sess-codex",
+    sessionTitle: "Original title",
+    cwd: "",
+    sourceType: "codex",
+  };
+
+  const updated = applyEventSessionMeta({ ...event }, {
+    title: "Renamed in Codex",
+    cwd: "/tmp/workspace",
+    updatedAtMs: 2000,
+  }, { titleStrategy: "always" });
+
+  assert.equal(updated.sessionTitle, "Renamed in Codex");
+  assert.equal(updated.cwd, "/tmp/workspace");
+});
+
+test("mergeSessionMetaRecords keeps explicit title overrides while preserving existing cwd", () => {
+  const merged = mergeSessionMetaRecords(
+    { title: "Original title", cwd: "/tmp/workspace", updatedAtMs: 1000 },
+    { title: "Renamed in Observer", updatedAtMs: 2000 },
+  );
+
+  assert.deepEqual(merged, {
+    title: "Renamed in Observer",
+    cwd: "/tmp/workspace",
+    updatedAtMs: 2000,
+  });
 });
 
 test("eventMatchesMode hides raw and sidechain events in observe mode", () => {
