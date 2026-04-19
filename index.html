@@ -4,8 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Session Observer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f6fba'/%3E%3Ctext x='50%25' y='55%25' text-anchor='middle' dominant-baseline='middle' font-family='Arial,sans-serif' font-size='30' font-weight='700' fill='white'%3ESO%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="./styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="./app/vendor/marked.min.js"></script>
+  <script src="./shared/observer-core.js"></script>
+  <script src="./shared/observer-data.js"></script>
+  <script src="./app/api/client.js"></script>
+  <script src="./app/utils/display.js"></script>
+  <script src="./app/state/session-management.js"></script>
+  <script src="./app/state/stream-filters.js"></script>
+  <script src="./app/state/url-state.js"></script>
+  <script src="./app/controllers/app-shell.js"></script>
+  <script src="./app/controllers/session-events.js"></script>
+  <script src="./app/controllers/stream-events.js"></script>
+  <script src="./app/controllers/stream-workspace.js"></script>
+  <script src="./app/controllers/session-workspace.js"></script>
+  <script src="./app/views/stream-ui.js"></script>
+  <script src="./app/views/session-management.js"></script>
+  <script src="./app/views/conversation.js"></script>
 </head>
 <body>
   <main class="workspace">

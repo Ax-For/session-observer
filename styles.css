@@ -216,6 +216,7 @@ body {
     repeating-linear-gradient(0deg, rgba(17, 32, 51, 0.018), rgba(17, 32, 51, 0.018) 1px, transparent 1px, transparent 6px),
     var(--bg);
   font-family: 'Space Grotesk', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  overflow-x: hidden;
 }
 
 .workspace {
@@ -2593,6 +2594,12 @@ body[data-density='compact'] .log-meta {
   }
 }
 
+@media (max-width: 560px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1320px) {
   .content-grid {
     grid-template-columns: 280px 1fr;
@@ -2790,6 +2797,7 @@ body[data-density='compact'] .log-meta {
 .conv-message.tool {
   align-self: flex-start;
   max-width: 90%;
+  min-width: 0;
   flex-direction: column;
   border-left: 2px solid var(--line);
   padding: var(--spacing-xs) var(--spacing-sm);
@@ -3467,6 +3475,7 @@ body[data-theme='dark'] .conv-terminal-pill {
   gap: var(--spacing-sm);
   padding: var(--spacing-sm);
   border-radius: var(--radius-sm);
+  min-width: 0;
 }
 
 .conv-error-icon {
@@ -3478,6 +3487,9 @@ body[data-theme='dark'] .conv-terminal-pill {
   flex: 1;
   font-size: var(--font-sm);
   color: #991b1b;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 body[data-theme='dark'] .conv-error-content {
@@ -3534,6 +3546,7 @@ body[data-theme='dark'] .conv-error-content {
 
 .session-mgmt-content {
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xl);
@@ -3545,6 +3558,7 @@ body[data-theme='dark'] .conv-error-content {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .inline-conv-header {
@@ -3653,7 +3667,73 @@ body[data-theme='dark'] .conv-markdown pre {
 }
 
 /* Responsive adjustments */
+@media (max-width: 900px) {
+  #sessionsWrapper.with-conv {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
+  .group-header {
+    padding: 12px 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .group-count {
+    margin-left: 0;
+  }
+
+  .session-card {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "checkbox info"
+      "platform info"
+      "actions actions";
+    gap: 10px 12px;
+    padding: 14px;
+  }
+
+  .session-card-checkbox {
+    grid-area: checkbox;
+  }
+
+  .card-platform {
+    grid-area: platform;
+  }
+
+  .card-info {
+    grid-area: info;
+    min-width: 0;
+  }
+
+  .card-actions {
+    grid-area: actions;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .inline-conv-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .inline-conv-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .inline-conv-toolbar {
+    padding: 6px 14px;
+  }
+
+  .inline-conv-body {
+    min-height: 320px;
+    max-height: 60vh;
+    padding: 12px;
+  }
+
   .conv-page-header {
     flex-direction: column;
     padding: var(--spacing-sm);
