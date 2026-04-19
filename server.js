@@ -159,11 +159,15 @@ function loadClaudeCodeSessionMeta() {
   const sessionFiles = fs.readdirSync(CLAUDE_SESSIONS_DIR).filter((f) => f.endsWith(".json"));
   for (const file of sessionFiles) {
     try {
-      const data = JSON.parse(fs.readFileSync(path.join(CLAUDE_SESSIONS_DIR, file), "utf8"));
+      const fullPath = path.join(CLAUDE_SESSIONS_DIR, file);
+      const data = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+      const stat = fs.statSync(fullPath);
       if (data.sessionId) {
         map.set(data.sessionId, {
           title: data.name || "",
           cwd: data.cwd || "",
+          updatedAtMs: Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0,
+          explicitTitle: typeof data.name === "string" && Boolean(data.name.trim()),
         });
       }
     } catch {
@@ -277,10 +281,13 @@ function parseFileEvents(file, stateSignature, threadMeta) {
       const obj = JSON.parse(line);
       const evtOrArray = parser(obj, context);
       const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-      const titleStrategy = parser === parseCodexLineToEventCore ? "always" : "missing-only";
       for (const evt of events) {
         const meta = threadMeta.get(evt.sessionId);
         if (meta) {
+          const titleStrategy =
+            parser === parseCodexLineToEventCore || meta.explicitTitle
+              ? "always"
+              : "missing-only";
           applyEventSessionMetaCore(evt, meta, { titleStrategy });
         }
         parsed.push(evt);
@@ -314,9 +321,8 @@ function parseFileEvents(file, stateSignature, threadMeta) {
 function computeAggregate() {
   const threadMeta = loadCodexSessionMeta();
   const claudeMeta = loadClaudeCodeSessionMeta();
-  // Merge Claude Code metadata into threadMeta (no key collisions expected since session IDs are unique)
   for (const [id, meta] of claudeMeta) {
-    if (!threadMeta.has(id)) threadMeta.set(id, meta);
+    threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
   }
   const { files, stateSignature, aggregateKey } = computeAggregateSignature();
   const liveFiles = new Set(files);
