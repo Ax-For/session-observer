@@ -301,6 +301,89 @@
     };
   }
 
+  function getTimezoneOffsetMinutes(nowMs, explicitOffsetMinutes) {
+    if (Number.isFinite(Number(explicitOffsetMinutes))) return Number(explicitOffsetMinutes);
+    return -new Date(nowMs).getTimezoneOffset();
+  }
+
+  function getStartOfDayMs(nowMs, timezoneOffsetMinutes) {
+    const shiftedMs = nowMs + timezoneOffsetMinutes * 60 * 1000;
+    const shifted = new Date(shiftedMs);
+    const startUtcMs = Date.UTC(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+    return startUtcMs - timezoneOffsetMinutes * 60 * 1000;
+  }
+
+  function getStartOfWeekMs(nowMs, timezoneOffsetMinutes) {
+    const startOfDayMs = getStartOfDayMs(nowMs, timezoneOffsetMinutes);
+    const shifted = new Date(startOfDayMs + timezoneOffsetMinutes * 60 * 1000);
+    const weekday = shifted.getUTCDay();
+    const diff = weekday === 0 ? 6 : weekday - 1;
+    return startOfDayMs - diff * 24 * 60 * 60 * 1000;
+  }
+
+  function mapTotalsToSortedEntries(totals) {
+    return [...totals.entries()]
+      .map(([key, total]) => ({ key, total }))
+      .sort((left, right) => {
+        if (right.total !== left.total) return right.total - left.total;
+        return String(left.key).localeCompare(String(right.key), "zh-CN");
+      });
+  }
+
+  function buildTokenUsageWindows(events, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const timezoneOffsetMinutes = getTimezoneOffsetMinutes(nowMs, options.timezoneOffsetMinutes);
+    const startOfDayMs = getStartOfDayMs(nowMs, timezoneOffsetMinutes);
+    const startOfWeekMs = getStartOfWeekMs(nowMs, timezoneOffsetMinutes);
+    const windows = {
+      day: {
+        total: 0,
+        platforms: new Map(),
+      },
+      week: {
+        total: 0,
+        platforms: new Map(),
+      },
+    };
+
+    for (const event of events || []) {
+      const eventMs = toTimeMs(event?.time);
+      if (eventMs == null) continue;
+      const total = Number(event?.tokenUsage?.total);
+      if (!Number.isFinite(total) || total <= 0) continue;
+      const platformKey = event?.sourceType || "unknown";
+
+      if (eventMs >= startOfWeekMs && eventMs <= nowMs) {
+        windows.week.total += total;
+        windows.week.platforms.set(platformKey, (windows.week.platforms.get(platformKey) || 0) + total);
+      }
+
+      if (eventMs >= startOfDayMs && eventMs <= nowMs) {
+        windows.day.total += total;
+        windows.day.platforms.set(platformKey, (windows.day.platforms.get(platformKey) || 0) + total);
+      }
+    }
+
+    return {
+      day: {
+        total: windows.day.total,
+        platforms: mapTotalsToSortedEntries(windows.day.platforms),
+      },
+      week: {
+        total: windows.week.total,
+        platforms: mapTotalsToSortedEntries(windows.week.platforms),
+      },
+    };
+  }
+
   function extractTextFromContent(content) {
     if (!Array.isArray(content)) return typeof content === "string" ? content : "";
     return content
@@ -896,6 +979,7 @@
     applyEventSessionMeta,
     addTokenUsage,
     applySessionTitleOverrides,
+    buildTokenUsageWindows,
     buildSessionGroups,
     clip,
     collectMeta,

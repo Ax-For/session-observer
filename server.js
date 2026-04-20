@@ -10,6 +10,7 @@ const ObserverCore = require("./shared/observer-core");
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
   applySessionTitleOverrides: applySessionTitleOverridesCore,
+  buildTokenUsageWindows: buildTokenUsageWindowsCore,
   buildSessionGroups: buildSessionGroupsCore,
   collectMeta: collectMetaCore,
   dedupeEvents: dedupeEventsCore,
@@ -471,6 +472,7 @@ function queryEvents(filters) {
     totalVisible: visibleEvents.length,
     totalMatching: matched.length,
     sessions: buildSessionGroupsCore(matched),
+    tokenWindows: buildTokenUsageWindowsCore(matched),
     meta,
     page: {
       offset: filters.offset,

@@ -16,6 +16,7 @@ import {
   IconBolt,
   IconChartBar,
   IconClockHour4,
+  IconX,
 } from "@tabler/icons-react";
 import {
   callTypeLabel,
@@ -45,6 +46,11 @@ function formatHeroNumber(value) {
   return formatNumber(amount);
 }
 
+function getWindowPlatformTotal(windowSummary, platformKey) {
+  const match = (windowSummary?.platforms || []).find((item) => item.key === platformKey);
+  return Number(match?.total) || 0;
+}
+
 export function StreamWorkspace({
   scope,
   summary,
@@ -52,12 +58,15 @@ export function StreamWorkspace({
   events,
   selectedSessionId,
   onSelectSession,
+  onClearSessionFocus,
   onOpenFilters,
   onOpenEvent,
   onLoadMore,
   hasMore,
   loading,
+  generatedAt,
 }) {
+  const activeSession = (sessions || []).find((session) => session?.sessionId === selectedSessionId) || null;
   const matchingCount = Number(summary?.counts?.totalMatching) || 0;
   const loadedCount = Number(summary?.counts?.totalLoaded) || 0;
   const visibleCount = Number(summary?.counts?.totalVisible) || 0;
@@ -78,7 +87,10 @@ export function StreamWorkspace({
   const topTypes = (summary.topTypes || []).slice(0, 3);
   const topModels = (summary.topModels || []).slice(0, 3);
   const topPlatforms = (summary.platforms || []).slice(0, 3);
-  const typePeak = Math.max(1, ...topTypes.map((item) => Number(item.value) || 0));
+  const tokenWindows = summary?.tokenWindows || {
+    day: { total: 0, platforms: [] },
+    week: { total: 0, platforms: [] },
+  };
   const modelPeak = Math.max(1, ...topModels.map((item) => Number(item.value) || 0));
   const platformPeak = Math.max(1, ...topPlatforms.map((item) => Number(item.events) || 0));
   const tokenHeadline = formatHeroNumber(summary?.totals?.total);
@@ -90,15 +102,49 @@ export function StreamWorkspace({
     `缓存 ${formatHeroNumber(tokenCached)}`,
     `推理 ${formatHeroNumber(tokenReasoning)}`,
   ];
+  const contextRows = [
+    {
+      label: "当前聚焦",
+      value: activeSession
+        ? `${activeSession.title || activeSession.sessionTitle || "当前会话"} · ${shortSessionId(activeSession.sessionId)}`
+        : "全部会话",
+    },
+    {
+      label: "搜索关键词",
+      value: scope?.tags?.[0] || "无关键词",
+    },
+    {
+      label: "工作区范围",
+      value: activeSession?.cwd || scope?.tags?.[1] || "跨工作区",
+    },
+    {
+      label: "最近刷新",
+      value: generatedAt ? formatDateTime(generatedAt) : "实时",
+    },
+  ];
+  const tokenCadence = [
+    {
+      key: "day",
+      label: "今日 Token",
+      hint: "按本地自然日累计",
+      window: tokenWindows.day,
+    },
+    {
+      key: "week",
+      label: "本周 Token",
+      hint: "按当前自然周累计",
+      window: tokenWindows.week,
+    },
+  ];
 
   return (
     <Stack gap="lg" className="workspace-stack">
-      <Paper className="overview-shell" radius="xl" p="lg">
+      <Paper className="overview-shell" radius="xl" p="md">
         <Group justify="space-between" align="flex-start" className="overview-shell__top">
           <div className="overview-shell__scope">
             <Group gap="sm" mb={8} wrap="nowrap">
-              <ThemeIcon size={40} radius="xl" variant="light" color="blue">
-                <IconBolt size={20} />
+              <ThemeIcon size={36} radius="xl" variant="light" color="blue">
+                <IconBolt size={18} />
               </ThemeIcon>
               <div>
                 <Text className="eyebrow">当前观测范围</Text>
@@ -135,7 +181,7 @@ export function StreamWorkspace({
 
         <div className="overview-board">
           <section className="overview-panel overview-panel--primary">
-            <div className="overview-panel__head">
+            <div className="overview-panel__head overview-panel__head--compact">
               <Text className="overview-section-label">观测总览</Text>
               <Text className="overview-panel__value">{`匹配 ${formatNumber(matchingCount)}`}</Text>
             </div>
@@ -167,70 +213,94 @@ export function StreamWorkspace({
               </div>
             </div>
 
-            <Group gap="xs" className="overview-chip-row">
-              {signalChips.map((chip) => (
-                <Badge key={chip} radius="xl" variant="light" color="gray" className="overview-chip">{chip}</Badge>
-              ))}
-            </Group>
+            <div className="overview-primary-foot">
+              <Group gap="xs" className="overview-chip-row overview-chip-row--inline">
+                {signalChips.map((chip) => (
+                  <Badge key={chip} radius="xl" variant="light" color="gray" className="overview-chip">{chip}</Badge>
+                ))}
+              </Group>
+
+              <div className="overview-window-section overview-window-section--compact">
+                <div className="overview-window-section__head">
+                  <Text className="overview-section-label">时间消耗</Text>
+                  <Text className="overview-panel__value">按当前筛选范围聚合</Text>
+                </div>
+                <div className="overview-window-stack">
+                  {tokenCadence.map((item) => (
+                    <div key={item.key} className="overview-window-row">
+                      <div className="overview-window-row__lead">
+                        <Text className="overview-window-card__label">{item.label}</Text>
+                        <Text className="overview-window-row__value">{formatHeroNumber(item.window?.total || 0)}</Text>
+                      </div>
+                      <Text className="overview-window-row__hint">{item.hint}</Text>
+                      <div className="overview-window-row__breakdown">
+                        <Text className="overview-window-pill overview-window-breakdown__row overview-window-breakdown__row--strong">{`合计 ${formatHeroNumber(item.window?.total || 0)}`}</Text>
+                        <Text className="overview-window-pill overview-window-breakdown__row">{`Codex ${formatHeroNumber(getWindowPlatformTotal(item.window, "codex"))}`}</Text>
+                        <Text className="overview-window-pill overview-window-breakdown__row">{`Claude Code ${formatHeroNumber(getWindowPlatformTotal(item.window, "claude"))}`}</Text>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </section>
 
-          <section className="overview-panel overview-panel--platform">
-            <div className="overview-panel__head">
-              <Text className="overview-section-label">平台分布</Text>
-              <Text className="overview-panel__value">{`${formatNumber(topPlatforms.length)} 平台`}</Text>
+          <section className="overview-panel overview-panel--intel">
+            <div className="overview-compact-section overview-compact-section--platform">
+              <div className="overview-panel__head overview-panel__head--compact">
+                <Text className="overview-section-label">平台分布</Text>
+                <Text className="overview-panel__value">{`${formatNumber(topPlatforms.length)} 平台`}</Text>
+              </div>
+              <Stack gap="xs">
+                {topPlatforms.map((item) => (
+                  <div key={item.key} className="overview-rank-row overview-rank-row--platform">
+                    <div className="overview-rank-row__title">
+                      <Text className="overview-rank-row__label">{platformLabel(item.key)}</Text>
+                      <Text className="overview-rank-row__meta">{`${formatNumber(item.sessions)} 会话`}</Text>
+                    </div>
+                    <div className="overview-meter">
+                      <span style={{ width: `${Math.max(12, Math.round((Number(item.events) / platformPeak) * 100))}%` }} />
+                    </div>
+                    <Text className="overview-rank-row__value">{`${formatNumber(item.events)} 事件`}</Text>
+                  </div>
+                ))}
+              </Stack>
             </div>
-            <Stack gap="sm">
-              {topPlatforms.map((item) => (
-                <div key={item.key} className="overview-rank-row overview-rank-row--platform">
-                  <div className="overview-rank-row__title">
-                    <Text className="overview-rank-row__label">{platformLabel(item.key)}</Text>
-                    <Text className="overview-rank-row__meta">{`${formatNumber(item.sessions)} 会话`}</Text>
-                  </div>
-                  <div className="overview-meter">
-                    <span style={{ width: `${Math.max(12, Math.round((Number(item.events) / platformPeak) * 100))}%` }} />
-                  </div>
-                  <Text className="overview-rank-row__value">{`${formatNumber(item.events)} 事件`}</Text>
-                </div>
-              ))}
-            </Stack>
-          </section>
 
-          <section className="overview-panel overview-panel--types">
-            <div className="overview-panel__head">
-              <Text className="overview-section-label">事件构成</Text>
-              <Text className="overview-panel__value">
-                {topTypes[0] ? callTypeLabel(topTypes[0].key) : "-"}
-              </Text>
-            </div>
-            <Stack gap="sm">
-              {topTypes.map((item) => (
-                <div key={item.key} className="overview-rank-row">
-                  <Text className="overview-rank-row__label">{callTypeLabel(item.key)}</Text>
-                  <div className="overview-meter">
-                    <span style={{ width: `${Math.max(12, Math.round((Number(item.value) / typePeak) * 100))}%` }} />
-                  </div>
-                  <Text className="overview-rank-row__value">{formatNumber(item.value)}</Text>
+            <div className="overview-compact-grid">
+              <div className="overview-compact-section">
+                <div className="overview-panel__head overview-panel__head--compact">
+                  <Text className="overview-section-label">观测上下文</Text>
+                  <Text className="overview-panel__value">{selectedScope}</Text>
                 </div>
-              ))}
-            </Stack>
-          </section>
+                <div className="overview-context-list">
+                  {contextRows.map((item) => (
+                    <div key={item.label} className="overview-context-row">
+                      <Text className="overview-context-row__label">{item.label}</Text>
+                      <Text className="overview-context-row__value">{item.value}</Text>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-          <section className="overview-panel overview-panel--models">
-            <div className="overview-panel__head">
-              <Text className="overview-section-label">模型焦点</Text>
-              <Text className="overview-panel__value">{topModels[0]?.key || "-"}</Text>
-            </div>
-            <Stack gap="sm">
-              {topModels.map((item) => (
-                <div key={item.key} className="overview-rank-row">
-                  <Text className="overview-rank-row__label">{item.key}</Text>
-                  <div className="overview-meter">
-                    <span style={{ width: `${Math.max(12, Math.round((Number(item.value) / modelPeak) * 100))}%` }} />
-                  </div>
-                  <Text className="overview-rank-row__value">{formatNumber(item.value)}</Text>
+              <div className="overview-compact-section">
+                <div className="overview-panel__head overview-panel__head--compact">
+                  <Text className="overview-section-label">模型焦点</Text>
+                  <Text className="overview-panel__value">{topModels[0]?.key || "-"}</Text>
                 </div>
-              ))}
-            </Stack>
+                <Stack gap="xs">
+                  {topModels.map((item) => (
+                    <div key={item.key} className="overview-rank-row">
+                      <Text className="overview-rank-row__label">{item.key}</Text>
+                      <div className="overview-meter">
+                        <span style={{ width: `${Math.max(12, Math.round((Number(item.value) / modelPeak) * 100))}%` }} />
+                      </div>
+                      <Text className="overview-rank-row__value">{formatNumber(item.value)}</Text>
+                    </div>
+                  ))}
+                </Stack>
+              </div>
+            </div>
           </section>
         </div>
       </Paper>
@@ -285,7 +355,24 @@ export function StreamWorkspace({
               <Text className="eyebrow">事件时间线</Text>
               <Title order={4}>按观测顺序展开</Title>
             </div>
-            <Group gap="xs">
+            <Group gap="xs" className="feed-panel__actions">
+              {selectedSessionId ? (
+                <>
+                  <Badge radius="xl" variant="light" color="blue" className="soft-badge">
+                    {`已聚焦 ${shortSessionId(selectedSessionId)}`}
+                  </Badge>
+                  <Button
+                    variant="subtle"
+                    radius="xl"
+                    color="gray"
+                    size="xs"
+                    leftSection={<IconX size={14} />}
+                    onClick={onClearSessionFocus}
+                  >
+                    返回全部会话
+                  </Button>
+                </>
+              ) : null}
               {(summary.topTypes || []).slice(0, 3).map((item) => (
                 <Badge key={item.key} radius="xl" variant="light" color="gray" className="soft-badge">
                   {callTypeLabel(item.key)} {item.value}

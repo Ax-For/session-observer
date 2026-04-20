@@ -52,6 +52,13 @@ import {
   formatNumber,
 } from "./lib/formatters";
 import {
+  buildUrlSearch,
+  DEFAULT_SESSION_FILTERS,
+  DEFAULT_STREAM_FILTERS,
+  DEFAULT_TOKEN_THRESHOLD,
+  parseUrlState,
+} from "./lib/url-state";
+import {
   buildDashboardSummary,
   buildSessionSections,
   buildStreamScope,
@@ -74,22 +81,6 @@ const theme = createTheme({
     fontFamily: "Sora, Manrope, PingFang SC, sans-serif",
   },
 });
-
-const defaultStreamFilters = {
-  query: "",
-  model: "",
-  type: "",
-  platform: "",
-  start: "",
-  end: "",
-  order: "desc",
-};
-
-const defaultSessionFilters = {
-  query: "",
-  platform: "",
-  namedOnly: false,
-};
 
 function groupSessionsByCwd(sessions) {
   return (sessions || []).reduce((groups, session) => {
@@ -164,6 +155,9 @@ async function fetchAllSessionEvents(sessionId) {
 }
 
 export function App() {
+  const initialUrlState = useRef(
+    parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
+  ).current;
   const searchRef = useRef(null);
   const eventRequestId = useRef(0);
   const sessionsRequestId = useRef(0);
@@ -171,7 +165,7 @@ export function App() {
   const conversationEventsRef = useRef([]);
   const conversationPageRef = useRef(createEmptyConversationPage());
   const conversationLocalSource = useRef([]);
-  const [tab, setTab] = useState("stream");
+  const [tab, setTab] = useState(initialUrlState.tab);
   const [themeMode, setThemeMode] = useLocalStorage({
     key: "observer-theme-mode",
     defaultValue: "dark",
@@ -184,18 +178,19 @@ export function App() {
     key: "observer-auto-refresh",
     defaultValue: false,
   });
-  const [mode, setMode] = useState("observe");
-  const [quickFilter, setQuickFilter] = useState("all");
-  const [tokenThreshold, setTokenThreshold] = useState("20000");
-  const [streamFilters, setStreamFilters] = useState(defaultStreamFilters);
-  const [sessionFilters, setSessionFilters] = useState(defaultSessionFilters);
-  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [mode, setMode] = useState(initialUrlState.mode);
+  const [quickFilter, setQuickFilter] = useState(initialUrlState.quickFilter);
+  const [tokenThreshold, setTokenThreshold] = useState(initialUrlState.tokenThreshold || DEFAULT_TOKEN_THRESHOLD);
+  const [streamFilters, setStreamFilters] = useState(initialUrlState.streamFilters || DEFAULT_STREAM_FILTERS);
+  const [sessionFilters, setSessionFilters] = useState(initialUrlState.sessionFilters || DEFAULT_SESSION_FILTERS);
+  const [selectedSessionId, setSelectedSessionId] = useState(initialUrlState.selectedSessionId);
   const [selectedSessionIds, setSelectedSessionIds] = useState([]);
   const [dataSource, setDataSource] = useState("server");
   const [localEvents, setLocalEvents] = useState([]);
   const [streamPayload, setStreamPayload] = useState({
     events: [],
     sessions: [],
+    tokenWindows: null,
     meta: { models: [], types: [], platforms: [] },
     totalVisible: 0,
     totalMatching: 0,
@@ -232,6 +227,7 @@ export function App() {
     totalVisible: currentStream.totalVisible,
     totalMatching: currentStream.totalMatching,
     totalLoaded: currentStream.events.length,
+    tokenWindows: currentStream.tokenWindows,
   });
   const streamScope = buildStreamScope({
     selectedSessionId,
@@ -380,6 +376,44 @@ export function App() {
   }, [dataSource]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const nextSearch = buildUrlSearch({
+        dataSource,
+        tab,
+        selectedSessionId,
+        mode,
+        quickFilter,
+        tokenThreshold,
+        streamFilters,
+        sessionFilters,
+      });
+      const currentSearch = String(window.location.search || "").replace(/^\?/, "");
+      if (nextSearch === currentSearch) return;
+      const nextUrl = nextSearch ? `${window.location.pathname}?${nextSearch}` : window.location.pathname;
+      window.history.replaceState(null, "", nextUrl);
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    dataSource,
+    tab,
+    selectedSessionId,
+    mode,
+    quickFilter,
+    tokenThreshold,
+    streamFilters.query,
+    streamFilters.model,
+    streamFilters.type,
+    streamFilters.platform,
+    streamFilters.start,
+    streamFilters.end,
+    streamFilters.order,
+    sessionFilters.query,
+    sessionFilters.platform,
+    sessionFilters.namedOnly,
+  ]);
+
+  useEffect(() => {
     if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
     const id = window.setInterval(() => {
       loadEvents();
@@ -433,6 +467,10 @@ export function App() {
 
   function selectSession(sessionId) {
     setSelectedSessionId((current) => (current === sessionId ? "" : sessionId));
+  }
+
+  function clearSessionFocus() {
+    setSelectedSessionId("");
   }
 
   async function handleImport(files) {
@@ -804,7 +842,10 @@ export function App() {
                         placeholder="内容 / session / tool / cwd"
                         leftSection={<IconSearch size={16} />}
                         value={streamFilters.query}
-                        onChange={(event) => setStreamFilters((current) => ({ ...current, query: event.currentTarget.value }))}
+                        onChange={(event) => {
+                          const query = event.currentTarget.value;
+                          setStreamFilters((current) => ({ ...current, query }));
+                        }}
                         className="control-field control-field--wide"
                       />
                       <Select
@@ -847,11 +888,13 @@ export function App() {
                     events={currentStream.events}
                     selectedSessionId={selectedSessionId}
                     onSelectSession={selectSession}
+                    onClearSessionFocus={clearSessionFocus}
                     onOpenFilters={() => setFiltersOpen(true)}
                     onOpenEvent={setDetailEvent}
                     onLoadMore={() => loadEvents({ append: true })}
                     hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
                     loading={loadingEvents}
+                    generatedAt={currentStream.generatedAt}
                   />
                 </>
               ) : (
@@ -863,7 +906,10 @@ export function App() {
                         placeholder="会话名 / cwd / session ID"
                         leftSection={<IconSearch size={16} />}
                         value={sessionFilters.query}
-                        onChange={(event) => setSessionFilters((current) => ({ ...current, query: event.currentTarget.value }))}
+                        onChange={(event) => {
+                          const query = event.currentTarget.value;
+                          setSessionFilters((current) => ({ ...current, query }));
+                        }}
                         className="control-field control-field--wide"
                       />
                       <Select
@@ -881,7 +927,10 @@ export function App() {
                       <Checkbox
                         label="仅显示已命名"
                         checked={sessionFilters.namedOnly}
-                        onChange={(event) => setSessionFilters((current) => ({ ...current, namedOnly: event.currentTarget.checked }))}
+                        onChange={(event) => {
+                          const namedOnly = event.currentTarget.checked;
+                          setSessionFilters((current) => ({ ...current, namedOnly }));
+                        }}
                         mb={10}
                       />
                       <Button variant="light" radius="xl" color="gray" onClick={loadSessions}>
@@ -928,13 +977,19 @@ export function App() {
               label="开始时间"
               type="datetime-local"
               value={streamFilters.start}
-              onChange={(event) => setStreamFilters((current) => ({ ...current, start: event.currentTarget.value }))}
+              onChange={(event) => {
+                const start = event.currentTarget.value;
+                setStreamFilters((current) => ({ ...current, start }));
+              }}
             />
             <TextInput
               label="结束时间"
               type="datetime-local"
               value={streamFilters.end}
-              onChange={(event) => setStreamFilters((current) => ({ ...current, end: event.currentTarget.value }))}
+              onChange={(event) => {
+                const end = event.currentTarget.value;
+                setStreamFilters((current) => ({ ...current, end }));
+              }}
             />
             <Select
               label="排序"
@@ -955,9 +1010,9 @@ export function App() {
                 variant="subtle"
                 color="gray"
                 onClick={() => {
-                  setStreamFilters(defaultStreamFilters);
+                  setStreamFilters(DEFAULT_STREAM_FILTERS);
                   setQuickFilter("all");
-                  setTokenThreshold("20000");
+                  setTokenThreshold(DEFAULT_TOKEN_THRESHOLD);
                 }}
               >
                 重置

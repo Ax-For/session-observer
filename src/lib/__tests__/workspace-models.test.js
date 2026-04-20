@@ -87,6 +87,8 @@ describe("buildDashboardSummary", () => {
       totalVisible: 3,
       totalMatching: 3,
       totalLoaded: 3,
+      nowMs: Date.parse("2026-04-19T23:59:59.000Z"),
+      timezoneOffsetMinutes: 0,
     })).toEqual({
       totals: {
         input: 0,
@@ -115,7 +117,51 @@ describe("buildDashboardSummary", () => {
         { key: "codex", sessions: 2, events: 54 },
         { key: "claude", sessions: 1, events: 18 },
       ],
+      tokenWindows: {
+        day: {
+          total: 2620,
+          platforms: [
+            { key: "codex", total: 2620 },
+          ],
+        },
+        week: {
+          total: 2620,
+          platforms: [
+            { key: "codex", total: 2620 },
+          ],
+        },
+      },
     });
+  });
+
+  test("uses precomputed token windows when provided", () => {
+    const tokenWindows = {
+      day: {
+        total: 3200,
+        platforms: [
+          { key: "codex", total: 1200 },
+          { key: "claude", total: 2000 },
+        ],
+      },
+      week: {
+        total: 8400,
+        platforms: [
+          { key: "codex", total: 3600 },
+          { key: "claude", total: 4800 },
+        ],
+      },
+    };
+
+    const summary = buildDashboardSummary({
+      events: sampleEvents,
+      sessions: Object.values(sampleGroups).flat(),
+      totalVisible: 3,
+      totalMatching: 3,
+      totalLoaded: 3,
+      tokenWindows,
+    });
+
+    expect(summary.tokenWindows).toEqual(tokenWindows);
   });
 });
 

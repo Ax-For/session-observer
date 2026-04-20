@@ -1,7 +1,11 @@
+import ObserverCore from "../../shared/observer-core.js";
+
 const PLATFORM_LABELS = {
   codex: "Codex",
   claude: "Claude Code",
 };
+
+const { buildTokenUsageWindows } = ObserverCore;
 
 const QUICK_FILTER_LABELS = {
   all: "全部事件",
@@ -31,6 +35,9 @@ export function buildDashboardSummary({
   totalVisible,
   totalMatching,
   totalLoaded,
+  tokenWindows,
+  nowMs,
+  timezoneOffsetMinutes,
 }) {
   const flattenedSessions = flattenSessions(sessions);
   const totals = {
@@ -98,6 +105,7 @@ export function buildDashboardSummary({
 
   return {
     totals,
+    tokenWindows: tokenWindows || buildTokenUsageWindows(events, { nowMs, timezoneOffsetMinutes }),
     counts: {
       totalVisible: toFiniteNumber(totalVisible),
       totalMatching: toFiniteNumber(totalMatching),

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   applyEventSessionMeta,
   applySessionTitleOverrides,
+  buildTokenUsageWindows,
   buildSessionGroups,
   dedupeEvents,
   eventMatchesMode,
@@ -237,6 +238,48 @@ test("buildSessionGroups keeps Claude custom titles even when they arrive as raw
   ]);
 
   assert.equal(groups[0].sessionTitle, "Renamed in Claude");
+});
+
+test("buildTokenUsageWindows aggregates today and current week token totals by platform", () => {
+  const windows = buildTokenUsageWindows([
+    {
+      time: "2026-04-23T01:10:00.000Z",
+      sourceType: "codex",
+      callType: "Token_Usage",
+      tokenUsage: { total: 1200 },
+    },
+    {
+      time: "2026-04-22T11:20:00.000Z",
+      sourceType: "claude",
+      callType: "Token_Usage",
+      tokenUsage: { total: 800 },
+    },
+    {
+      time: "2026-04-19T09:20:00.000Z",
+      sourceType: "codex",
+      callType: "Token_Usage",
+      tokenUsage: { total: 400 },
+    },
+  ], {
+    nowMs: Date.parse("2026-04-23T12:00:00.000Z"),
+    timezoneOffsetMinutes: 0,
+  });
+
+  assert.deepEqual(windows, {
+    day: {
+      total: 1200,
+      platforms: [
+        { key: "codex", total: 1200 },
+      ],
+    },
+    week: {
+      total: 2000,
+      platforms: [
+        { key: "codex", total: 1200 },
+        { key: "claude", total: 800 },
+      ],
+    },
+  });
 });
 
 test("applySessionTitleOverrides updates only matching source groups", () => {
