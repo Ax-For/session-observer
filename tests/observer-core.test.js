@@ -57,6 +57,7 @@ test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from 
         input_tokens: 12,
         output_tokens: 5,
         cache_read_input_tokens: 2,
+        cache_creation_input_tokens: 3,
       },
       content: [
         { type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/tmp/workspace/app.js" } },
@@ -75,7 +76,7 @@ test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from 
     input: 12,
     output: 5,
     total: 17,
-    cachedInput: 2,
+    cachedInput: 5,
     reasoningOutput: null,
   });
 });
@@ -246,13 +247,13 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
       time: "2026-04-23T01:10:00.000Z",
       sourceType: "codex",
       callType: "Token_Usage",
-      tokenUsage: { total: 1200 },
+      tokenUsage: { total: 1200, cachedInput: 300 },
     },
     {
       time: "2026-04-22T11:20:00.000Z",
       sourceType: "claude",
       callType: "Token_Usage",
-      tokenUsage: { total: 800 },
+      tokenUsage: { total: 800, cachedInput: 200 },
     },
     {
       time: "2026-04-19T09:20:00.000Z",
@@ -267,16 +268,16 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
 
   assert.deepEqual(windows, {
     day: {
-      total: 1200,
+      total: 1500,
       platforms: [
-        { key: "codex", total: 1200 },
+        { key: "codex", total: 1500 },
       ],
     },
     week: {
-      total: 2000,
+      total: 2500,
       platforms: [
-        { key: "codex", total: 1200 },
-        { key: "claude", total: 800 },
+        { key: "codex", total: 1500 },
+        { key: "claude", total: 1000 },
       ],
     },
   });

@@ -119,15 +119,15 @@ describe("buildDashboardSummary", () => {
       ],
       tokenWindows: {
         day: {
-          total: 2620,
+          total: 3820,
           platforms: [
-            { key: "codex", total: 2620 },
+            { key: "codex", total: 3820 },
           ],
         },
         week: {
-          total: 2620,
+          total: 3820,
           platforms: [
-            { key: "codex", total: 2620 },
+            { key: "codex", total: 3820 },
           ],
         },
       },

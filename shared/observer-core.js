@@ -358,17 +358,20 @@
       const eventMs = toTimeMs(event?.time);
       if (eventMs == null) continue;
       const total = Number(event?.tokenUsage?.total);
-      if (!Number.isFinite(total) || total <= 0) continue;
+      const cachedInput = Number(event?.tokenUsage?.cachedInput);
+      const usageTotal = (Number.isFinite(total) ? total : 0) + (Number.isFinite(cachedInput) ? cachedInput : 0);
+      const countedTotal = Number.isFinite(usageTotal) ? usageTotal : 0;
+      if (countedTotal <= 0) continue;
       const platformKey = event?.sourceType || "unknown";
 
       if (eventMs >= startOfWeekMs && eventMs <= nowMs) {
-        windows.week.total += total;
-        windows.week.platforms.set(platformKey, (windows.week.platforms.get(platformKey) || 0) + total);
+        windows.week.total += countedTotal;
+        windows.week.platforms.set(platformKey, (windows.week.platforms.get(platformKey) || 0) + countedTotal);
       }
 
       if (eventMs >= startOfDayMs && eventMs <= nowMs) {
-        windows.day.total += total;
-        windows.day.platforms.set(platformKey, (windows.day.platforms.get(platformKey) || 0) + total);
+        windows.day.total += countedTotal;
+        windows.day.platforms.set(platformKey, (windows.day.platforms.get(platformKey) || 0) + countedTotal);
       }
     }
 
@@ -808,14 +811,18 @@
 
       const buildTokenUsageEvent = (usage) => {
         if (!usage) return null;
-        const input = usage.input_tokens ?? usage.cache_read_input_tokens ?? null;
+        const input = usage.input_tokens ?? null;
         const output = usage.output_tokens ?? null;
         const total = usage.input_tokens != null && usage.output_tokens != null
           ? usage.input_tokens + usage.output_tokens
           : null;
-        const cachedInput = usage.cache_read_input_tokens ?? null;
+        const cacheReadInput = usage.cache_read_input_tokens ?? null;
+        const cacheCreationInput = usage.cache_creation_input_tokens ?? null;
+        const cachedInput = [cacheReadInput, cacheCreationInput].reduce((sum, value) => (
+          value != null && Number.isFinite(Number(value)) ? sum + Number(value) : sum
+        ), 0) || null;
         const reasoningOutput = null;
-        if (input == null && output == null) return null;
+        if (input == null && output == null && cachedInput == null) return null;
         const contentText = `Token usage · In ${input ?? 0} · Out ${output ?? 0} · Total ${total ?? 0}` +
           (cachedInput ? ` · Cache ${cachedInput}` : "");
         return {
