@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/server.pid"
 LOG_FILE="${RUNTIME_DIR}/server.log"
+START_WAIT_SECONDS="${START_WAIT_SECONDS:-10}"
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8787}"
@@ -39,6 +40,51 @@ ensure_node() {
   fi
 }
 
+find_listener_pid() {
+  lsof -tiTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | head -n 1
+}
+
+get_process_cwd() {
+  local pid="${1:-}"
+  if [[ -z "${pid}" ]]; then
+    return 1
+  fi
+  lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
+}
+
+is_observer_pid() {
+  local pid="${1:-}"
+  if [[ -z "${pid}" ]] || ! kill -0 "${pid}" 2>/dev/null; then
+    return 1
+  fi
+
+  local cwd command
+  cwd="$(get_process_cwd "${pid}")"
+  command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+
+  [[ "${cwd}" == "${ROOT_DIR}" ]] && [[ "${command}" == *"node"* ]] && [[ "${command}" == *"server.js"* ]]
+}
+
+get_running_pid() {
+  local pid
+  if [[ -f "${PID_FILE}" ]]; then
+    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    if is_observer_pid "${pid}"; then
+      printf '%s\n' "${pid}"
+      return 0
+    fi
+  fi
+
+  pid="$(find_listener_pid || true)"
+  if is_observer_pid "${pid}"; then
+    printf '%s\n' "${pid}" > "${PID_FILE}"
+    printf '%s\n' "${pid}"
+    return 0
+  fi
+
+  return 1
+}
+
 ensure_frontend_build() {
   if [[ ! -f "${ROOT_DIR}/package.json" ]]; then
     return 0
@@ -62,14 +108,76 @@ ensure_frontend_build() {
 }
 
 is_running() {
-  if [[ -f "${PID_FILE}" ]]; then
-    local pid
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
-      return 0
+  get_running_pid >/dev/null 2>&1
+}
+
+wait_for_server() {
+  local pid="${1:-}"
+  local attempts elapsed
+  attempts=$(( START_WAIT_SECONDS * 4 ))
+
+  for ((elapsed=0; elapsed<attempts; elapsed+=1)); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      return 1
     fi
-  fi
+
+    local listener_pid
+    listener_pid="$(find_listener_pid || true)"
+    if is_observer_pid "${listener_pid}"; then
+      printf '%s\n' "${listener_pid}" > "${PID_FILE}"
+      if command -v curl >/dev/null 2>&1; then
+        if curl -fsS --max-time 1 "http://${HOST}:${PORT}/" >/dev/null 2>&1; then
+          return 0
+        fi
+      else
+        return 0
+      fi
+    fi
+
+    sleep 0.25
+  done
+
   return 1
+}
+
+start_detached_server() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${ROOT_DIR}" "${LOG_FILE}" "${HOST}" "${PORT}" "${SESSIONS_DIR}" "${CLAUDE_DIR}" <<'PY'
+import os
+import subprocess
+import sys
+
+root_dir, log_file, host, port, sessions_dir, claude_dir = sys.argv[1:]
+env = os.environ.copy()
+env.update({
+    "HOST": host,
+    "PORT": port,
+    "CODEX_SESSIONS_DIR": sessions_dir,
+    "CLAUDE_PROJECTS_DIR": claude_dir,
+})
+
+with open(log_file, "ab", buffering=0) as log_file_handle, open(os.devnull, "rb") as devnull:
+    proc = subprocess.Popen(
+        ["node", "server.js"],
+        cwd=root_dir,
+        env=env,
+        stdin=devnull,
+        stdout=log_file_handle,
+        stderr=log_file_handle,
+        start_new_session=True,
+        close_fds=True,
+    )
+    print(proc.pid)
+PY
+    return
+  fi
+
+  (
+    cd "${ROOT_DIR}"
+    HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" \
+      nohup node server.js </dev/null >> "${LOG_FILE}" 2>&1 &
+    echo $!
+  )
 }
 
 start_server() {
@@ -79,27 +187,40 @@ start_server() {
 
   if is_running; then
     local pid
-    pid="$(cat "${PID_FILE}")"
+    pid="$(get_running_pid)"
     echo "Observer already running (PID ${pid}) at http://${HOST}:${PORT}"
     return 0
   fi
 
-  : > "${LOG_FILE}"
-  (
-    cd "${ROOT_DIR}"
-    HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" \
-      nohup node server.js >> "${LOG_FILE}" 2>&1 &
-    echo $! > "${PID_FILE}"
-  )
+  local listener_pid
+  listener_pid="$(find_listener_pid || true)"
+  if [[ -n "${listener_pid}" ]]; then
+    if is_observer_pid "${listener_pid}"; then
+      printf '%s\n' "${listener_pid}" > "${PID_FILE}"
+      echo "Observer already running (PID ${listener_pid}) at http://${HOST}:${PORT}"
+      return 0
+    fi
+    echo "Port ${PORT} is already in use by PID ${listener_pid}."
+    echo "Stop that process or run with a different PORT."
+    exit 1
+  fi
 
-  sleep 0.4
-  if is_running; then
-    local pid
-    pid="$(cat "${PID_FILE}")"
+  : > "${LOG_FILE}"
+  local pid
+  pid="$(start_detached_server)"
+  if [[ -z "${pid}" ]]; then
+    echo "Failed to start observer: no PID returned."
+    exit 1
+  fi
+  printf '%s\n' "${pid}" > "${PID_FILE}"
+
+  if wait_for_server "${pid}"; then
+    pid="$(get_running_pid)"
     echo "Started observer (PID ${pid})"
     echo "UI: http://${HOST}:${PORT}"
     echo "Sessions: ${SESSIONS_DIR}"
   else
+    rm -f "${PID_FILE}"
     echo "Failed to start observer. Check logs:"
     echo "  ${LOG_FILE}"
     exit 1
@@ -107,14 +228,16 @@ start_server() {
 }
 
 stop_server() {
-  if ! [[ -f "${PID_FILE}" ]]; then
+  local pid
+  pid="$(get_running_pid || true)"
+
+  if [[ -z "${pid}" ]]; then
     echo "Observer is not running."
+    rm -f "${PID_FILE}"
     return 0
   fi
 
-  local pid
-  pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-  if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+  if kill -0 "${pid}" 2>/dev/null; then
     kill "${pid}" 2>/dev/null || true
     sleep 0.3
     if kill -0 "${pid}" 2>/dev/null; then
@@ -130,7 +253,7 @@ stop_server() {
 status_server() {
   if is_running; then
     local pid
-    pid="$(cat "${PID_FILE}")"
+    pid="$(get_running_pid)"
     echo "Observer is running."
     echo "PID: ${pid}"
     echo "UI: http://${HOST}:${PORT}"
