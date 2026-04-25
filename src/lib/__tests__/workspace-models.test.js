@@ -229,6 +229,32 @@ describe("local workspace models", () => {
     expect(payload.totalMatching).toBe(2);
   });
 
+  test("buildLocalStreamPayload keeps session token aggregates when text filters exclude token events", () => {
+    const payload = buildLocalStreamPayload({
+      events: sampleEvents,
+      filters: {
+        query: "tool",
+        model: "",
+        type: "",
+        platform: "",
+        order: "desc",
+      },
+      selectedSessionId: "",
+      quickFilter: "all",
+      tokenThreshold: 20000,
+      mode: "observe",
+    });
+
+    expect(payload.events.map((event) => event.callType)).toEqual(["Tool_Call"]);
+    expect(payload.sessions).toEqual([
+      expect.objectContaining({
+        sessionId: "sess-1",
+        count: 1,
+        aggregateToken: expect.objectContaining({ total: 2620 }),
+      }),
+    ]);
+  });
+
   test("buildLocalSessionGroups produces cwd sections without stream filter coupling", () => {
     expect(buildLocalSessionGroups(sampleEvents)).toEqual({
       "未分类": [

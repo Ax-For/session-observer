@@ -31,6 +31,8 @@ describe("EventDrawer", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "事件详情" });
+    expect(within(dialog).getByText("调用 exec_command")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "查看原始 JSON" }));
     expect(dialog.querySelector(".json-token--key")).toHaveTextContent("\"sourceType\"");
     expect(dialog.querySelector(".json-token--string")).toHaveTextContent("\"codex\"");
 

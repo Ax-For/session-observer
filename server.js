@@ -450,6 +450,13 @@ function queryEvents(filters) {
   const visibleEvents = allEvents.filter((event) => eventMatchesModeCore(event, filters.mode));
   const meta = collectMetaCore(visibleEvents);
   const matched = visibleEvents.filter((event) => eventMatchesFiltersCore(event, filters));
+  const aggregateMatchedSessions = visibleEvents.filter((event) => eventMatchesFiltersCore(event, {
+    ...filters,
+    query: "",
+    type: "",
+    quickFilter: "all",
+    sessionId: "",
+  }));
   matched.sort((a, b) => {
     const am = toTimeMsCore(a.time) ?? 0;
     const bm = toTimeMsCore(b.time) ?? 0;
@@ -471,7 +478,10 @@ function queryEvents(filters) {
     },
     totalVisible: visibleEvents.length,
     totalMatching: matched.length,
-    sessions: buildSessionGroupsCore(matched),
+    sessions: mergeSessionTokenAggregates(
+      buildSessionGroupsCore(matched),
+      buildSessionGroupsCore(aggregateMatchedSessions),
+    ),
     tokenWindows: buildTokenUsageWindowsCore(matched),
     meta,
     page: {
@@ -481,6 +491,23 @@ function queryEvents(filters) {
     },
     events: paged,
   };
+}
+
+function mergeSessionTokenAggregates(sessions, aggregateSessions) {
+  const aggregateBySessionId = new Map(
+    (aggregateSessions || []).map((session) => [session.sessionId, session]),
+  );
+
+  return (sessions || []).map((session) => {
+    const aggregate = aggregateBySessionId.get(session.sessionId);
+    if (!aggregate) return session;
+
+    return {
+      ...session,
+      latestToken: aggregate.latestToken || session.latestToken,
+      aggregateToken: aggregate.aggregateToken || session.aggregateToken,
+    };
+  });
 }
 
 function serveStatic(reqPath, res) {

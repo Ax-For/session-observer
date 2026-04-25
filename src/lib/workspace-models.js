@@ -35,6 +35,23 @@ function flattenSessions(groupsOrSessions) {
   return Object.values(groupsOrSessions).flat();
 }
 
+function mergeSessionTokenAggregates(sessions, aggregateSessions) {
+  const aggregateBySessionId = new Map(
+    (aggregateSessions || []).map((session) => [session.sessionId, session]),
+  );
+
+  return (sessions || []).map((session) => {
+    const aggregate = aggregateBySessionId.get(session.sessionId);
+    if (!aggregate) return session;
+
+    return {
+      ...session,
+      latestToken: aggregate.latestToken || session.latestToken,
+      aggregateToken: aggregate.aggregateToken || session.aggregateToken,
+    };
+  });
+}
+
 export function groupSessionsByCwd(sessions) {
   return (sessions || []).reduce((groups, session) => {
     const key = session.cwd || "未分类";
@@ -71,6 +88,13 @@ export function buildLocalStreamPayload({
   };
 
   const sessionEvents = (events || []).filter((event) => eventMatchesFilters(event, baseFilters));
+  const aggregateEvents = (events || []).filter((event) => eventMatchesFilters(event, {
+    ...baseFilters,
+    query: "",
+    type: "",
+    quickFilter: "all",
+    sessionId: "",
+  }));
   const filtered = sessionEvents.filter((event) => {
     if (!selectedSessionId) return true;
     return event.sessionId === selectedSessionId;
@@ -83,7 +107,10 @@ export function buildLocalStreamPayload({
 
   return {
     events: filtered,
-    sessions: buildSessionGroups(sessionEvents),
+    sessions: mergeSessionTokenAggregates(
+      buildSessionGroups(sessionEvents),
+      buildSessionGroups(aggregateEvents),
+    ),
     meta: collectMeta(sessionEvents),
     totalVisible: events?.length || 0,
     totalMatching: filtered.length,

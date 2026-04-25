@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Badge, Button, Drawer, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
 import { IconCopy } from "@tabler/icons-react";
 import {
@@ -6,9 +7,12 @@ import {
   platformLabel,
   shortSessionId,
 } from "../lib/formatters";
+import { readableEventSummary } from "../lib/event-display";
 import { JsonCodeBlock } from "./json-code-block";
 
 export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId }) {
+  const [showRawJson, setShowRawJson] = useState(false);
+
   return (
     <Drawer
       opened={opened}
@@ -21,25 +25,50 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId })
     >
       {event ? (
         <Stack gap="md">
-          <Group gap="xs">
-            <Badge radius="xl" variant="light" color={event.sourceType === "codex" ? "blue" : "violet"}>
-              {platformLabel(event.sourceType)}
-            </Badge>
-            <Badge radius="xl" variant="outline" color="gray">
-              {callTypeLabel(event.callType)}
-            </Badge>
-            <Badge radius="xl" variant="light" color="gray">
-              {event.model || "unknown"}
-            </Badge>
-          </Group>
-          <div>
+          <div className="event-detail-hero">
+            <Group gap="xs" className="event-detail-hero__badges">
+              <Badge radius="xl" variant="light" color={event.sourceType === "codex" ? "blue" : "violet"}>
+                {platformLabel(event.sourceType)}
+              </Badge>
+              <Badge radius="xl" variant="outline" color="gray">
+                {callTypeLabel(event.callType)}
+              </Badge>
+              <Badge radius="xl" variant="light" color="gray">
+                {event.model || "unknown"}
+              </Badge>
+            </Group>
             <Title order={4}>{event.sessionTitle || "未命名会话"}</Title>
-            <Text className="drawer-subtitle">
-              {formatFullDateTime(event.time)} · {shortSessionId(event.sessionId)} · {event.extra || "事件"}
-            </Text>
+            <Text className="event-detail-summary">{readableEventSummary(event, 280)}</Text>
           </div>
-          <Group justify="space-between">
-            <Text className="drawer-path">{event.cwd || "无目录信息"}</Text>
+
+          <div className="event-detail-grid">
+            <div>
+              <Text className="event-detail-label">时间</Text>
+              <Text className="event-detail-value">{formatFullDateTime(event.time)}</Text>
+            </div>
+            <div>
+              <Text className="event-detail-label">会话</Text>
+              <Text className="event-detail-value">{shortSessionId(event.sessionId)}</Text>
+            </div>
+            <div>
+              <Text className="event-detail-label">事件键</Text>
+              <Text className="event-detail-value">{event.extra || "事件详情"}</Text>
+            </div>
+            <div>
+              <Text className="event-detail-label">工作目录</Text>
+              <Text className="event-detail-value event-detail-value--path">{event.cwd || "无目录信息"}</Text>
+            </div>
+          </div>
+
+          <Group justify="space-between" className="event-detail-actions">
+            <Button
+              variant="subtle"
+              radius="xl"
+              color="gray"
+              onClick={() => setShowRawJson((current) => !current)}
+            >
+              {showRawJson ? "隐藏原始 JSON" : "查看原始 JSON"}
+            </Button>
             <Group gap="xs">
               <Button
                 variant="subtle"
@@ -61,9 +90,11 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId })
               </Button>
             </Group>
           </Group>
-          <ScrollArea offsetScrollbars className="drawer-json-shell">
-            <JsonCodeBlock value={event} className="drawer-json" />
-          </ScrollArea>
+          {showRawJson ? (
+            <ScrollArea offsetScrollbars className="drawer-json-shell">
+              <JsonCodeBlock value={event} className="drawer-json" />
+            </ScrollArea>
+          ) : null}
         </Stack>
       ) : null}
     </Drawer>

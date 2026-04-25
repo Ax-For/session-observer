@@ -31,6 +31,7 @@ import {
   IconRefresh,
   IconSearch,
   IconSun,
+  IconX,
 } from "@tabler/icons-react";
 import ObserverData from "../shared/observer-data.js";
 import {
@@ -331,6 +332,53 @@ export function App() {
   const headerStatus = dataSource === "server"
     ? `实时索引 · 最近更新 ${formatFullDateTime(streamPayload.generatedAt)}`
     : `本地导入 · ${formatNumber(localEvents.length)} 条事件`;
+  const activeStreamFilters = [
+    deferredQuery ? {
+      key: "query",
+      label: `搜索 ${deferredQuery}`,
+      clear: () => setStreamFilters((current) => ({ ...current, query: "" })),
+    } : null,
+    streamFilters.model ? {
+      key: "model",
+      label: `模型 ${streamFilters.model}`,
+      clear: () => setStreamFilters((current) => ({ ...current, model: "" })),
+    } : null,
+    streamFilters.type ? {
+      key: "type",
+      label: `类型 ${streamFilters.type}`,
+      clear: () => setStreamFilters((current) => ({ ...current, type: "" })),
+    } : null,
+    streamFilters.platform ? {
+      key: "platform",
+      label: `平台 ${streamFilters.platform === "codex" ? "Codex" : "Claude Code"}`,
+      clear: () => setStreamFilters((current) => ({ ...current, platform: "" })),
+    } : null,
+    streamFilters.start ? {
+      key: "start",
+      label: `开始 ${streamFilters.start}`,
+      clear: () => setStreamFilters((current) => ({ ...current, start: "" })),
+    } : null,
+    streamFilters.end ? {
+      key: "end",
+      label: `结束 ${streamFilters.end}`,
+      clear: () => setStreamFilters((current) => ({ ...current, end: "" })),
+    } : null,
+    streamFilters.order !== DEFAULT_STREAM_FILTERS.order ? {
+      key: "order",
+      label: streamFilters.order === "asc" ? "最早在前" : "最新在前",
+      clear: () => setStreamFilters((current) => ({ ...current, order: DEFAULT_STREAM_FILTERS.order })),
+    } : null,
+    quickFilter !== "all" ? {
+      key: "quick",
+      label: quickFilter === "alert" ? "异常" : "高 Token",
+      clear: () => setQuickFilter("all"),
+    } : null,
+    selectedSessionId ? {
+      key: "session",
+      label: `会话 ${selectedSessionId.slice(0, 8)}`,
+      clear: clearSessionFocus,
+    } : null,
+  ].filter(Boolean);
 
   async function copySessionId(sessionId) {
     if (!sessionId) return;
@@ -505,6 +553,37 @@ export function App() {
                         className="control-field"
                       />
                     </Group>
+                    {activeStreamFilters.length ? (
+                      <Group gap="xs" className="active-filter-bar">
+                        <Text className="active-filter-bar__label">当前筛选</Text>
+                        {activeStreamFilters.map((filter) => (
+                          <Button
+                            key={filter.key}
+                            variant="light"
+                            color="gray"
+                            radius="xl"
+                            size="xs"
+                            rightSection={<IconX size={13} />}
+                            onClick={filter.clear}
+                          >
+                            {filter.label}
+                          </Button>
+                        ))}
+                        <Button
+                          variant="subtle"
+                          color="gray"
+                          radius="xl"
+                          size="xs"
+                          onClick={() => {
+                            setStreamFilters(DEFAULT_STREAM_FILTERS);
+                            setQuickFilter("all");
+                            setSelectedSessionId("");
+                          }}
+                        >
+                          清空全部
+                        </Button>
+                      </Group>
+                    ) : null}
                   </Paper>
 
                   <Suspense fallback={<WorkspaceFallback label="正在加载事件流…" />}>

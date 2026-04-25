@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -15,7 +16,6 @@ import {
   IconArrowRight,
   IconBolt,
   IconChartBar,
-  IconClockHour4,
   IconX,
 } from "@tabler/icons-react";
 import {
@@ -27,6 +27,15 @@ import {
   platformLabel,
   shortSessionId,
 } from "../lib/formatters";
+import {
+  eventDialogueRole,
+  eventTone,
+  readableDialogueContent,
+  readableEventSummary,
+} from "../lib/event-display";
+
+const EVENT_ROW_HEIGHT = 136;
+const EVENT_OVERSCAN = 6;
 
 function formatHeroNumber(value) {
   const amount = Number(value);
@@ -51,6 +60,105 @@ function getWindowPlatformTotal(windowSummary, platformKey) {
   return Number(match?.total) || 0;
 }
 
+function EventRow({ event, onOpenEvent }) {
+  const dialogueRole = eventDialogueRole(event.callType);
+  const rowClasses = [
+    "event-row",
+    `event-row--${eventTone(event.callType)}`,
+    dialogueRole ? `event-row--dialogue event-row--dialogue-${dialogueRole}` : "",
+  ].filter(Boolean).join(" ");
+  const summary = dialogueRole ? readableDialogueContent(event) : readableEventSummary(event);
+
+  return (
+    <button
+      type="button"
+      className={rowClasses}
+      onClick={() => onOpenEvent(event)}
+    >
+      <span className="event-row__rail" aria-hidden="true">
+        <span className="event-row__dot" />
+      </span>
+
+      <div className="event-row__body">
+        <div className="event-row__kicker">
+          <span className="event-row__platform">{event.sourceType === "codex" ? "CX" : "CC"}</span>
+          <span className="event-row__type">{callTypeLabel(event.callType)}</span>
+          <span className="event-row__model">{event.model || "unknown"}</span>
+        </div>
+        {dialogueRole ? (
+          <div className="event-row__speaker">
+            {dialogueRole === "user" ? "用户" : "Agent"}
+          </div>
+        ) : null}
+        <Text className="event-row__summary">{summary}</Text>
+        <div className="event-row__meta-line">
+          <span>{shortSessionId(event.sessionId)}</span>
+          <span>{event.extra || "事件详情"}</span>
+          <span>{clipText(event.cwd || "", 48)}</span>
+        </div>
+      </div>
+
+      <div className="event-row__side">
+        <Text className="event-row__timestamp">{formatDateTime(event.time)}</Text>
+        <span className="event-row__arrow" aria-hidden="true">
+          <IconArrowRight size={14} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function VirtualEventList({ events, onOpenEvent }) {
+  const viewportRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(520);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+
+    const syncViewportHeight = () => setViewportHeight(viewport.clientHeight || 520);
+    syncViewportHeight();
+
+    if (typeof ResizeObserver === "undefined") return undefined;
+
+    const observer = new ResizeObserver(syncViewportHeight);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const eventList = events || [];
+  const totalHeight = eventList.length * EVENT_ROW_HEIGHT;
+  const startIndex = Math.max(0, Math.floor(scrollTop / EVENT_ROW_HEIGHT) - EVENT_OVERSCAN);
+  const visibleCount = Math.ceil(viewportHeight / EVENT_ROW_HEIGHT) + EVENT_OVERSCAN * 2;
+  const endIndex = Math.min(eventList.length, startIndex + visibleCount);
+  const visibleEvents = eventList.slice(startIndex, endIndex);
+
+  return (
+    <div
+      ref={viewportRef}
+      className="feed-virtual-scroll"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      style={{ "--event-row-height": `${EVENT_ROW_HEIGHT}px` }}
+    >
+      <div className="feed-virtual-scroll__spacer" style={{ height: totalHeight }}>
+        {visibleEvents.map((event, index) => {
+          const absoluteIndex = startIndex + index;
+          return (
+            <div
+              key={`${event.time}-${event.sessionId}-${event.callType}-${event.extra || ""}`}
+              className="feed-virtual-scroll__item"
+              style={{ transform: `translateY(${absoluteIndex * EVENT_ROW_HEIGHT}px)` }}
+            >
+              <EventRow event={event} onOpenEvent={onOpenEvent} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function StreamWorkspace({
   scope,
   summary,
@@ -66,6 +174,7 @@ export function StreamWorkspace({
   loading,
   generatedAt,
 }) {
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
   const activeSession = (sessions || []).find((session) => session?.sessionId === selectedSessionId) || null;
   const matchingCount = Number(summary?.counts?.totalMatching) || 0;
   const loadedCount = Number(summary?.counts?.totalLoaded) || 0;
@@ -153,15 +262,25 @@ export function StreamWorkspace({
               </div>
             </Group>
           </div>
-          <Button
-            leftSection={<IconAdjustmentsHorizontal size={16} />}
-            variant="light"
-            color="blue"
-            radius="xl"
-            onClick={onOpenFilters}
-          >
-            筛选器
-          </Button>
+          <Group gap="xs">
+            <Button
+              variant="subtle"
+              color="gray"
+              radius="xl"
+              onClick={() => setOverviewExpanded((current) => !current)}
+            >
+              {overviewExpanded ? "收起统计" : "展开统计"}
+            </Button>
+            <Button
+              leftSection={<IconAdjustmentsHorizontal size={16} />}
+              variant="light"
+              color="blue"
+              radius="xl"
+              onClick={onOpenFilters}
+            >
+              筛选器
+            </Button>
+          </Group>
         </Group>
 
         <div className="overview-ribbon">
@@ -179,7 +298,7 @@ export function StreamWorkspace({
           ) : null}
         </div>
 
-        <div className="overview-board">
+        <div className={`overview-board${overviewExpanded ? " is-expanded" : ""}`} aria-hidden={!overviewExpanded}>
           <section className="overview-panel overview-panel--primary">
             <div className="overview-panel__head overview-panel__head--compact">
               <Text className="overview-section-label">观测总览</Text>
@@ -317,7 +436,7 @@ export function StreamWorkspace({
             </Badge>
           </Group>
           <ScrollArea offsetScrollbars className="session-rail__scroll">
-            <Stack gap="xs">
+            <Stack gap={4}>
               {(sessions || []).map((session) => {
                 const active = session.sessionId === selectedSessionId;
                 return (
@@ -327,21 +446,17 @@ export function StreamWorkspace({
                     className={`session-rail__item${active ? " is-active" : ""}`}
                     onClick={() => onSelectSession(session.sessionId)}
                   >
-                    <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <div>
-                        <Group gap={6} mb={6}>
-                          <Badge radius="xl" color={session.sourceType === "codex" ? "blue" : "violet"} variant={active ? "filled" : "light"}>
-                            {session.sourceType === "codex" ? "CX" : "CC"}
-                          </Badge>
-                          <Text fw={600} className="session-rail__title">{session.title || "未命名会话"}</Text>
-                        </Group>
-                        <Text className="session-rail__meta">
-                          {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)}
-                        </Text>
-                        <Text className="session-rail__path">{clipText(session.cwd, 42)}</Text>
-                      </div>
-                      <Text className="session-rail__id">{shortSessionId(session.sessionId)}</Text>
-                    </Group>
+                    <span className={`session-rail__mark session-rail__mark--${session.sourceType === "codex" ? "codex" : "claude"}`}>
+                      {session.sourceType === "codex" ? "CX" : "CC"}
+                    </span>
+                    <span className="session-rail__main">
+                      <span className="session-rail__title">{session.title || "未命名会话"}</span>
+                      <span className="session-rail__meta">
+                        {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)} · {formatNumber(session.count || 0)} 事件
+                      </span>
+                      <span className="session-rail__path">{clipText(session.cwd, 44)}</span>
+                    </span>
+                    <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
                   </button>
                 );
               })}
@@ -380,48 +495,7 @@ export function StreamWorkspace({
               ))}
             </Group>
           </Group>
-          <ScrollArea offsetScrollbars className="feed-panel__scroll">
-            <Stack gap="sm">
-              {(events || []).map((event) => (
-                <button
-                  key={`${event.time}-${event.sessionId}-${event.callType}-${event.extra || ""}`}
-                  type="button"
-                  className="event-row"
-                  onClick={() => onOpenEvent(event)}
-                >
-                  <Group justify="space-between" align="flex-start" wrap="nowrap" className="event-row__top">
-                    <Group gap="xs">
-                      <Badge radius="xl" color={event.sourceType === "codex" ? "blue" : "violet"} variant="light">
-                        {event.sourceType === "codex" ? "CX" : "CC"}
-                      </Badge>
-                      <Badge radius="xl" color="gray" variant="outline">
-                        {callTypeLabel(event.callType)}
-                      </Badge>
-                      <Badge radius="xl" color="gray" variant="light">
-                        {event.model || "unknown"}
-                      </Badge>
-                    </Group>
-                    <Group gap="xs" className="event-row__right">
-                      <Text className="event-row__timestamp">{formatDateTime(event.time)}</Text>
-                      <span className="event-row__arrow" aria-hidden="true">
-                        <IconArrowRight size={14} />
-                      </span>
-                    </Group>
-                  </Group>
-                  <Text className="event-row__summary">{event.summary || event.content || "-"}</Text>
-                  <Group justify="space-between" mt="sm">
-                    <Group gap="xs">
-                      <ThemeIcon size={22} radius="xl" variant="light" color="gray">
-                        <IconClockHour4 size={12} />
-                      </ThemeIcon>
-                      <Text className="event-row__meta">{shortSessionId(event.sessionId)} · {event.extra || "事件详情"}</Text>
-                    </Group>
-                    <Text className="event-row__meta">{clipText(event.cwd || "", 36)}</Text>
-                  </Group>
-                </button>
-              ))}
-            </Stack>
-          </ScrollArea>
+          <VirtualEventList events={events} onOpenEvent={onOpenEvent} />
           <Group justify="space-between" mt="md">
             <Text className="feed-footer">
               <IconChartBar size={14} stroke={1.8} />

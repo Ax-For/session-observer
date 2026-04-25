@@ -78,6 +78,33 @@ describe("StreamWorkspace", () => {
               summary: "Token usage · In 2.4k · Out 220 · Total 2.6k",
               extra: "token_count",
             },
+            {
+              time: "2026-04-19T14:36:11.720Z",
+              callType: "Tool_Call",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "tool=navigate_page args={\"type\":\"reload\"}",
+              extra: "call_id=call-1",
+            },
+            {
+              time: "2026-04-19T14:36:12.720Z",
+              callType: "Prompt",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "用户输入 · 这里需要突出用户消息",
+              extra: "role=user",
+            },
+            {
+              time: "2026-04-19T14:36:13.720Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "助手输出 · 我会优先展示对话内容",
+              extra: "role=assistant",
+            },
           ]}
           selectedSessionId="sess-1"
           onSelectSession={() => {}}
@@ -125,6 +152,11 @@ describe("StreamWorkspace", () => {
     expect(screen.getAllByText("Token Usage").length).toBeGreaterThan(0);
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
     expect(screen.getByText("Token usage · In 2.4k · Out 220 · Total 2.6k")).toBeInTheDocument();
+    expect(screen.getByText("调用 navigate_page · {\"type\":\"reload\"}")).toBeInTheDocument();
+    expect(screen.getByText("用户")).toBeInTheDocument();
+    expect(screen.getByText("这里需要突出用户消息")).toBeInTheDocument();
+    expect(screen.getAllByText("Agent").length).toBeGreaterThan(0);
+    expect(screen.getByText("我会优先展示对话内容")).toBeInTheDocument();
   });
 
   test("formats large token metrics with chinese units in the overview panel", () => {
@@ -252,5 +284,62 @@ describe("StreamWorkspace", () => {
     const clearButtons = screen.getAllByRole("button", { name: "返回全部会话" });
     fireEvent.click(clearButtons[clearButtons.length - 1]);
     expect(onClearSessionFocus).toHaveBeenCalledTimes(1);
+  });
+
+  test("windows the event list instead of rendering every loaded event", () => {
+    const events = Array.from({ length: 180 }, (_, index) => ({
+      time: `2026-04-19T14:${String(index % 60).padStart(2, "0")}:10.720Z`,
+      callType: index % 2 === 0 ? "Tool_Call" : "Token_Usage",
+      sourceType: "codex",
+      model: "gpt-5.4",
+      sessionId: "sess-1",
+      summary: index % 2 === 0 ? `tool=exec_command args={\"index\":${index}}` : `Token usage · Total ${index}`,
+      extra: `event-${index}`,
+    }));
+
+    const { container } = render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{
+            title: "全部会话",
+            subtitle: "跨平台 · 全部事件 · observe",
+            tags: [],
+          }}
+          summary={{
+            totals: {
+              input: 0,
+              output: 0,
+              total: 0,
+              cachedInput: 0,
+              reasoningOutput: 0,
+            },
+            tokenWindows: {
+              day: { total: 0, platforms: [] },
+              week: { total: 0, platforms: [] },
+            },
+            counts: {
+              totalVisible: 180,
+              totalMatching: 180,
+              totalLoaded: 180,
+              sessions: 1,
+            },
+            topTypes: [],
+            topModels: [],
+            platforms: [],
+          }}
+          sessions={[]}
+          events={events}
+          selectedSessionId=""
+          onSelectSession={() => {}}
+          onClearSessionFocus={() => {}}
+          generatedAt="2026-04-19T15:00:00.000Z"
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(container.querySelectorAll(".event-row").length).toBeLessThan(40);
+    expect(screen.getByText("当前显示 180 条事件")).toBeInTheDocument();
   });
 });
