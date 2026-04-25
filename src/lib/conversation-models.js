@@ -379,3 +379,67 @@ export function buildConversationEntries(events) {
 
   return entries;
 }
+
+function createConversationTurn(index, entry) {
+  return {
+    id: `turn-${index}-${entry?.time || "start"}`,
+    index,
+    startedAt: entry?.time || "",
+    endedAt: entry?.time || "",
+    userMessages: [],
+    assistantMessages: [],
+    thinkingEntries: [],
+    toolEntries: [],
+    toolSummary: {
+      total: 0,
+      errors: 0,
+      labels: [],
+    },
+  };
+}
+
+function summarizeTurnTools(toolEntries) {
+  const labels = [...new Set((toolEntries || []).map((entry) => entry.toolName).filter(Boolean))];
+  return {
+    total: toolEntries.length,
+    errors: toolEntries.filter((entry) => entry.isError).length,
+    labels,
+  };
+}
+
+export function buildConversationTurns(events) {
+  const entries = buildConversationEntries(events);
+  const turns = [];
+  let currentTurn = null;
+
+  entries.forEach((entry) => {
+    if (entry.kind === "message" && entry.role === "user") {
+      currentTurn = createConversationTurn(turns.length + 1, entry);
+      currentTurn.userMessages.push(entry);
+      turns.push(currentTurn);
+      return;
+    }
+
+    if (!currentTurn) {
+      currentTurn = createConversationTurn(turns.length + 1, entry);
+      turns.push(currentTurn);
+    }
+
+    if (entry.kind === "message" && entry.role === "agent") {
+      currentTurn.assistantMessages.push(entry);
+    } else if (entry.kind === "thinking") {
+      currentTurn.thinkingEntries.push(entry);
+    } else if (entry.kind === "tool") {
+      currentTurn.toolEntries.push(entry);
+    } else if (entry.kind === "message") {
+      currentTurn.userMessages.push(entry);
+    }
+
+    currentTurn.endedAt = entry.time || currentTurn.endedAt;
+  });
+
+  return turns.map((turn) => ({
+    ...turn,
+    toolSummary: summarizeTurnTools(turn.toolEntries),
+  }));
+}

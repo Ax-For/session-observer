@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   buildDashboardSummary,
+  buildLocalSessionGroups,
+  buildLocalStreamPayload,
   buildSessionSections,
   buildStreamScope,
 } from "../workspace-models";
@@ -201,6 +203,45 @@ describe("buildSessionSections", () => {
         total: 1,
       }),
     ]);
+  });
+});
+
+describe("local workspace models", () => {
+  test("buildLocalStreamPayload filters focused events but keeps matching session metadata", () => {
+    const payload = buildLocalStreamPayload({
+      events: sampleEvents,
+      filters: {
+        query: "",
+        model: "",
+        type: "",
+        platform: "",
+        order: "desc",
+      },
+      selectedSessionId: "sess-1",
+      quickFilter: "all",
+      tokenThreshold: 20000,
+      mode: "observe",
+    });
+
+    expect(payload.events.map((event) => event.sessionId)).toEqual(["sess-1", "sess-1"]);
+    expect(payload.sessions.map((session) => session.sessionId).sort()).toEqual(["sess-1", "sess-2"]);
+    expect(payload.totalVisible).toBe(3);
+    expect(payload.totalMatching).toBe(2);
+  });
+
+  test("buildLocalSessionGroups produces cwd sections without stream filter coupling", () => {
+    expect(buildLocalSessionGroups(sampleEvents)).toEqual({
+      "未分类": [
+        expect.objectContaining({
+          sessionId: "sess-1",
+          count: 2,
+        }),
+        expect.objectContaining({
+          sessionId: "sess-2",
+          count: 1,
+        }),
+      ],
+    });
   });
 });
 

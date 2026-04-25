@@ -5,7 +5,13 @@ const PLATFORM_LABELS = {
   claude: "Claude Code",
 };
 
-const { buildTokenUsageWindows } = ObserverCore;
+const {
+  buildSessionGroups,
+  buildTokenUsageWindows,
+  collectMeta,
+  eventMatchesFilters,
+  toTimeMs,
+} = ObserverCore;
 
 const QUICK_FILTER_LABELS = {
   all: "全部事件",
@@ -27,6 +33,68 @@ function flattenSessions(groupsOrSessions) {
   if (Array.isArray(groupsOrSessions)) return groupsOrSessions;
   if (!groupsOrSessions || typeof groupsOrSessions !== "object") return [];
   return Object.values(groupsOrSessions).flat();
+}
+
+export function groupSessionsByCwd(sessions) {
+  return (sessions || []).reduce((groups, session) => {
+    const key = session.cwd || "未分类";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(session);
+    return groups;
+  }, {});
+}
+
+export function buildLocalSessionGroups(events) {
+  return groupSessionsByCwd(buildSessionGroups(events || []));
+}
+
+export function buildLocalStreamPayload({
+  events,
+  filters,
+  selectedSessionId,
+  quickFilter,
+  tokenThreshold,
+  mode,
+}) {
+  const query = String(filters?.query || "").trim().toLowerCase();
+  const baseFilters = {
+    mode,
+    platform: filters?.platform,
+    model: filters?.model,
+    type: filters?.type,
+    quickFilter,
+    tokenThreshold,
+    query,
+    sessionId: "",
+    startMs: filters?.start ? toTimeMs(filters.start) : null,
+    endMs: filters?.end ? toTimeMs(filters.end) : null,
+  };
+
+  const sessionEvents = (events || []).filter((event) => eventMatchesFilters(event, baseFilters));
+  const filtered = sessionEvents.filter((event) => {
+    if (!selectedSessionId) return true;
+    return event.sessionId === selectedSessionId;
+  });
+
+  filtered.sort((left, right) => {
+    if (filters?.order === "asc") return String(left.time).localeCompare(String(right.time));
+    return String(right.time).localeCompare(String(left.time));
+  });
+
+  return {
+    events: filtered,
+    sessions: buildSessionGroups(sessionEvents),
+    meta: collectMeta(sessionEvents),
+    totalVisible: events?.length || 0,
+    totalMatching: filtered.length,
+    page: {
+      offset: 0,
+      limit: filtered.length,
+      hasMore: false,
+    },
+    generatedAt: new Date().toISOString(),
+    mode,
+  };
 }
 
 export function buildDashboardSummary({

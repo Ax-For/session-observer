@@ -1,0 +1,196 @@
+import { startTransition, useCallback, useRef, useState } from "react";
+import { apiClient } from "../api/client";
+import {
+  CONVERSATION_PAGE_LIMIT,
+  createEmptyConversationPage,
+  mergeConversationPage,
+  sliceConversationPage,
+} from "../lib/conversation-paging";
+
+const BACKGROUND_LOAD_DELAY_MS = 16;
+
+function waitForNextConversationBatch() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, BACKGROUND_LOAD_DELAY_MS);
+  });
+}
+
+export function useConversationData({ dataSource, localEvents, notify }) {
+  const conversationRequestId = useRef(0);
+  const conversationEventsRef = useRef([]);
+  const conversationPageRef = useRef(createEmptyConversationPage());
+  const conversationLocalSource = useRef([]);
+  const [conversationSession, setConversationSession] = useState(null);
+  const [conversationEvents, setConversationEvents] = useState([]);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationLoadingMore, setConversationLoadingMore] = useState(false);
+  const [conversationPage, setConversationPage] = useState(createEmptyConversationPage());
+
+  const commitConversationChunk = useCallback((nextEvents, total, options = {}) => {
+    const merged = mergeConversationPage(
+      conversationEventsRef.current,
+      conversationPageRef.current,
+      nextEvents,
+      { total, replace: Boolean(options.replace) },
+    );
+    conversationEventsRef.current = merged.events;
+    conversationPageRef.current = merged.page;
+    startTransition(() => {
+      setConversationEvents(merged.events);
+      setConversationPage(merged.page);
+    });
+  }, []);
+
+  const preloadRemainingConversation = useCallback(async (requestId, session) => {
+    if (dataSource !== "server") return;
+
+    setConversationLoadingMore(true);
+    try {
+      while (requestId === conversationRequestId.current && conversationPageRef.current.hasMore) {
+        const offset = conversationPageRef.current.nextOffset;
+        const payload = await apiClient.fetchEvents({
+          sessionId: session.sessionId,
+          order: "asc",
+          limit: CONVERSATION_PAGE_LIMIT,
+          offset,
+          mode: "raw",
+        });
+        if (requestId !== conversationRequestId.current) return;
+
+        const nextEvents = payload.events || [];
+        if (nextEvents.length === 0) return;
+
+        commitConversationChunk(nextEvents, Number(payload.totalMatching) || conversationPageRef.current.total);
+        await waitForNextConversationBatch();
+      }
+    } catch (error) {
+      if (requestId !== conversationRequestId.current) return;
+      notify({
+        title: "会话后台加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      if (requestId === conversationRequestId.current) setConversationLoadingMore(false);
+    }
+  }, [commitConversationChunk, dataSource, notify]);
+
+  const closeConversation = useCallback(() => {
+    conversationRequestId.current += 1;
+    conversationLocalSource.current = [];
+    conversationEventsRef.current = [];
+    conversationPageRef.current = createEmptyConversationPage();
+    setConversationSession(null);
+    setConversationLoading(false);
+    setConversationLoadingMore(false);
+    startTransition(() => {
+      setConversationEvents([]);
+      setConversationPage(createEmptyConversationPage());
+    });
+  }, []);
+
+  const openConversation = useCallback(async (session) => {
+    const requestId = ++conversationRequestId.current;
+    conversationLocalSource.current = [];
+    conversationEventsRef.current = [];
+    conversationPageRef.current = createEmptyConversationPage();
+    setConversationSession(session);
+    setConversationEvents([]);
+    setConversationPage(createEmptyConversationPage());
+    setConversationLoadingMore(false);
+    setConversationLoading(true);
+
+    if (dataSource !== "server") {
+      const allEvents = localEvents
+        .filter((event) => event.sessionId === session.sessionId)
+        .sort((left, right) => String(left.time).localeCompare(String(right.time)));
+      conversationLocalSource.current = allEvents;
+      commitConversationChunk(allEvents, allEvents.length, { replace: true });
+      setConversationLoading(false);
+      return;
+    }
+
+    try {
+      const payload = await apiClient.fetchEvents({
+        sessionId: session.sessionId,
+        order: "asc",
+        limit: CONVERSATION_PAGE_LIMIT,
+        offset: 0,
+        mode: "raw",
+      });
+      if (requestId !== conversationRequestId.current) return;
+      commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0, { replace: true });
+      setConversationLoading(false);
+      void preloadRemainingConversation(requestId, session);
+    } catch (error) {
+      if (requestId !== conversationRequestId.current) return;
+      notify({
+        title: "会话加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      if (requestId === conversationRequestId.current) setConversationLoading(false);
+    }
+  }, [commitConversationChunk, dataSource, localEvents, notify, preloadRemainingConversation]);
+
+  const loadMoreConversation = useCallback(async () => {
+    if (!conversationSession || conversationLoading || conversationLoadingMore || !conversationPageRef.current.hasMore) return;
+
+    if (dataSource !== "server") {
+      setConversationLoadingMore(true);
+      try {
+        const nextSlice = sliceConversationPage(
+          conversationLocalSource.current,
+          conversationPageRef.current.nextOffset,
+          CONVERSATION_PAGE_LIMIT,
+        );
+        commitConversationChunk(nextSlice.events, nextSlice.page.total);
+      } finally {
+        setConversationLoadingMore(false);
+      }
+      return;
+    }
+
+    const requestId = ++conversationRequestId.current;
+    setConversationLoadingMore(true);
+    try {
+      const payload = await apiClient.fetchEvents({
+        sessionId: conversationSession.sessionId,
+        order: "asc",
+        limit: CONVERSATION_PAGE_LIMIT,
+        offset: conversationPageRef.current.nextOffset,
+        mode: "raw",
+      });
+      if (requestId !== conversationRequestId.current) return;
+      commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0);
+    } catch (error) {
+      if (requestId !== conversationRequestId.current) return;
+      notify({
+        title: "继续加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      if (requestId === conversationRequestId.current) setConversationLoadingMore(false);
+    }
+  }, [
+    commitConversationChunk,
+    conversationLoading,
+    conversationLoadingMore,
+    conversationSession,
+    dataSource,
+    notify,
+  ]);
+
+  return {
+    conversationSession,
+    conversationEvents,
+    conversationLoading,
+    conversationLoadingMore,
+    conversationPage,
+    openConversation,
+    loadMoreConversation,
+    closeConversation,
+  };
+}

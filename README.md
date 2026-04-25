@@ -1,133 +1,88 @@
 # Session Observer
 
-本地前端页面，用于观测 AI Coding Assistant（Codex 和 Claude Code）会话日志。
+本地优先的 Codex / Claude Code 会话观测工作台。应用读取本机日志，不上传数据，用于查看事件流、会话对话、Token 消耗、会话标题和批量管理。
 
 - Codex: `~/.codex/sessions/**/*.jsonl`
 - Claude Code: `~/.claude/projects/**/*.jsonl`
 
+## 技术栈
+
+- 后端: Node.js `http` server，入口为 `server.js`
+- 前端: React 19 + Vite + Mantine，入口为 `src/main.jsx`
+- 共享解析: `shared/observer-core.js` 和 `shared/observer-data.js`
+- 测试: Vitest + Node `node:test`
+
 ## 环境要求
 
-- **Node.js ≥ 16**（使用了 `fs.rmSync`、`replaceAll` 等 API）
-- **sqlite3 CLI**（Codex 会话标题读取依赖，Mac 通常自带，Ubuntu/Debian: `sudo apt install sqlite3`）
-- 现代浏览器（Chrome 85+ / Firefox 77+ / Safari 13.1+）
-- 前端 Markdown 渲染依赖 [marked.js](https://marked.js.org/)（通过 jsDelivr CDN 加载，需网络可用）
+- Node.js: 建议使用当前 LTS 或更新版本
+- npm
+- `sqlite3` CLI: Codex 会话标题读取依赖
+- 现代浏览器
 
-## 功能
-
-### 核心功能
-
-- 双平台支持：同时导入和浏览 Codex 与 Claude Code 会话
-- 事件类型：Prompt / User / Agent / Tool_Call / Tool_Result / Token_Usage / Thinking
-- 平台筛选：按 Codex 或 Claude Code 过滤
-- 左侧 Session 分组浏览（按最近活跃排序，支持一键查看单个会话）
-- 按模型、类型、平台、时间范围筛选
-- 关键词搜索（全文，含 sessionId / turnId / callId / toolName）
-- 点击行查看完整详情（含原始 raw 事件）
-- 自动刷新模式（每 5 秒轮询服务器）
-- 虚拟滚动（支持大规模事件流）
-- 主题切换（白天/夜间）和密度切换（舒展/紧凑）
-
-### 统计仪表盘
-
-- Token 使用汇总：输入/输出/总计/缓存/推理
-- 事件类型分布：可视化条形图
-- 模型分布：各模型使用次数
-- 平台分布：Codex vs Claude Code
-- 数量统计：总事件/匹配事件/会话数/已加载
-- 所有指标含 tooltip 说明
-
-### 会话管理
-
-- 会话列表搜索（名称/cwd/sessionId）
-- 平台筛选、仅显示已命名筛选
-- 重命名会话标题
-- 删除单个会话
-- 批量选择和批量删除
-- 批量导出 JSONL
-
-### 键盘快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `f` 或 `/` | 聚焦搜索框 |
-| `r` | 手动刷新 |
-| `a` | 切换自动刷新 |
-| `t` | 切换主题 |
-| `m` | 切换观测/原始模式 |
-| `j` / `↓` | 下一条事件 |
-| `k` / `↑` | 上一条事件 |
-| `Enter` | 打开事件详情 |
-| `Esc` | 关闭弹窗 |
-
-### URL 状态共享
-
-当前视图状态（过滤器、选中会话、Tab、模式等）自动编码到 URL 搜索参数中。复制 URL 发送给他人，打开即可看到相同的视图。
-
-示例：`http://localhost:8787/?q=error&platform=codex&mode=raw&sort=asc`
-
-外观偏好（主题、密度、面板宽度）存储在 `localStorage` 中，不编码到 URL。
-
-## 使用
-
-### 管理脚本（推荐）
+## 快速开始
 
 ```bash
-cd session-observer
+npm install
 ./manage.sh start
-./manage.sh status
 ./manage.sh open
-./manage.sh logs -f
-./manage.sh stop
 ```
 
-可用命令：`start | stop | restart | status | logs | open | run`
+默认地址是 `http://127.0.0.1:8787`。
 
-### 环境变量
+`manage.sh` 会在 `dist/` 缺失或前端源码更新时自动执行 `npm run build`。开发 UI 时也可以直接运行:
+
+```bash
+npm run dev
+```
+
+## 常用命令
+
+```bash
+./manage.sh start      # 后台启动本地服务
+./manage.sh status     # 查看运行状态
+./manage.sh logs -f    # 跟随服务日志
+./manage.sh stop       # 停止服务
+./manage.sh run        # 前台运行，便于调试
+npm test               # 运行前端 Vitest 测试
+npm run test:core      # 运行共享解析与聚合测试
+npm run build          # 构建前端产物
+npm run check          # 测试核心逻辑并构建
+```
+
+## 项目结构
+
+```text
+server.js              Node API、静态资源服务、会话管理接口
+manage.sh              本地服务生命周期脚本
+shared/                Codex / Claude Code 解析、去重、聚合逻辑
+src/app.jsx            React 工作台壳和页面编排
+src/components/        事件流、会话页、详情抽屉、对话抽屉
+src/hooks/             数据加载和 URL 状态同步 hooks
+src/lib/               视图模型、格式化、分页、URL 编码
+src/styles/app.css     产品 UI 样式和设计变量
+tests/                 Node 侧解析和聚合测试
+```
+
+## 功能概览
+
+- 跨平台事件流: Codex 与 Claude Code 合并观测
+- 会话分组: 按 session 聚合，支持单会话聚焦和取消聚焦
+- 会话对话: 将原始事件还原为用户/助手/工具/思考流
+- 会话管理: 搜索、重命名、删除、批量删除、批量导出
+- Token 统计: 总量、缓存、推理、今日/本周消耗，按平台拆分
+- URL 状态: tab、筛选条件、模式和选中 session 会同步到 URL
+- 本地导入: 支持手动导入 JSONL 文件在浏览器内查看
+
+## 配置
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `HOST` | `127.0.0.1` | 监听地址 |
+| `HOST` | `127.0.0.1` | HTTP 监听地址 |
 | `PORT` | `8787` | HTTP 端口 |
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex 会话目录 |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code 项目目录 |
+| `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex 标题元数据 SQLite |
 
-### 实时模式
+## 安全说明
 
-1. `./manage.sh start`
-2. 浏览器打开：`http://localhost:8787`
-3. 点击"自动刷新"，页面每 5 秒自动刷新
-
-### 手动导入模式
-
-- 点击"导入 JSONL"手动加载文件（支持 Codex 和 Claude Code 格式）
-
-## 事件类型映射
-
-### Codex
-
-| 类型 | 来源 |
-|------|------|
-| `Prompt` | `response_item.message` 且 `role=user` |
-| `Agent` | `event_msg.agent_message` 或 `response_item.message` 且 `role=assistant` |
-| `Tool_Call` | `response_item.function_call` |
-| `Tool_Result` | `response_item.function_call_output` |
-| `Token_Usage` | `event_msg.token_count` |
-
-### Claude Code
-
-| 类型 | 来源 |
-|------|------|
-| `User` | `type=user` 且非 meta、非 tool result |
-| `Agent` | `type=assistant` 且含 text 内容 |
-| `Tool_Call` | `type=assistant` 且含 `tool_use` 内容块 |
-| `Tool_Result` | `type=user` 且含 `toolUseResult` |
-| `Token_Usage` | `type=assistant` 且含 `message.usage` 字段 |
-| `Thinking` | `type=assistant` 且仅含 `thinking` 内容块（默认隐藏） |
-
-## 技术架构
-
-- **零依赖**：纯 HTML/CSS/JS + Node.js HTTP server
-- **无构建步骤**：直接编辑文件，刷新浏览器
-- **双解析器**：Codex 和 Claude Code 分别有独立的事件解析逻辑
-- **虚拟滚动**：事件流和会话列表均支持大规模数据
-- **URL 状态同步**：视图状态编码到 URL，支持分享和书签
+会话日志可能包含 prompt、工具输出、本地路径、代码片段和其他敏感信息。不要提交原始 JSONL、导出的会话文件或 `.runtime/` 内容。默认服务只监听 `127.0.0.1`，如需绑定其他地址，请确认本机数据暴露风险。

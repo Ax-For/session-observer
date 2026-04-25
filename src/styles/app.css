@@ -703,6 +703,81 @@ textarea {
   margin-top: 10px;
 }
 
+.conversation-search {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel-soft);
+}
+
+.conversation-search__input {
+  width: 100%;
+}
+
+.conversation-search__meta-row {
+  margin-top: 8px;
+}
+
+.conversation-search__meta {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.conversation-search__snippet {
+  margin-top: 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(232, 177, 82, 0.28);
+  border-radius: 14px;
+  background: rgba(232, 177, 82, 0.08);
+  color: var(--text);
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.conversation-turn-nav {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.conversation-turn-nav__controls {
+  align-items: flex-end;
+}
+
+.conversation-turn-select {
+  flex: 1 1 280px;
+  min-width: 240px;
+}
+
+.conversation-turn-nav__meta {
+  margin-top: 8px;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.conversation-turn-scrubber {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel-soft);
+}
+
+.conversation-turn-scrubber__label,
+.conversation-turn-scrubber__value {
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.conversation-turn-scrubber__control {
+  margin-top: 8px;
+}
+
 .json-code-block,
 .drawer-json {
   margin: 0;
@@ -755,8 +830,105 @@ textarea {
   font-size: 0.84rem;
 }
 
+.conversation-window-more {
+  position: sticky;
+  bottom: 8px;
+  z-index: 2;
+  backdrop-filter: blur(12px);
+}
+
 .conversation-thread {
   gap: var(--space-sm);
+}
+
+.conversation-turn {
+  scroll-margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--panel-strong), var(--panel-soft));
+  padding: 14px;
+}
+
+.conversation-turn.is-search-match {
+  border-color: rgba(232, 177, 82, 0.58);
+  box-shadow: 0 0 0 3px rgba(232, 177, 82, 0.12);
+}
+
+.conversation-highlight {
+  border-radius: 5px;
+  background: rgba(232, 177, 82, 0.32);
+  color: inherit;
+  box-shadow: 0 0 0 2px rgba(232, 177, 82, 0.16);
+  font-weight: 800;
+}
+
+.conversation-turn__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.conversation-turn__head .conv-meta {
+  margin-top: 0;
+}
+
+.conversation-turn__tool-count {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.conversation-turn__tool-count.is-error {
+  color: #ff9aa7;
+}
+
+.conversation-turn__tools,
+.conversation-turn__thinking {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+  overflow: hidden;
+}
+
+:root[data-observer-theme="light"] .conversation-turn__tools,
+:root[data-observer-theme="light"] .conversation-turn__thinking {
+  background: rgba(27, 42, 69, 0.035);
+}
+
+.conversation-turn__tools summary,
+.conversation-turn__thinking summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.conversation-turn__tools summary::-webkit-details-marker,
+.conversation-turn__thinking summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversation-turn__tools summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-turn__tool-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
 }
 
 .conv-row {
@@ -850,6 +1022,15 @@ textarea {
 .conv-message-body {
   color: var(--text);
   min-width: 0;
+}
+
+.conv-message-preview {
+  min-width: 0;
+}
+
+.conv-message-preview__meta {
+  color: var(--text-soft);
+  font-size: 0.78rem;
 }
 
 .conv-message-plain {

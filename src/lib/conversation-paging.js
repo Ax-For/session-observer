@@ -1,4 +1,4 @@
-export const CONVERSATION_PAGE_LIMIT = 200;
+export const CONVERSATION_PAGE_LIMIT = 1000;
 
 export function createEmptyConversationPage() {
   return {

@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   AppShell,
@@ -32,19 +32,7 @@ import {
   IconSearch,
   IconSun,
 } from "@tabler/icons-react";
-import ObserverCore from "../shared/observer-core.js";
 import ObserverData from "../shared/observer-data.js";
-import { apiClient } from "./api/client";
-import { ConversationDrawer } from "./components/conversation-drawer";
-import { EventDrawer } from "./components/event-drawer";
-import { SessionWorkspace } from "./components/session-workspace";
-import { StreamWorkspace } from "./components/stream-workspace";
-import {
-  CONVERSATION_PAGE_LIMIT,
-  createEmptyConversationPage,
-  mergeConversationPage,
-  sliceConversationPage,
-} from "./lib/conversation-paging";
 import {
   downloadJson,
   downloadJsonl,
@@ -52,27 +40,39 @@ import {
   formatNumber,
 } from "./lib/formatters";
 import {
-  buildUrlSearch,
   DEFAULT_SESSION_FILTERS,
   DEFAULT_STREAM_FILTERS,
   DEFAULT_TOKEN_THRESHOLD,
   parseUrlState,
 } from "./lib/url-state";
 import {
+  buildLocalSessionGroups,
+  buildLocalStreamPayload,
   buildDashboardSummary,
   buildSessionSections,
   buildStreamScope,
 } from "./lib/workspace-models";
+import { useConversationData } from "./hooks/use-conversation-data";
+import { useSessionActions } from "./hooks/use-session-actions";
+import { useSessionData } from "./hooks/use-session-data";
+import { useStreamData } from "./hooks/use-stream-data";
+import { useUrlStateSync } from "./hooks/use-url-state-sync";
 
-const {
-  buildSessionGroups,
-  collectMeta,
-  eventMatchesFilters,
-  toTimeMs,
-} = ObserverCore;
 const { parseFiles } = ObserverData;
 
-const PAGE_LIMIT = 250;
+const StreamWorkspace = lazy(() => import("./components/stream-workspace").then((module) => ({
+  default: module.StreamWorkspace,
+})));
+const SessionWorkspace = lazy(() => import("./components/session-workspace").then((module) => ({
+  default: module.SessionWorkspace,
+})));
+const EventDrawer = lazy(() => import("./components/event-drawer").then((module) => ({
+  default: module.EventDrawer,
+})));
+const ConversationDrawer = lazy(() => import("./components/conversation-drawer").then((module) => ({
+  default: module.ConversationDrawer,
+})));
+
 const theme = createTheme({
   primaryColor: "blue",
   defaultRadius: "xl",
@@ -82,89 +82,11 @@ const theme = createTheme({
   },
 });
 
-function groupSessionsByCwd(sessions) {
-  return (sessions || []).reduce((groups, session) => {
-    const key = session.cwd || "未分类";
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(session);
-    return groups;
-  }, {});
-}
-
-function buildLocalPayload(events, filters, selectedSessionId, quickFilter, tokenThreshold, mode) {
-  const query = String(filters.query || "").trim().toLowerCase();
-  const baseFilters = {
-    mode,
-    platform: filters.platform,
-    model: filters.model,
-    type: filters.type,
-    quickFilter,
-    tokenThreshold,
-    query,
-    sessionId: "",
-    startMs: filters.start ? toTimeMs(filters.start) : null,
-    endMs: filters.end ? toTimeMs(filters.end) : null,
-  };
-
-  const sessionEvents = (events || []).filter((event) => eventMatchesFilters(event, baseFilters));
-  const filtered = sessionEvents.filter((event) => {
-    if (!selectedSessionId) return true;
-    return event.sessionId === selectedSessionId;
-  });
-
-  filtered.sort((left, right) => {
-    if (filters.order === "asc") return String(left.time).localeCompare(String(right.time));
-    return String(right.time).localeCompare(String(left.time));
-  });
-
-  return {
-    events: filtered,
-    sessions: buildSessionGroups(sessionEvents),
-    meta: collectMeta(sessionEvents),
-    totalVisible: events.length,
-    totalMatching: filtered.length,
-    page: {
-      offset: 0,
-      limit: filtered.length,
-      hasMore: false,
-    },
-    generatedAt: new Date().toISOString(),
-    mode,
-  };
-}
-
-async function fetchAllSessionEvents(sessionId) {
-  const events = [];
-  let offset = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    const payload = await apiClient.fetchEvents({
-      sessionId,
-      order: "asc",
-      limit: 1000,
-      offset,
-      mode: "raw",
-    });
-    events.push(...payload.events);
-    hasMore = Boolean(payload.page?.hasMore);
-    offset += Number(payload.page?.limit || 1000);
-  }
-
-  return events;
-}
-
 export function App() {
   const initialUrlState = useRef(
     parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
   ).current;
   const searchRef = useRef(null);
-  const eventRequestId = useRef(0);
-  const sessionsRequestId = useRef(0);
-  const conversationRequestId = useRef(0);
-  const conversationEventsRef = useRef([]);
-  const conversationPageRef = useRef(createEmptyConversationPage());
-  const conversationLocalSource = useRef([]);
   const [tab, setTab] = useState(initialUrlState.tab);
   const [themeMode, setThemeMode] = useLocalStorage({
     key: "observer-theme-mode",
@@ -184,42 +106,71 @@ export function App() {
   const [streamFilters, setStreamFilters] = useState(initialUrlState.streamFilters || DEFAULT_STREAM_FILTERS);
   const [sessionFilters, setSessionFilters] = useState(initialUrlState.sessionFilters || DEFAULT_SESSION_FILTERS);
   const [selectedSessionId, setSelectedSessionId] = useState(initialUrlState.selectedSessionId);
-  const [selectedSessionIds, setSelectedSessionIds] = useState([]);
   const [dataSource, setDataSource] = useState("server");
   const [localEvents, setLocalEvents] = useState([]);
-  const [streamPayload, setStreamPayload] = useState({
-    events: [],
-    sessions: [],
-    tokenWindows: null,
-    meta: { models: [], types: [], platforms: [] },
-    totalVisible: 0,
-    totalMatching: 0,
-    page: { offset: 0, limit: PAGE_LIMIT, hasMore: false },
-    generatedAt: "",
-    codexVersion: null,
-    claudeVersion: null,
-  });
-  const [sessionsPayload, setSessionsPayload] = useState({
-    groups: {},
-    total: 0,
-    generatedAt: "",
-  });
-  const [loadingEvents, setLoadingEvents] = useState(false);
-  const [loadingSessions, setLoadingSessions] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState(null);
-  const [conversationSession, setConversationSession] = useState(null);
-  const [conversationEvents, setConversationEvents] = useState([]);
-  const [conversationLoading, setConversationLoading] = useState(false);
-  const [conversationLoadingMore, setConversationLoadingMore] = useState(false);
-  const [conversationPage, setConversationPage] = useState(createEmptyConversationPage());
-  const [renameTarget, setRenameTarget] = useState(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState(null);
   const deferredQuery = useDeferredValue(streamFilters.query);
+  const notify = useCallback((options) => notifications.show(options), []);
+  const { streamPayload, loadingEvents, loadEvents } = useStreamData({
+    dataSource,
+    mode,
+    quickFilter,
+    tokenThreshold,
+    selectedSessionId,
+    streamFilters,
+    query: deferredQuery,
+    notify,
+  });
+  const { sessionsPayload, loadingSessions, loadSessions } = useSessionData({
+    dataSource,
+    notify,
+  });
+  const {
+    conversationSession,
+    conversationEvents,
+    conversationLoading,
+    conversationLoadingMore,
+    conversationPage,
+    openConversation,
+    loadMoreConversation,
+    closeConversation,
+  } = useConversationData({
+    dataSource,
+    localEvents,
+    notify,
+  });
+  const {
+    selectedSessionIds,
+    renameTarget,
+    renameValue,
+    deleteTarget,
+    setRenameValue,
+    setRenameTarget,
+    setDeleteTarget,
+    openRename,
+    openDelete,
+    confirmRename,
+    confirmDelete,
+    toggleSessionSelection,
+    clearSessionSelection,
+    batchDelete,
+    batchExport,
+  } = useSessionActions({
+    loadSessions,
+    loadEvents,
+    notify,
+  });
 
-  const localPayload = buildLocalPayload(localEvents, { ...streamFilters, query: deferredQuery }, selectedSessionId, quickFilter, Number(tokenThreshold) || 20000, mode);
+  const localPayload = buildLocalStreamPayload({
+    events: localEvents,
+    filters: { ...streamFilters, query: deferredQuery },
+    selectedSessionId,
+    quickFilter,
+    tokenThreshold: Number(tokenThreshold) || 20000,
+    mode,
+  });
   const currentStream = dataSource === "server" ? streamPayload : localPayload;
   const streamSummary = buildDashboardSummary({
     events: currentStream.events,
@@ -244,103 +195,9 @@ export function App() {
   }));
 
   const sessionSections = buildSessionSections(
-    dataSource === "server" ? sessionsPayload.groups : groupSessionsByCwd(buildSessionGroups(localEvents)),
+    dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents),
     sessionFilters,
   );
-
-  async function loadEvents({ append = false } = {}) {
-    if (dataSource !== "server") return;
-
-    const requestId = ++eventRequestId.current;
-    setLoadingEvents(true);
-    try {
-      const payload = await apiClient.fetchEvents({
-        mode,
-        quickFilter,
-        tokenThreshold,
-        q: deferredQuery.trim().toLowerCase(),
-        model: streamFilters.model,
-        type: streamFilters.type,
-        platform: streamFilters.platform,
-        start: streamFilters.start,
-        end: streamFilters.end,
-        order: streamFilters.order,
-        sessionId: selectedSessionId,
-        limit: PAGE_LIMIT,
-        offset: append ? Number(streamPayload.page?.offset || 0) + PAGE_LIMIT : 0,
-      });
-
-      if (requestId !== eventRequestId.current) return;
-      startTransition(() => {
-        setStreamPayload((current) => {
-          if (!append) return payload;
-          return {
-            ...payload,
-            events: [...current.events, ...payload.events],
-          };
-        });
-      });
-    } catch (error) {
-      notifications.show({
-        title: "事件流加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      if (requestId === eventRequestId.current) setLoadingEvents(false);
-    }
-  }
-
-  async function loadSessions() {
-    if (dataSource !== "server") return;
-
-    const requestId = ++sessionsRequestId.current;
-    setLoadingSessions(true);
-    try {
-      const payload = await apiClient.fetchSessions();
-      if (requestId !== sessionsRequestId.current) return;
-      startTransition(() => {
-        setSessionsPayload(payload);
-      });
-    } catch (error) {
-      notifications.show({
-        title: "会话列表加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      if (requestId === sessionsRequestId.current) setLoadingSessions(false);
-    }
-  }
-
-  function commitConversationChunk(nextEvents, total, options = {}) {
-    const merged = mergeConversationPage(
-      conversationEventsRef.current,
-      conversationPageRef.current,
-      nextEvents,
-      { total, replace: Boolean(options.replace) },
-    );
-    conversationEventsRef.current = merged.events;
-    conversationPageRef.current = merged.page;
-    startTransition(() => {
-      setConversationEvents(merged.events);
-      setConversationPage(merged.page);
-    });
-  }
-
-  function closeConversation() {
-    conversationRequestId.current += 1;
-    conversationLocalSource.current = [];
-    conversationEventsRef.current = [];
-    conversationPageRef.current = createEmptyConversationPage();
-    setConversationSession(null);
-    setConversationLoading(false);
-    setConversationLoadingMore(false);
-    startTransition(() => {
-      setConversationEvents([]);
-      setConversationPage(createEmptyConversationPage());
-    });
-  }
 
   useEffect(() => {
     document.documentElement.dataset.observerTheme = themeMode;
@@ -349,69 +206,20 @@ export function App() {
     };
   }, [themeMode]);
 
-  useEffect(() => {
-    if (dataSource !== "server") return undefined;
-    const timer = window.setTimeout(() => {
-      loadEvents();
-    }, 140);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    dataSource,
-    deferredQuery,
-    mode,
-    quickFilter,
-    tokenThreshold,
-    selectedSessionId,
-    streamFilters.model,
-    streamFilters.type,
-    streamFilters.platform,
-    streamFilters.start,
-    streamFilters.end,
-    streamFilters.order,
-  ]);
-
-  useEffect(() => {
-    loadSessions();
-  }, [dataSource]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const nextSearch = buildUrlSearch({
-        dataSource,
-        tab,
-        selectedSessionId,
-        mode,
-        quickFilter,
-        tokenThreshold,
-        streamFilters,
-        sessionFilters,
-      });
-      const currentSearch = String(window.location.search || "").replace(/^\?/, "");
-      if (nextSearch === currentSearch) return;
-      const nextUrl = nextSearch ? `${window.location.pathname}?${nextSearch}` : window.location.pathname;
-      window.history.replaceState(null, "", nextUrl);
-    }, 150);
-
-    return () => window.clearTimeout(timer);
-  }, [
+  useUrlStateSync({
     dataSource,
     tab,
     selectedSessionId,
     mode,
     quickFilter,
     tokenThreshold,
-    streamFilters.query,
-    streamFilters.model,
-    streamFilters.type,
-    streamFilters.platform,
-    streamFilters.start,
-    streamFilters.end,
-    streamFilters.order,
-    sessionFilters.query,
-    sessionFilters.platform,
-    sessionFilters.namedOnly,
-  ]);
+    streamFilters,
+    sessionFilters,
+  });
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
 
   useEffect(() => {
     if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
@@ -419,7 +227,7 @@ export function App() {
       loadEvents();
     }, 5000);
     return () => window.clearInterval(id);
-  }, [autoRefresh, dataSource, tab, deferredQuery, mode, quickFilter, tokenThreshold, selectedSessionId]);
+  }, [autoRefresh, dataSource, tab, loadEvents]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -455,7 +263,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dataSource]);
+  }, [dataSource, loadEvents, setAutoRefresh, setThemeMode]);
 
   function toggleTheme() {
     setThemeMode((value) => (value === "dark" ? "light" : "dark"));
@@ -503,7 +311,7 @@ export function App() {
     setDataSource("server");
     setLocalEvents([]);
     setSelectedSessionId("");
-    setSelectedSessionIds([]);
+    clearSessionSelection();
     notifications.show({
       title: "已切回实时索引",
       message: "当前视图重新使用本地服务端聚合数据。",
@@ -517,188 +325,6 @@ export function App() {
       return;
     }
     downloadJson(`session-observer-sessions-${Date.now()}.json`, sessionSections);
-  }
-
-  async function openConversation(session) {
-    const requestId = ++conversationRequestId.current;
-    conversationLocalSource.current = [];
-    conversationEventsRef.current = [];
-    conversationPageRef.current = createEmptyConversationPage();
-    setConversationSession(session);
-    setConversationEvents([]);
-    setConversationPage(createEmptyConversationPage());
-    setConversationLoadingMore(false);
-    setConversationLoading(true);
-
-    if (dataSource !== "server") {
-      const allEvents = localEvents
-        .filter((event) => event.sessionId === session.sessionId)
-        .sort((left, right) => String(left.time).localeCompare(String(right.time)));
-      const firstSlice = sliceConversationPage(allEvents, 0, CONVERSATION_PAGE_LIMIT);
-      conversationLocalSource.current = allEvents;
-      commitConversationChunk(firstSlice.events, firstSlice.page.total, { replace: true });
-      setConversationLoading(false);
-      return;
-    }
-
-    try {
-      const payload = await apiClient.fetchEvents({
-        sessionId: session.sessionId,
-        order: "asc",
-        limit: CONVERSATION_PAGE_LIMIT,
-        offset: 0,
-        mode: "raw",
-      });
-      if (requestId !== conversationRequestId.current) return;
-      commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0, { replace: true });
-    } catch (error) {
-      if (requestId !== conversationRequestId.current) return;
-      notifications.show({
-        title: "会话加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      if (requestId === conversationRequestId.current) setConversationLoading(false);
-    }
-  }
-
-  async function loadMoreConversation() {
-    if (!conversationSession || conversationLoading || conversationLoadingMore || !conversationPageRef.current.hasMore) return;
-
-    if (dataSource !== "server") {
-      setConversationLoadingMore(true);
-      try {
-        const nextSlice = sliceConversationPage(
-          conversationLocalSource.current,
-          conversationPageRef.current.nextOffset,
-          CONVERSATION_PAGE_LIMIT,
-        );
-        commitConversationChunk(nextSlice.events, nextSlice.page.total);
-      } finally {
-        setConversationLoadingMore(false);
-      }
-      return;
-    }
-
-    const requestId = ++conversationRequestId.current;
-    setConversationLoadingMore(true);
-    try {
-      const payload = await apiClient.fetchEvents({
-        sessionId: conversationSession.sessionId,
-        order: "asc",
-        limit: CONVERSATION_PAGE_LIMIT,
-        offset: conversationPageRef.current.nextOffset,
-        mode: "raw",
-      });
-      if (requestId !== conversationRequestId.current) return;
-      commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0);
-    } catch (error) {
-      if (requestId !== conversationRequestId.current) return;
-      notifications.show({
-        title: "继续加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      if (requestId === conversationRequestId.current) setConversationLoadingMore(false);
-    }
-  }
-
-  async function confirmRename() {
-    if (!renameTarget || !renameValue.trim()) return;
-    try {
-      await apiClient.renameSession(renameTarget.sessionId, renameValue.trim());
-      setRenameTarget(null);
-      setRenameValue("");
-      await loadSessions();
-      await loadEvents();
-      notifications.show({
-        title: "会话已重命名",
-        message: renameValue.trim(),
-        color: "blue",
-      });
-    } catch (error) {
-      notifications.show({
-        title: "重命名失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    try {
-      await apiClient.deleteSession(deleteTarget.sessionId);
-      setDeleteTarget(null);
-      setSelectedSessionIds((current) => current.filter((id) => id !== deleteTarget.sessionId));
-      await loadSessions();
-      await loadEvents();
-      notifications.show({
-        title: "会话已删除",
-        message: deleteTarget.title || deleteTarget.sessionTitle || deleteTarget.fallbackTitle || deleteTarget.sessionId,
-        color: "red",
-      });
-    } catch (error) {
-      notifications.show({
-        title: "删除失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }
-
-  function toggleSessionSelection(sessionId) {
-    setSelectedSessionIds((current) => (
-      current.includes(sessionId)
-        ? current.filter((id) => id !== sessionId)
-        : [...current, sessionId]
-    ));
-  }
-
-  async function batchDelete() {
-    if (selectedSessionIds.length === 0) return;
-    try {
-      await apiClient.batchDeleteSessions(selectedSessionIds);
-      setSelectedSessionIds([]);
-      await loadSessions();
-      await loadEvents();
-      notifications.show({
-        title: "批量删除完成",
-        message: `已处理 ${formatNumber(selectedSessionIds.length)} 个会话`,
-        color: "red",
-      });
-    } catch (error) {
-      notifications.show({
-        title: "批量删除失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }
-
-  async function batchExport() {
-    if (selectedSessionIds.length === 0) return;
-    try {
-      const chunks = [];
-      for (const sessionId of selectedSessionIds) {
-        const events = await fetchAllSessionEvents(sessionId);
-        chunks.push(...events);
-      }
-      downloadJsonl(`session-observer-selection-${Date.now()}.jsonl`, chunks);
-      notifications.show({
-        title: "批量导出完成",
-        message: `已导出 ${formatNumber(chunks.length)} 条事件`,
-        color: "blue",
-      });
-    } catch (error) {
-      notifications.show({
-        title: "批量导出失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
   }
 
   const canMutateSessions = dataSource === "server";
@@ -881,21 +507,23 @@ export function App() {
                     </Group>
                   </Paper>
 
-                  <StreamWorkspace
-                    scope={streamScope}
-                    summary={streamSummary}
-                    sessions={streamSessions}
-                    events={currentStream.events}
-                    selectedSessionId={selectedSessionId}
-                    onSelectSession={selectSession}
-                    onClearSessionFocus={clearSessionFocus}
-                    onOpenFilters={() => setFiltersOpen(true)}
-                    onOpenEvent={setDetailEvent}
-                    onLoadMore={() => loadEvents({ append: true })}
-                    hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
-                    loading={loadingEvents}
-                    generatedAt={currentStream.generatedAt}
-                  />
+                  <Suspense fallback={<WorkspaceFallback label="正在加载事件流…" />}>
+                    <StreamWorkspace
+                      scope={streamScope}
+                      summary={streamSummary}
+                      sessions={streamSessions}
+                      events={currentStream.events}
+                      selectedSessionId={selectedSessionId}
+                      onSelectSession={selectSession}
+                      onClearSessionFocus={clearSessionFocus}
+                      onOpenFilters={() => setFiltersOpen(true)}
+                      onOpenEvent={setDetailEvent}
+                      onLoadMore={() => loadEvents({ append: true })}
+                      hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
+                      loading={loadingEvents}
+                      generatedAt={currentStream.generatedAt}
+                    />
+                  </Suspense>
                 </>
               ) : (
                 <>
@@ -949,22 +577,21 @@ export function App() {
                     </Group>
                   </Paper>
 
-                  <SessionWorkspace
-                    sections={sessionSections}
-                    selectedIds={selectedSessionIds}
-                    onToggleSelect={toggleSessionSelection}
-                    onOpenConversation={openConversation}
-                    onRename={(session) => {
-                      if (!canMutateSessions) return;
-                      setRenameTarget(session);
-                      setRenameValue(session.title || "");
-                    }}
-                    onDelete={(session) => {
-                      if (!canMutateSessions) return;
-                      setDeleteTarget(session);
-                    }}
-                    onCopySessionId={copySessionId}
-                  />
+                  <Suspense fallback={<WorkspaceFallback label="正在加载会话列表…" />}>
+                    <SessionWorkspace
+                      sections={sessionSections}
+                      selectedIds={selectedSessionIds}
+                      onToggleSelect={toggleSessionSelection}
+                      onOpenConversation={openConversation}
+                      onRename={(session) => {
+                        if (canMutateSessions) openRename(session);
+                      }}
+                      onDelete={(session) => {
+                        if (canMutateSessions) openDelete(session);
+                      }}
+                      onCopySessionId={copySessionId}
+                    />
+                  </Suspense>
                 </>
               )}
             </Stack>
@@ -1054,35 +681,51 @@ export function App() {
           </Stack>
         </Modal>
 
-        <EventDrawer
-          event={detailEvent}
-          opened={Boolean(detailEvent)}
-          onClose={() => setDetailEvent(null)}
-          onCopySessionId={copySessionId}
-          onCopy={(event) => {
-            navigator.clipboard.writeText(JSON.stringify(event, null, 2));
-            notifications.show({
-              title: "已复制 JSON",
-              message: shortMessage(event.summary || event.callType),
-              color: "blue",
-            });
-          }}
-        />
+        {detailEvent ? (
+          <Suspense fallback={null}>
+            <EventDrawer
+              event={detailEvent}
+              opened={Boolean(detailEvent)}
+              onClose={() => setDetailEvent(null)}
+              onCopySessionId={copySessionId}
+              onCopy={(event) => {
+                navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+                notifications.show({
+                  title: "已复制 JSON",
+                  message: shortMessage(event.summary || event.callType),
+                  color: "blue",
+                });
+              }}
+            />
+          </Suspense>
+        ) : null}
 
-        <ConversationDrawer
-          opened={Boolean(conversationSession)}
-          onClose={closeConversation}
-          session={conversationSession}
-          events={conversationEvents}
-          loading={conversationLoading}
-          loadingMore={conversationLoadingMore}
-          hasMore={conversationPage.hasMore}
-          page={conversationPage}
-          onLoadMore={loadMoreConversation}
-          onCopySessionId={copySessionId}
-        />
+        {conversationSession ? (
+          <Suspense fallback={null}>
+            <ConversationDrawer
+              opened={Boolean(conversationSession)}
+              onClose={closeConversation}
+              session={conversationSession}
+              events={conversationEvents}
+              loading={conversationLoading}
+              loadingMore={conversationLoadingMore}
+              hasMore={conversationPage.hasMore}
+              page={conversationPage}
+              onLoadMore={loadMoreConversation}
+              onCopySessionId={copySessionId}
+            />
+          </Suspense>
+        ) : null}
       </div>
     </MantineProvider>
+  );
+}
+
+function WorkspaceFallback({ label }) {
+  return (
+    <Paper className="control-shelf" radius="xl" p="xl">
+      <Text c="dimmed">{label}</Text>
+    </Paper>
   );
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildConversationEntries,
+  buildConversationTurns,
   prepareConversationEvents,
 } from "../conversation-models";
 
@@ -180,6 +181,73 @@ describe("conversation-models", () => {
       display: {
         type: "markdown",
         title: "工具输出",
+      },
+    });
+  });
+
+  test("buildConversationTurns groups messages and tool activity by user turn", () => {
+    const turns = buildConversationTurns([
+      {
+        time: "2026-04-19T10:00:00.000Z",
+        callType: "Prompt",
+        content: "第一轮问题",
+      },
+      {
+        time: "2026-04-19T10:00:01.000Z",
+        callType: "Agent",
+        content: "先看文件。",
+      },
+      {
+        time: "2026-04-19T10:00:02.000Z",
+        callType: "Tool_Call",
+        toolName: "Read",
+        content: "tool=Read\nargs={\"file_path\":\"/repo/server.js\"}",
+        extra: "{\"file_path\":\"/repo/server.js\"}",
+      },
+      {
+        time: "2026-04-19T10:00:03.000Z",
+        callType: "Tool_Result",
+        toolName: "Tool",
+        content: "Process exited with code 1\nError: failed",
+      },
+      {
+        time: "2026-04-19T10:00:04.000Z",
+        callType: "Thinking",
+        content: "错误需要解释给用户",
+      },
+      {
+        time: "2026-04-19T10:00:05.000Z",
+        callType: "Prompt",
+        content: "第二轮问题",
+      },
+      {
+        time: "2026-04-19T10:00:06.000Z",
+        callType: "Agent",
+        content: "继续处理。",
+      },
+    ]);
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({
+      index: 1,
+      userMessages: [expect.objectContaining({ content: "第一轮问题" })],
+      assistantMessages: [expect.objectContaining({ content: "先看文件。" })],
+      thinkingEntries: [expect.objectContaining({ content: "错误需要解释给用户" })],
+      toolSummary: {
+        total: 2,
+        errors: 1,
+        labels: ["Read", "Tool"],
+      },
+    });
+    expect(turns[0].toolEntries.map((entry) => entry.toolName)).toEqual(["Read", "Tool"]);
+    expect(turns[1]).toMatchObject({
+      index: 2,
+      userMessages: [expect.objectContaining({ content: "第二轮问题" })],
+      assistantMessages: [expect.objectContaining({ content: "继续处理。" })],
+      toolSummary: {
+        total: 0,
+        errors: 0,
+        labels: [],
       },
     });
   });

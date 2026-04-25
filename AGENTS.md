@@ -15,6 +15,8 @@ The frontend is built with Vite and served by the Node backend.
 - `npm run dev`: start the Vite dev server for UI-only iteration
 - `npm run build`: build the production frontend into `dist/`
 - `npm test`: run the Vitest frontend tests
+- `npm run test:core`: run Node parser and aggregation tests
+- `npm run check`: run frontend tests, core tests, and production build
 
 `manage.sh` and `node server.js` will auto-build `dist/` when it is missing. Prefer `manage.sh` for normal work.
 
@@ -22,7 +24,7 @@ The frontend is built with Vite and served by the Node backend.
 Use 2-space indentation, semicolons, and double quotes in JavaScript/JSX. Prefer React function components, `camelCase` for variables and helpers, `UPPER_SNAKE_CASE` for shared constants, and kebab-case for CSS classes. Keep UI code inside `src/` and put reusable data shaping in `src/lib/` or `shared/` instead of pushing more logic into `src/app.jsx` or `server.js`.
 
 ## Testing Guidelines
-Frontend tests run with Vitest from `npm test`; backend parser checks still use `node --test tests/*.test.js`. Verify UI changes manually with `./manage.sh run` or `npm run dev`, then exercise event loading, filtering, session navigation, and drawer states on both desktop and mobile widths. If you touch parsing or aggregation logic, test with both `~/.codex/sessions` and `~/.claude/projects` data sources and record the scenarios covered in the PR.
+Frontend tests run with Vitest from `npm test`; backend parser checks run with `npm run test:core`. Use `npm run check` before publishing changes that touch shared behavior or visible UI. Verify UI changes manually with `./manage.sh run` or `npm run dev`, then exercise event loading, filtering, session navigation, and drawer states on both desktop and mobile widths. If you touch parsing or aggregation logic, test with both `~/.codex/sessions` and `~/.claude/projects` data sources and record the scenarios covered in the PR.
 
 ## Commit & Pull Request Guidelines
 Recent history follows short conventional prefixes such as `feat:`, `fix:`, `design:`, and `refactor:`. Keep subjects concise and imperative; Chinese and English are both already used in this repo. PRs should include a focused summary, linked issue or task if applicable, manual verification steps, and screenshots or GIFs for visible UI changes.
