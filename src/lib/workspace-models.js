@@ -46,10 +46,19 @@ function mergeSessionTokenAggregates(sessions, aggregateSessions) {
 
     return {
       ...session,
+      sessionTitle: session.sessionTitle || aggregate.sessionTitle,
+      fallbackTitle: session.fallbackTitle || aggregate.fallbackTitle,
+      cwd: session.cwd || aggregate.cwd,
+      sourceType: session.sourceType || aggregate.sourceType,
+      models: mergeUniqueValues(session.models, aggregate.models),
       latestToken: aggregate.latestToken || session.latestToken,
       aggregateToken: aggregate.aggregateToken || session.aggregateToken,
     };
   });
+}
+
+function mergeUniqueValues(left, right) {
+  return [...new Set([...(left || []), ...(right || [])])].filter(Boolean).sort();
 }
 
 export function groupSessionsByCwd(sessions) {
@@ -122,6 +131,41 @@ export function buildLocalStreamPayload({
     generatedAt: new Date().toISOString(),
     mode,
   };
+}
+
+export function buildStreamSessionRailItems(sessions) {
+  const groups = new Map();
+
+  for (const session of sessions || []) {
+    const title = session.sessionTitle?.trim() || session.fallbackTitle?.trim() || "未命名会话";
+    const key = [
+      session.sourceType || "unknown",
+      title,
+      session.cwd || "",
+    ].join("\u0000");
+    const current = groups.get(key);
+    const normalized = {
+      ...session,
+      title,
+      totalTokens: toFiniteNumber(session.aggregateToken?.total),
+      groupedCount: 1,
+    };
+
+    if (!current) {
+      groups.set(key, normalized);
+      continue;
+    }
+
+    const latest = String(normalized.latest || "") > String(current.latest || "") ? normalized : current;
+    groups.set(key, {
+      ...latest,
+      count: toFiniteNumber(current.count) + toFiniteNumber(normalized.count),
+      totalTokens: toFiniteNumber(current.totalTokens) + toFiniteNumber(normalized.totalTokens),
+      groupedCount: toFiniteNumber(current.groupedCount) + 1,
+    });
+  }
+
+  return [...groups.values()].sort((left, right) => String(right.latest || "").localeCompare(String(left.latest || "")));
 }
 
 export function buildDashboardSummary({

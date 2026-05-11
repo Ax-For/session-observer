@@ -34,7 +34,7 @@ import {
   readableEventSummary,
 } from "../lib/event-display";
 
-const EVENT_ROW_HEIGHT = 136;
+const EVENT_ROW_HEIGHT = 152;
 const EVENT_OVERSCAN = 6;
 
 function formatHeroNumber(value) {
@@ -82,14 +82,14 @@ function EventRow({ event, onOpenEvent }) {
       <div className="event-row__body">
         <div className="event-row__kicker">
           <span className="event-row__platform">{event.sourceType === "codex" ? "CX" : "CC"}</span>
-          <span className="event-row__type">{callTypeLabel(event.callType)}</span>
+          {dialogueRole ? (
+            <span className="event-row__speaker">
+              {dialogueRole === "user" ? "用户" : "Agent"}
+            </span>
+          ) : null}
+          {!dialogueRole ? <span className="event-row__type">{callTypeLabel(event.callType)}</span> : null}
           <span className="event-row__model">{event.model || "unknown"}</span>
         </div>
-        {dialogueRole ? (
-          <div className="event-row__speaker">
-            {dialogueRole === "user" ? "用户" : "Agent"}
-          </div>
-        ) : null}
         <Text className="event-row__summary">{summary}</Text>
         <div className="event-row__meta-line">
           <span>{shortSessionId(event.sessionId)}</span>
@@ -453,6 +453,7 @@ export function StreamWorkspace({
                       <span className="session-rail__title">{session.title || "未命名会话"}</span>
                       <span className="session-rail__meta">
                         {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)} · {formatNumber(session.count || 0)} 事件
+                        {session.groupedCount > 1 ? ` · ${formatNumber(session.groupedCount)} 会话` : ""}
                       </span>
                       <span className="session-rail__path">{clipText(session.cwd, 44)}</span>
                     </span>

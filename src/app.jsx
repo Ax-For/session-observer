@@ -51,6 +51,7 @@ import {
   buildLocalStreamPayload,
   buildDashboardSummary,
   buildSessionSections,
+  buildStreamSessionRailItems,
   buildStreamScope,
 } from "./lib/workspace-models";
 import { useConversationData } from "./hooks/use-conversation-data";
@@ -189,11 +190,7 @@ export function App() {
     query: deferredQuery,
     mode,
   });
-  const streamSessions = currentStream.sessions.map((session) => ({
-    ...session,
-    title: session.sessionTitle?.trim() || session.fallbackTitle?.trim() || "未命名会话",
-    totalTokens: Number(session.aggregateToken?.total) || 0,
-  }));
+  const streamSessions = buildStreamSessionRailItems(currentStream.sessions);
 
   const sessionSections = buildSessionSections(
     dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents),

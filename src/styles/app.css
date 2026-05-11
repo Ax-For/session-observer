@@ -803,7 +803,13 @@ textarea {
 }
 
 .event-row__body {
+  display: grid;
+  align-content: start;
   min-width: 0;
+}
+
+.event-row--dialogue .event-row__body {
+  max-width: min(100%, 86ch);
 }
 
 .event-row__kicker {
@@ -837,9 +843,11 @@ textarea {
 
 .event-row__speaker {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: fit-content;
-  margin-top: 8px;
-  padding: 3px 9px;
+  min-height: 24px;
+  padding: 2px 9px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text-soft);
@@ -860,7 +868,7 @@ textarea {
 
 .event-row__summary {
   display: -webkit-box;
-  margin-top: 7px;
+  margin-top: 9px;
   overflow: hidden;
   color: var(--text);
   font-size: 0.95rem;
@@ -870,10 +878,12 @@ textarea {
 }
 
 .event-row--dialogue .event-row__summary {
-  margin-top: 6px;
-  font-size: 1.02rem;
-  font-weight: 650;
-  line-height: 1.48;
+  margin-top: 11px;
+  font-size: 0.97rem;
+  font-weight: 520;
+  letter-spacing: 0.005em;
+  line-height: 1.68;
+  text-wrap: pretty;
 }
 
 .event-row__meta-line {

@@ -4,6 +4,7 @@ import {
   buildLocalSessionGroups,
   buildLocalStreamPayload,
   buildSessionSections,
+  buildStreamSessionRailItems,
   buildStreamScope,
 } from "../workspace-models";
 
@@ -255,6 +256,51 @@ describe("local workspace models", () => {
     ]);
   });
 
+  test("buildLocalStreamPayload keeps session titles when type filters exclude prompt events", () => {
+    const payload = buildLocalStreamPayload({
+      events: [
+        {
+          callType: "User",
+          content: "帮我启动 session-observer",
+          model: "claude-sonnet-4-6",
+          sourceType: "claude",
+          sessionId: "claude-session-1",
+          sessionTitle: "",
+          time: "2026-04-29T13:46:41.362Z",
+        },
+        {
+          callType: "Agent",
+          content: "我会检查 manage.sh 并启动服务",
+          model: "claude-sonnet-4-6",
+          sourceType: "claude",
+          sessionId: "claude-session-1",
+          sessionTitle: "",
+          time: "2026-04-29T13:46:44.371Z",
+        },
+      ],
+      filters: {
+        query: "",
+        model: "",
+        type: "Agent",
+        platform: "",
+        order: "desc",
+      },
+      selectedSessionId: "",
+      quickFilter: "all",
+      tokenThreshold: 20000,
+      mode: "observe",
+    });
+
+    expect(payload.events.map((event) => event.callType)).toEqual(["Agent"]);
+    expect(payload.sessions).toEqual([
+      expect.objectContaining({
+        sessionId: "claude-session-1",
+        count: 1,
+        fallbackTitle: "帮我启动 session-observer",
+      }),
+    ]);
+  });
+
   test("buildLocalSessionGroups produces cwd sections without stream filter coupling", () => {
     expect(buildLocalSessionGroups(sampleEvents)).toEqual({
       "未分类": [
@@ -268,6 +314,57 @@ describe("local workspace models", () => {
         }),
       ],
     });
+  });
+});
+
+describe("buildStreamSessionRailItems", () => {
+  test("deduplicates visually identical recent sessions for the stream rail", () => {
+    const items = buildStreamSessionRailItems([
+      {
+        sessionId: "older",
+        sessionTitle: "",
+        fallbackTitle: "You are optimizing a skill descripti...",
+        cwd: "/Users/me/.cc-switch/skills/skill-creator",
+        sourceType: "claude",
+        latest: "2026-04-29T13:16:05.702Z",
+        count: 1,
+        aggregateToken: { total: 100 },
+      },
+      {
+        sessionId: "newer",
+        sessionTitle: "",
+        fallbackTitle: "You are optimizing a skill descripti...",
+        cwd: "/Users/me/.cc-switch/skills/skill-creator",
+        sourceType: "claude",
+        latest: "2026-04-29T13:22:23.796Z",
+        count: 1,
+        aggregateToken: { total: 200 },
+      },
+      {
+        sessionId: "distinct-cwd",
+        sessionTitle: "",
+        fallbackTitle: "You are optimizing a skill descripti...",
+        cwd: "/Users/me/other",
+        sourceType: "claude",
+        latest: "2026-04-29T13:21:00.000Z",
+        count: 1,
+        aggregateToken: { total: 50 },
+      },
+    ]);
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        sessionId: "newer",
+        title: "You are optimizing a skill descripti...",
+        count: 2,
+        totalTokens: 300,
+        groupedCount: 2,
+      }),
+      expect.objectContaining({
+        sessionId: "distinct-cwd",
+        groupedCount: 1,
+      }),
+    ]);
   });
 });
 

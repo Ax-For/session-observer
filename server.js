@@ -504,10 +504,19 @@ function mergeSessionTokenAggregates(sessions, aggregateSessions) {
 
     return {
       ...session,
+      sessionTitle: session.sessionTitle || aggregate.sessionTitle,
+      fallbackTitle: session.fallbackTitle || aggregate.fallbackTitle,
+      cwd: session.cwd || aggregate.cwd,
+      sourceType: session.sourceType || aggregate.sourceType,
+      models: mergeUniqueValues(session.models, aggregate.models),
       latestToken: aggregate.latestToken || session.latestToken,
       aggregateToken: aggregate.aggregateToken || session.aggregateToken,
     };
   });
+}
+
+function mergeUniqueValues(left, right) {
+  return [...new Set([...(left || []), ...(right || [])])].filter(Boolean).sort();
 }
 
 function serveStatic(reqPath, res) {
