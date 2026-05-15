@@ -3,7 +3,10 @@ import {
   buildDashboardSummary,
   buildLocalSessionGroups,
   buildLocalStreamPayload,
+  buildLowContentSessionIds,
   buildSessionSections,
+  buildSessionWorkspaceIndex,
+  buildSessionWorkspaceTree,
   buildStreamSessionRailItems,
   buildStreamScope,
 } from "../workspace-models";
@@ -54,6 +57,7 @@ const sampleGroups = {
       count: 44,
       aggregateToken: { total: 2620 },
       models: ["gpt-5.4"],
+      sourceFiles: ["/Users/me/.codex/sessions/2026/04/19/session-a.jsonl"],
     },
     {
       sessionId: "sess-2",
@@ -65,6 +69,7 @@ const sampleGroups = {
       count: 18,
       aggregateToken: { total: 820 },
       models: ["claude-sonnet-4-6"],
+      sourceFiles: ["/Users/me/.claude/projects/repo/session-b.jsonl"],
     },
   ],
   "/Users/me/code/another-app": [
@@ -78,6 +83,7 @@ const sampleGroups = {
       count: 10,
       aggregateToken: { total: 400 },
       models: ["gpt-5.3-codex"],
+      sourceFiles: ["/Users/me/.codex/sessions/2026/04/17/session-c.jsonl"],
     },
   ],
 };
@@ -175,7 +181,7 @@ describe("buildSessionSections", () => {
       platform: "claude",
       namedOnly: false,
     })).toEqual([
-      {
+      expect.objectContaining({
         cwd: "/Users/me/code/session-observer",
         total: 1,
         sessions: [
@@ -185,7 +191,7 @@ describe("buildSessionSections", () => {
             sourceType: "claude",
           }),
         ],
-      },
+      }),
     ]);
   });
 
@@ -241,11 +247,176 @@ describe("buildSessionSections", () => {
         sessions: [
           expect.objectContaining({
             sessionId: "baac828f-e96c-4e96-8841-a31888dfc7f1",
+            sessionIds: [
+              "151831b9-83e5-4f57-af0f-4f8b60bbeab8",
+              "baac828f-e96c-4e96-8841-a31888dfc7f1",
+            ],
             title: "这个 npm script 怎么启动",
             count: 12,
             groupedCount: 2,
           }),
         ],
+      }),
+    ]);
+  });
+
+  test("applies token and event filters before repeated sessions are merged", () => {
+    const repeatedGroups = {
+      "/Users/me": [
+        {
+          sessionId: "first",
+          sessionTitle: "",
+          fallbackTitle: "这个 npm script 怎么启动",
+          cwd: "/Users/me",
+          sourceType: "claude",
+          latest: "2026-04-29T13:23:25.174Z",
+          count: 6,
+          aggregateToken: { total: 600 },
+          models: [],
+        },
+        {
+          sessionId: "second",
+          sessionTitle: "",
+          fallbackTitle: "这个 npm script 怎么启动",
+          cwd: "/Users/me",
+          sourceType: "claude",
+          latest: "2026-04-29T13:23:25.806Z",
+          count: 6,
+          aggregateToken: { total: 600 },
+          models: [],
+        },
+      ],
+    };
+
+    expect(buildSessionSections(repeatedGroups, { maxEvents: "10" })).toEqual([
+      expect.objectContaining({
+        total: 1,
+        sessions: [
+          expect.objectContaining({
+            sessionId: "second",
+            count: 12,
+            totalTokens: 1200,
+            groupedCount: 2,
+            sessionIds: ["first", "second"],
+          }),
+        ],
+      }),
+    ]);
+    expect(buildSessionSections(repeatedGroups, { tokenMax: "1000" })).toEqual([
+      expect.objectContaining({
+        total: 1,
+        sessions: [
+          expect.objectContaining({
+            sessionId: "second",
+            count: 12,
+            totalTokens: 1200,
+            groupedCount: 2,
+          }),
+        ],
+      }),
+    ]);
+    expect(buildLowContentSessionIds(repeatedGroups)).toEqual(["first", "second"]);
+  });
+
+  test("groups sessions by transcript file location and filters by token and event count", () => {
+    const sections = buildSessionSections(sampleGroups, {
+      groupBy: "sourceFile",
+      tokenMin: "500",
+      tokenMax: "3000",
+      maxEvents: "30",
+    });
+
+    expect(sections).toEqual([
+      expect.objectContaining({
+        groupType: "sourceFile",
+        label: "/Users/me/.claude/projects/repo/session-b.jsonl",
+        total: 1,
+        sessions: [
+          expect.objectContaining({
+            sessionId: "sess-2",
+            totalTokens: 820,
+            count: 18,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  test("builds a workspace index from visible session sections", () => {
+    const sections = buildSessionSections(sampleGroups, { groupBy: "sourceFile" });
+
+    expect(buildSessionWorkspaceIndex(sections)).toEqual([
+      expect.objectContaining({
+        cwd: "/Users/me/code/session-observer",
+        sessions: 2,
+        events: 62,
+        tokens: 3440,
+      }),
+      expect.objectContaining({
+        cwd: "/Users/me/code/another-app",
+        sessions: 1,
+        events: 10,
+        tokens: 400,
+      }),
+    ]);
+  });
+
+  test("builds a workspace tree that folds shared path prefixes", () => {
+    const tree = buildSessionWorkspaceTree([
+      { key: "/Users/me/code/session-observer", cwd: "/Users/me/code/session-observer", sessions: 2, events: 12, tokens: 1200 },
+      { key: "/Users/me/code/another-app", cwd: "/Users/me/code/another-app", sessions: 1, events: 8, tokens: 800 },
+      { key: "/Users/me/Desktop/demo", cwd: "/Users/me/Desktop/demo", sessions: 1, events: 4, tokens: 400 },
+    ]);
+
+    expect(tree.label).toBe("/Users/me");
+    expect(tree.children).toEqual([
+      expect.objectContaining({
+        label: "code",
+        sessions: 3,
+        children: expect.arrayContaining([
+          expect.objectContaining({ label: "session-observer", workspace: expect.objectContaining({ cwd: "/Users/me/code/session-observer" }) }),
+          expect.objectContaining({ label: "another-app", workspace: expect.objectContaining({ cwd: "/Users/me/code/another-app" }) }),
+        ]),
+      }),
+      expect.objectContaining({
+        label: "Desktop",
+        sessions: 1,
+        children: [
+          expect.objectContaining({ label: "demo", workspace: expect.objectContaining({ cwd: "/Users/me/Desktop/demo" }) }),
+        ],
+      }),
+    ]);
+  });
+
+  test("workspace index counts visible rows separately from merged raw sessions", () => {
+    const sections = [
+      {
+        sessions: [
+          {
+            cwd: "/Users/me",
+            groupedCount: 15,
+            count: 90,
+            totalTokens: 0,
+            latest: "2026-04-29T13:23:26.524Z",
+          },
+          {
+            cwd: "/Users/me",
+            groupedCount: 1,
+            count: 58,
+            totalTokens: 1000,
+            latest: "2026-05-02T06:38:59.273Z",
+          },
+        ],
+      },
+    ];
+
+    expect(buildSessionWorkspaceIndex(sections)).toEqual([
+      expect.objectContaining({
+        cwd: "/Users/me",
+        sessions: 2,
+        rawSessions: 16,
+        events: 148,
+        tokens: 1000,
       }),
     ]);
   });

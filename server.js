@@ -12,6 +12,7 @@ const ObserverCore = require("./shared/observer-core");
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
   applySessionTitleOverrides: applySessionTitleOverridesCore,
+  buildObservabilitySummary: buildObservabilitySummaryCore,
   buildTokenUsageWindows: buildTokenUsageWindowsCore,
   buildSessionGroups: buildSessionGroupsCore,
   collectMeta: collectMetaCore,
@@ -970,6 +971,62 @@ function querySessions() {
   };
 }
 
+function directoryStatus(target) {
+  try {
+    if (!fs.existsSync(target)) {
+      return { path: target, exists: false, files: 0, bytes: 0, updatedAt: "" };
+    }
+    const files = listJsonlFiles(target);
+    let bytes = 0;
+    let updatedAtMs = 0;
+    for (const file of files) {
+      try {
+        const stat = fs.statSync(file);
+        bytes += stat.size;
+        if (stat.mtimeMs > updatedAtMs) updatedAtMs = stat.mtimeMs;
+      } catch {
+        // ignore files that disappear during a refresh
+      }
+    }
+    return {
+      path: target,
+      exists: true,
+      files: files.length,
+      bytes,
+      updatedAt: updatedAtMs ? new Date(updatedAtMs).toISOString() : "",
+    };
+  } catch (err) {
+    return { path: target, exists: false, files: 0, bytes: 0, updatedAt: "", error: String(err) };
+  }
+}
+
+function queryObservability() {
+  const ready = ensureIndexReady();
+  const visibleEvents = ready.events.filter((event) => eventMatchesModeCore(event, "observe"));
+  const summary = buildObservabilitySummaryCore(visibleEvents);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    mode: "observe",
+    index: {
+      ...publicIndexState(ready.currentAggregateKey),
+    },
+    runtime: {
+      versions: {
+        codex: codexVersion,
+        claude: claudeVersion,
+      },
+      memory: process.memoryUsage(),
+      uptimeSeconds: Math.round(process.uptime()),
+    },
+    sources: {
+      codex: directoryStatus(SESSIONS_DIR),
+      claude: directoryStatus(CLAUDE_PROJECTS_DIR),
+    },
+    summary,
+  };
+}
+
 function findClaudeSessionFile(sessionId) {
   const claudeSessionsDir = path.join(os.homedir(), ".claude", "sessions");
   if (!fs.existsSync(claudeSessionsDir)) return null;
@@ -1186,6 +1243,16 @@ const server = http.createServer((req, res) => {
       return sendJson(req, res, 200, querySessions());
     } catch (err) {
       return sendJson(req, res, 500, { error: String(err) });
+    }
+  }
+
+  if (u.pathname === "/api/observability" && req.method === "GET") {
+    try {
+      sendJson(req, res, 200, queryObservability());
+      trimHeapSoon();
+      return;
+    } catch (err) {
+      return sendJson(req, res, 500, { error: String(err), index: publicIndexState("") });
     }
   }
 

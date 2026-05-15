@@ -39,6 +39,7 @@ import {
   downloadJson,
   downloadJsonl,
   formatFullDateTime,
+  formatHumanNumber,
   formatNumber,
 } from "./lib/formatters";
 import {
@@ -51,11 +52,15 @@ import {
   buildLocalSessionGroups,
   buildLocalStreamPayload,
   buildDashboardSummary,
+  buildLowContentSessionIds,
   buildSessionSections,
+  buildSessionWorkspaceIndex,
+  buildSessionWorkspaceTree,
   buildStreamSessionRailItems,
   buildStreamScope,
 } from "./lib/workspace-models";
 import { useConversationData } from "./hooks/use-conversation-data";
+import { useObservabilityData } from "./hooks/use-observability-data";
 import { useSessionActions } from "./hooks/use-session-actions";
 import { useSessionData } from "./hooks/use-session-data";
 import { useStreamData } from "./hooks/use-stream-data";
@@ -68,6 +73,9 @@ const StreamWorkspace = lazy(() => import("./components/stream-workspace").then(
 })));
 const SessionWorkspace = lazy(() => import("./components/session-workspace").then((module) => ({
   default: module.SessionWorkspace,
+})));
+const ObservabilityWorkspace = lazy(() => import("./components/observability-workspace").then((module) => ({
+  default: module.ObservabilityWorkspace,
 })));
 const EventDrawer = lazy(() => import("./components/event-drawer").then((module) => ({
   default: module.EventDrawer,
@@ -123,6 +131,7 @@ export function App() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState(null);
+  const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
   const deferredQuery = useDeferredValue(streamFilters.query);
   const notify = useCallback((options) => notifications.show(options), []);
   const { streamPayload, loadingEvents, loadEvents } = useStreamData({
@@ -154,6 +163,15 @@ export function App() {
     notify,
   });
   const {
+    observabilityPayload,
+    loadingObservability,
+    loadObservability,
+  } = useObservabilityData({
+    dataSource,
+    localEvents,
+    notify,
+  });
+  const {
     selectedSessionIds,
     renameTarget,
     renameValue,
@@ -161,6 +179,7 @@ export function App() {
     setRenameValue,
     setRenameTarget,
     setDeleteTarget,
+    setSelectedSessionIds,
     openRename,
     openDelete,
     confirmRename,
@@ -202,10 +221,22 @@ export function App() {
   });
   const streamSessions = buildStreamSessionRailItems(currentStream.sessions);
 
-  const sessionSections = buildSessionSections(
-    dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents),
-    sessionFilters,
-  );
+  const sessionGroups = dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents);
+  const sessionSections = buildSessionSections(sessionGroups, sessionFilters);
+  const sessionWorkspaceIndex = buildSessionWorkspaceIndex(sessionSections);
+  const sessionWorkspaceTree = buildSessionWorkspaceTree(sessionWorkspaceIndex);
+
+  useEffect(() => {
+    if (!pendingWorkspaceKey || tab !== "sessions" || sessionFilters.groupBy !== "cwd") return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const target = [...document.querySelectorAll("[data-session-section-key]")].find((element) => (
+        element.dataset.sessionSectionKey === pendingWorkspaceKey
+      ));
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPendingWorkspaceKey("");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pendingWorkspaceKey, sessionFilters.groupBy, sessionSections, tab]);
 
   useEffect(() => {
     document.documentElement.dataset.observerTheme = themeMode;
@@ -249,7 +280,13 @@ export function App() {
       }
       if (event.key === "r" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
-        loadEvents();
+        if (tab === "overview" || tab === "tokens" || tab === "alerts") {
+          loadObservability();
+        } else if (tab === "sessions") {
+          loadSessions();
+        } else {
+          loadEvents();
+        }
       }
       if (event.key === "a" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
@@ -275,7 +312,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dataSource, loadEvents, setAutoRefresh, setThemeMode]);
+  }, [dataSource, loadEvents, loadObservability, loadSessions, setAutoRefresh, setThemeMode, tab]);
 
   function toggleTheme() {
     setThemeMode((value) => (value === "dark" ? "light" : "dark"));
@@ -336,7 +373,50 @@ export function App() {
       downloadJsonl(`session-observer-events-${Date.now()}.jsonl`, currentStream.events);
       return;
     }
+    if (tab !== "sessions") {
+      downloadJson(`session-observer-observability-${tab}-${Date.now()}.json`, observabilityPayload);
+      return;
+    }
     downloadJson(`session-observer-sessions-${Date.now()}.json`, sessionSections);
+  }
+
+  function refreshCurrentView() {
+    if (tab === "overview" || tab === "tokens" || tab === "alerts") {
+      loadObservability();
+      return;
+    }
+    if (tab === "sessions") {
+      loadSessions();
+      return;
+    }
+    loadEvents();
+  }
+
+  function openAlertStream(alert) {
+    setQuickFilter("alert");
+    setSelectedSessionId(alert?.sessionId || "");
+    setTab("stream");
+  }
+
+  function selectLowContentSessions() {
+    const uniqueIds = buildLowContentSessionIds(sessionGroups, sessionFilters);
+    setSelectedSessionIds(uniqueIds);
+    notifications.show({
+      title: "已选中低内容会话",
+      message: uniqueIds.length
+        ? `已选中 ${formatNumber(uniqueIds.length)} 个原始会话。列表仍按相同标题合并展示。`
+        : "当前筛选下没有符合条件的会话。",
+      color: uniqueIds.length ? "blue" : "gray",
+    });
+  }
+
+  function focusWorkspaceSessions(cwd) {
+    setTab("sessions");
+    setPendingWorkspaceKey(cwd);
+    setSessionFilters((current) => ({
+      ...current,
+      groupBy: "cwd",
+    }));
   }
 
   const canMutateSessions = dataSource === "server";
@@ -455,7 +535,7 @@ export function App() {
                     label="自动刷新"
                     color="blue"
                   />
-                  <ActionIcon radius="xl" variant="light" color="blue" size="lg" onClick={() => loadEvents()}>
+                  <ActionIcon radius="xl" variant="light" color="blue" size="lg" onClick={refreshCurrentView}>
                     <IconRefresh size={18} />
                   </ActionIcon>
                   <ActionIcon radius="xl" variant="light" color="gray" size="lg" onClick={toggleTheme}>
@@ -496,6 +576,9 @@ export function App() {
                     value={tab}
                     onChange={setTab}
                     data={[
+                      { label: "总览", value: "overview" },
+                      { label: "Token", value: "tokens" },
+                      { label: "异常队列", value: "alerts" },
                       { label: "事件流", value: "stream" },
                       { label: "会话", value: "sessions" },
                     ]}
@@ -525,17 +608,36 @@ export function App() {
                         高级筛选
                       </Button>
                     </Group>
-                  ) : (
+                  ) : tab === "sessions" ? (
                     <Group gap="xs">
                       <Badge radius="xl" variant="light" color="gray">
                         {loadingSessions ? "刷新中" : `共 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))} 个会话`}
+                      </Badge>
+                    </Group>
+                  ) : (
+                    <Group gap="xs">
+                      <Badge radius="xl" variant="light" color="gray">
+                        {loadingObservability ? "刷新中" : `异常 ${formatNumber(observabilityPayload.summary?.alerts?.total || 0)}`}
+                      </Badge>
+                      <Badge radius="xl" variant="light" color="gray">
+                        Token {formatHumanNumber(observabilityPayload.summary?.tokens?.effectiveTotal || 0)}
                       </Badge>
                     </Group>
                   )}
                 </Group>
               </Paper>
 
-              {tab === "stream" ? (
+              {tab === "overview" || tab === "tokens" || tab === "alerts" ? (
+                <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
+                  <ObservabilityWorkspace
+                    payload={observabilityPayload}
+                    view={tab}
+                    loading={loadingObservability}
+                    onRefresh={loadObservability}
+                    onOpenAlertStream={openAlertStream}
+                  />
+                </Suspense>
+              ) : tab === "stream" ? (
                 <>
                   <Paper className="control-shelf" radius="xl" p="md">
                     <Group wrap="wrap" align="flex-end">
@@ -660,6 +762,48 @@ export function App() {
                         clearable
                         className="control-field"
                       />
+                      <Select
+                        label="分组"
+                        placeholder="分组方式"
+                        data={[
+                          { value: "cwd", label: "工作目录" },
+                          { value: "sourceFile", label: "文件位置" },
+                          { value: "platform", label: "平台" },
+                        ]}
+                        value={sessionFilters.groupBy}
+                        onChange={(value) => setSessionFilters((current) => ({ ...current, groupBy: value || "cwd" }))}
+                        className="control-field"
+                      />
+                      <TextInput
+                        label="Token 下限"
+                        placeholder="例如 1000"
+                        value={sessionFilters.tokenMin}
+                        onChange={(event) => {
+                          const tokenMin = event.currentTarget.value;
+                          setSessionFilters((current) => ({ ...current, tokenMin }));
+                        }}
+                        className="control-field control-field--small"
+                      />
+                      <TextInput
+                        label="Token 上限"
+                        placeholder="低内容可填 1000"
+                        value={sessionFilters.tokenMax}
+                        onChange={(event) => {
+                          const tokenMax = event.currentTarget.value;
+                          setSessionFilters((current) => ({ ...current, tokenMax }));
+                        }}
+                        className="control-field control-field--small"
+                      />
+                      <TextInput
+                        label="最大事件数"
+                        placeholder="例如 6"
+                        value={sessionFilters.maxEvents}
+                        onChange={(event) => {
+                          const maxEvents = event.currentTarget.value;
+                          setSessionFilters((current) => ({ ...current, maxEvents }));
+                        }}
+                        className="control-field control-field--small"
+                      />
                       <Checkbox
                         label="仅显示已命名"
                         checked={sessionFilters.namedOnly}
@@ -672,13 +816,16 @@ export function App() {
                       <Button variant="light" radius="xl" color="gray" onClick={loadSessions}>
                         刷新列表
                       </Button>
+                      <Button variant="light" radius="xl" color="orange" onClick={selectLowContentSessions}>
+                        选中低内容
+                      </Button>
                       {selectedSessionIds.length > 0 ? (
                         <>
                           <Button variant="light" radius="xl" color="blue" onClick={batchExport}>
-                            批量导出 {selectedSessionIds.length}
+                            批量导出 {formatNumber(selectedSessionIds.length)} 个原始会话
                           </Button>
                           <Button variant="light" radius="xl" color="red" onClick={batchDelete} disabled={!canMutateSessions}>
-                            批量删除 {selectedSessionIds.length}
+                            批量删除 {formatNumber(selectedSessionIds.length)} 个原始会话
                           </Button>
                         </>
                       ) : null}
@@ -688,9 +835,12 @@ export function App() {
                   <Suspense fallback={<WorkspaceFallback label="正在加载会话列表…" />}>
                     <SessionWorkspace
                       sections={sessionSections}
+                      workspaceIndex={sessionWorkspaceIndex}
+                      workspaceTree={sessionWorkspaceTree}
                       selectedIds={selectedSessionIds}
                       onToggleSelect={toggleSessionSelection}
                       onOpenConversation={openConversation}
+                      onFocusWorkspace={focusWorkspaceSessions}
                       onRename={(session) => {
                         if (canMutateSessions) openRename(session);
                       }}

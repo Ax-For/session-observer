@@ -14,6 +14,28 @@ export function formatCompactNumber(value) {
   return zhNumber.format(num);
 }
 
+export function formatHumanNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  if (Math.abs(num) >= 1_0000_0000) return `${(num / 1_0000_0000).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}亿`;
+  if (Math.abs(num) >= 1_0000) return `${(num / 1_0000).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}万`;
+  return zhNumber.format(num);
+}
+
+export function formatBytes(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let current = Math.abs(num);
+  let unitIndex = 0;
+  while (current >= 1024 && unitIndex < units.length - 1) {
+    current /= 1024;
+    unitIndex += 1;
+  }
+  const signed = num < 0 ? -current : current;
+  return `${signed.toFixed(unitIndex === 0 ? 0 : 1).replace(/\.0$/, "")} ${units[unitIndex]}`;
+}
+
 export function formatDateTime(value) {
   if (!value) return "-";
   const date = new Date(value);

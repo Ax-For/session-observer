@@ -29,6 +29,13 @@ function compareKeyValuePairs(left, right) {
   return String(left.key).localeCompare(String(right.key), "zh-CN");
 }
 
+function toOptionalPositiveNumber(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const num = Number(text);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+}
+
 function flattenSessions(groupsOrSessions) {
   if (Array.isArray(groupsOrSessions)) return groupsOrSessions;
   if (!groupsOrSessions || typeof groupsOrSessions !== "object") return [];
@@ -59,6 +66,56 @@ function mergeSessionTokenAggregates(sessions, aggregateSessions) {
 
 function mergeUniqueValues(left, right) {
   return [...new Set([...(left || []), ...(right || [])])].filter(Boolean).sort();
+}
+
+function sessionHasTokenData(session) {
+  return Boolean(session?.hasTokenData || session?.aggregateToken || session?.latestToken);
+}
+
+function normalizeSessionForWorkspace(session) {
+  return {
+    ...session,
+    title: session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话",
+    totalTokens: toFiniteNumber(session?.aggregateToken?.total),
+    hasTokenData: sessionHasTokenData(session),
+    sourceFiles: mergeUniqueValues(session?.sourceFiles, session?.sourceFile ? [session.sourceFile] : []),
+  };
+}
+
+function matchesSessionBaseFilters(session, filters = {}) {
+  const query = String(filters.query || "").trim().toLowerCase();
+  const platform = filters.platform || "";
+  const namedOnly = Boolean(filters.namedOnly);
+
+  if (platform && session?.sourceType !== platform) return false;
+  if (namedOnly && !String(session?.sessionTitle || "").trim()) return false;
+
+  if (!query) return true;
+  const haystack = [
+    session?.sessionTitle,
+    session?.fallbackTitle,
+    session?.cwd,
+    session?.sessionId,
+    ...(session?.sourceFiles || []),
+    ...(session?.models || []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return haystack.includes(query);
+}
+
+function matchesSessionContentFilters(session, filters = {}) {
+  const tokenMin = toOptionalPositiveNumber(filters.tokenMin);
+  const tokenMax = toOptionalPositiveNumber(filters.tokenMax);
+  const maxEvents = toOptionalPositiveNumber(filters.maxEvents);
+  const totalTokens = toFiniteNumber(session?.totalTokens);
+
+  if (tokenMin != null && totalTokens < tokenMin) return false;
+  if (tokenMax != null && totalTokens > tokenMax) return false;
+  if (maxEvents != null && toFiniteNumber(session?.count) > maxEvents) return false;
+  return true;
 }
 
 export function groupSessionsByCwd(sessions) {
@@ -148,6 +205,9 @@ export function buildStreamSessionRailItems(sessions) {
       ...session,
       title,
       totalTokens: toFiniteNumber(session.aggregateToken?.total),
+      hasTokenData: sessionHasTokenData(session),
+      sessionIds: mergeUniqueValues(session.sessionIds, session.sessionId ? [session.sessionId] : []),
+      sourceFiles: mergeUniqueValues(session.sourceFiles, session.sourceFile ? [session.sourceFile] : []),
       groupedCount: 1,
     };
 
@@ -161,7 +221,10 @@ export function buildStreamSessionRailItems(sessions) {
       ...latest,
       count: toFiniteNumber(current.count) + toFiniteNumber(normalized.count),
       totalTokens: toFiniteNumber(current.totalTokens) + toFiniteNumber(normalized.totalTokens),
+      hasTokenData: Boolean(current.hasTokenData || normalized.hasTokenData),
+      sessionIds: mergeUniqueValues(current.sessionIds, normalized.sessionIds),
       models: mergeUniqueValues(current.models, normalized.models),
+      sourceFiles: mergeUniqueValues(current.sourceFiles, normalized.sourceFiles),
       groupedCount: toFiniteNumber(current.groupedCount) + 1,
     });
   }
@@ -273,46 +336,211 @@ export function buildDashboardSummary({
 }
 
 export function buildSessionSections(groups, filters = {}) {
-  const query = String(filters.query || "").trim().toLowerCase();
-  const platform = filters.platform || "";
-  const namedOnly = Boolean(filters.namedOnly);
+  const groupBy = filters.groupBy === "sourceFile" || filters.groupBy === "platform" ? filters.groupBy : "cwd";
+  const sectionMap = new Map();
 
-  return Object.entries(groups || {})
-    .map(([cwd, items]) => {
-      const filteredSessions = (items || [])
-        .filter((session) => {
-          if (platform && session?.sourceType !== platform) return false;
-          if (namedOnly && !String(session?.sessionTitle || "").trim()) return false;
+  for (const [cwd, items] of Object.entries(groups || {})) {
+    const filteredSessions = (items || [])
+        .filter((session) => matchesSessionBaseFilters(session, filters))
+        .map(normalizeSessionForWorkspace)
+        .filter((session) => matchesSessionContentFilters(session, filters));
 
-          if (!query) return true;
-          const haystack = [
-            session?.sessionTitle,
-            session?.fallbackTitle,
-            session?.cwd,
-            session?.sessionId,
-            ...(session?.models || []),
-          ]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase();
+    const sessions = buildStreamSessionRailItems(filteredSessions);
+    for (const session of sessions) {
+      const firstSourceFile = session.sourceFiles?.[0] || "未知文件";
+      const key = groupBy === "sourceFile"
+        ? firstSourceFile
+        : groupBy === "platform"
+          ? session.sourceType || "unknown"
+          : cwd;
+      const label = groupBy === "platform" ? (PLATFORM_LABELS[key] || "Unknown") : key;
+      const current = sectionMap.get(key) || {
+        key,
+        cwd: key,
+        label,
+        groupType: groupBy,
+        total: 0,
+        sessions: [],
+      };
+      current.sessions.push(session);
+      current.total = current.sessions.length;
+      sectionMap.set(key, current);
+    }
+  }
 
-          return haystack.includes(query);
-        })
-        .map((session) => ({
-          ...session,
-          title: session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话",
-          totalTokens: toFiniteNumber(session?.aggregateToken?.total),
-        }));
-      const sessions = buildStreamSessionRailItems(filteredSessions);
-
-      return { cwd, total: sessions.length, sessions };
-    })
+  return [...sectionMap.values()]
     .filter((section) => section.total > 0)
+    .map((section) => ({
+      ...section,
+      sessions: section.sessions.sort((left, right) => String(right.latest || "").localeCompare(String(left.latest || ""))),
+    }))
     .sort((left, right) => {
       const rightLatest = right.sessions[0]?.latest || "";
       const leftLatest = left.sessions[0]?.latest || "";
       return String(rightLatest).localeCompare(String(leftLatest));
     });
+}
+
+export function buildSessionWorkspaceIndex(sections) {
+  const workspaceMap = new Map();
+
+  for (const section of sections || []) {
+    for (const session of section.sessions || []) {
+      const key = session.cwd || "未分类";
+      const current = workspaceMap.get(key) || {
+        key,
+        cwd: key,
+        sessions: 0,
+        rawSessions: 0,
+        rows: 0,
+        events: 0,
+        tokens: 0,
+        latest: "",
+      };
+
+      current.sessions += 1;
+      current.rawSessions += Math.max(1, toFiniteNumber(session.groupedCount));
+      current.rows += 1;
+      current.events += toFiniteNumber(session.count);
+      current.tokens += toFiniteNumber(session.totalTokens);
+      current.hasTokenData = Boolean(current.hasTokenData || session.hasTokenData);
+      if (String(session.latest || "") > String(current.latest || "")) current.latest = session.latest || "";
+      workspaceMap.set(key, current);
+    }
+  }
+
+  return [...workspaceMap.values()].sort((left, right) => {
+    if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+    if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+    return String(right.latest || "").localeCompare(String(left.latest || ""));
+  });
+}
+
+function splitWorkspacePath(path) {
+  const text = String(path || "").trim();
+  if (!text || text === "未分类") return [text || "未分类"];
+  return text.split("/").filter(Boolean);
+}
+
+function findCommonSegments(items) {
+  if ((items || []).length < 2) return [];
+  const segmentLists = items.map((item) => splitWorkspacePath(item.cwd));
+  const [first = []] = segmentLists;
+  const common = [];
+
+  for (let index = 0; index < first.length; index += 1) {
+    if (!segmentLists.every((segments) => segments[index] === first[index])) break;
+    common.push(first[index]);
+  }
+
+  return common.length >= 2 ? common : [];
+}
+
+function compareWorkspaceNodes(left, right) {
+  if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+  if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+  return String(left.label).localeCompare(String(right.label), "zh-CN");
+}
+
+export function buildSessionWorkspaceTree(workspaces) {
+  const items = workspaces || [];
+  const commonSegments = findCommonSegments(items);
+  const rootPath = commonSegments.length ? `/${commonSegments.join("/")}` : "";
+  const rootLabel = rootPath || "工作目录";
+  const root = {
+    key: rootLabel,
+    label: rootLabel,
+    path: rootPath,
+    depth: 0,
+    sessions: 0,
+    events: 0,
+    tokens: 0,
+    hasTokenData: false,
+    rawSessions: 0,
+    latest: "",
+    workspace: null,
+    children: [],
+  };
+
+  function ensureChild(parent, label, path, depth) {
+    let child = parent.children.find((item) => item.label === label && item.path === path);
+    if (!child) {
+      child = {
+        key: path || label,
+        label,
+        path,
+        depth,
+        sessions: 0,
+        events: 0,
+        tokens: 0,
+        hasTokenData: false,
+        rawSessions: 0,
+        latest: "",
+        workspace: null,
+        children: [],
+      };
+      parent.children.push(child);
+    }
+    return child;
+  }
+
+  for (const item of items) {
+    const segments = splitWorkspacePath(item.cwd);
+    const relativeSegments = commonSegments.length ? segments.slice(commonSegments.length) : segments;
+    const pathSegments = [...commonSegments];
+    const trail = [root];
+    let parent = root;
+
+    if (relativeSegments.length === 0) {
+      parent = ensureChild(root, "当前目录", item.cwd, 1);
+      trail.push(parent);
+    } else {
+      relativeSegments.forEach((segment, index) => {
+        pathSegments.push(segment);
+        const path = item.cwd?.startsWith("/") ? `/${pathSegments.join("/")}` : pathSegments.join("/");
+        parent = ensureChild(parent, segment, path, index + 1);
+        trail.push(parent);
+      });
+    }
+
+    parent.workspace = item;
+    for (const node of trail) {
+      node.sessions += toFiniteNumber(item.sessions);
+      node.rawSessions += toFiniteNumber(item.rawSessions || item.sessions);
+      node.events += toFiniteNumber(item.events);
+      node.tokens += toFiniteNumber(item.tokens);
+      node.hasTokenData = Boolean(node.hasTokenData || item.hasTokenData);
+      if (String(item.latest || "") > String(node.latest || "")) node.latest = item.latest || "";
+    }
+  }
+
+  function sortChildren(node) {
+    node.children.sort(compareWorkspaceNodes);
+    node.children.forEach(sortChildren);
+    return node;
+  }
+
+  return sortChildren(root);
+}
+
+export function buildLowContentSessionIds(groups, filters = {}, defaults = {}) {
+  const tokenMax = toOptionalPositiveNumber(filters.tokenMax)
+    ?? toOptionalPositiveNumber(defaults.tokenMax)
+    ?? 1000;
+  const maxEvents = toOptionalPositiveNumber(filters.maxEvents)
+    ?? toOptionalPositiveNumber(defaults.maxEvents)
+    ?? 6;
+  const tokenMin = toOptionalPositiveNumber(filters.tokenMin);
+
+  return [...new Set(flattenSessions(groups)
+    .filter((session) => matchesSessionBaseFilters(session, filters))
+    .map(normalizeSessionForWorkspace)
+    .filter((session) => {
+      if (tokenMin != null && toFiniteNumber(session.totalTokens) < tokenMin) return false;
+      return toFiniteNumber(session.totalTokens) <= tokenMax && toFiniteNumber(session.count) <= maxEvents;
+    })
+    .map((session) => session.sessionId)
+    .filter(Boolean))];
 }
 
 export function buildStreamScope({

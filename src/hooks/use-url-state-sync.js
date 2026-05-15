@@ -47,5 +47,9 @@ export function useUrlStateSync({
     sessionFilters.query,
     sessionFilters.platform,
     sessionFilters.namedOnly,
+    sessionFilters.groupBy,
+    sessionFilters.tokenMin,
+    sessionFilters.tokenMax,
+    sessionFilters.maxEvents,
   ]);
 }

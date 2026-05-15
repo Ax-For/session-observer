@@ -12,9 +12,14 @@ export const DEFAULT_SESSION_FILTERS = {
   query: "",
   platform: "",
   namedOnly: false,
+  groupBy: "cwd",
+  tokenMin: "",
+  tokenMax: "",
+  maxEvents: "",
 };
 
 export const DEFAULT_TOKEN_THRESHOLD = "20000";
+export const APP_TABS = ["overview", "tokens", "alerts", "stream", "sessions"];
 
 function cleanSearch(search = "") {
   return String(search).replace(/^\?/, "");
@@ -40,7 +45,7 @@ export function parseUrlState(search = "") {
   const params = new URLSearchParams(cleanSearch(search));
 
   return {
-    tab: pickEnum(params.get("tab"), ["stream", "sessions"], "stream"),
+    tab: pickEnum(params.get("tab"), APP_TABS, "stream"),
     selectedSessionId: normalizeText(params.get("session")),
     mode: pickEnum(params.get("mode"), ["observe", "raw"], "observe"),
     quickFilter: pickEnum(params.get("qf"), ["all", "alert", "high_token"], "all"),
@@ -60,13 +65,17 @@ export function parseUrlState(search = "") {
       query: normalizeText(params.get("sq")),
       platform: normalizeText(params.get("sp")),
       namedOnly: params.get("named") === "1",
+      groupBy: pickEnum(params.get("sg"), ["cwd", "sourceFile", "platform"], DEFAULT_SESSION_FILTERS.groupBy),
+      tokenMin: normalizeText(params.get("stmin")),
+      tokenMax: normalizeText(params.get("stmax")),
+      maxEvents: normalizeText(params.get("semax")),
     },
   };
 }
 
 export function buildUrlSearch(state = {}) {
   const params = new URLSearchParams();
-  const tab = pickEnum(state.tab, ["stream", "sessions"], "stream");
+  const tab = pickEnum(state.tab, APP_TABS, "stream");
   const mode = pickEnum(state.mode, ["observe", "raw"], "observe");
   const quickFilter = pickEnum(state.quickFilter, ["all", "alert", "high_token"], "all");
   const tokenThreshold = normalizeThreshold(state.tokenThreshold);
@@ -96,7 +105,10 @@ export function buildUrlSearch(state = {}) {
   if (normalizeText(sessionFilters.query)) params.set("sq", normalizeText(sessionFilters.query));
   if (normalizeText(sessionFilters.platform)) params.set("sp", normalizeText(sessionFilters.platform));
   if (sessionFilters.namedOnly) params.set("named", "1");
+  if (sessionFilters.groupBy !== DEFAULT_SESSION_FILTERS.groupBy) params.set("sg", sessionFilters.groupBy);
+  if (normalizeText(sessionFilters.tokenMin)) params.set("stmin", normalizeText(sessionFilters.tokenMin));
+  if (normalizeText(sessionFilters.tokenMax)) params.set("stmax", normalizeText(sessionFilters.tokenMax));
+  if (normalizeText(sessionFilters.maxEvents)) params.set("semax", normalizeText(sessionFilters.maxEvents));
 
   return params.toString();
 }
-

@@ -225,6 +225,7 @@
         agent: 0,
         tool: 0,
         sourceType: event.sourceType || "unknown",
+        sourceFiles: new Set(),
       };
       group.count += 1;
       group.latest = !group.latest || event.time > group.latest ? event.time : group.latest;
@@ -232,6 +233,7 @@
       if (!group.fallbackTitle) group.fallbackTitle = deriveFallbackTitleFromEvent(event);
       if (event.cwd) group.cwd = event.cwd;
       if (event.model && event.model !== "unknown") group.models.add(event.model);
+      if (event.sourceFile) group.sourceFiles.add(event.sourceFile);
       if (event.callType === "Token_Usage" && hasTokenUsageData(event.tokenUsage)) {
         group.latestToken = event.tokenUsage;
         group.aggregateToken = addTokenUsage(group.aggregateToken, event.tokenUsage);
@@ -246,6 +248,7 @@
       .filter((group) => group.sessionId !== "unknown")
       .map((group) => {
         group.models = [...group.models].sort();
+        group.sourceFiles = [...group.sourceFiles].sort();
         return group;
       })
       .sort((a, b) => (a.latest < b.latest ? 1 : -1));
@@ -331,6 +334,25 @@
     return startOfDayMs - diff * 24 * 60 * 60 * 1000;
   }
 
+  function getStartOfHourMs(nowMs) {
+    const date = new Date(nowMs);
+    date.setUTCMinutes(0, 0, 0);
+    return date.getTime();
+  }
+
+  function formatHourLabel(ms, timezoneOffsetMinutes) {
+    const shifted = new Date(ms + timezoneOffsetMinutes * 60 * 1000);
+    const hours = String(shifted.getUTCHours()).padStart(2, "0");
+    return `${hours}:00`;
+  }
+
+  function formatDayLabel(ms, timezoneOffsetMinutes) {
+    const shifted = new Date(ms + timezoneOffsetMinutes * 60 * 1000);
+    const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(shifted.getUTCDate()).padStart(2, "0");
+    return `${month}/${day}`;
+  }
+
   function mapTotalsToSortedEntries(totals) {
     return [...totals.entries()]
       .map(([key, total]) => ({ key, total }))
@@ -385,6 +407,292 @@
       week: {
         total: windows.week.total,
         platforms: mapTotalsToSortedEntries(windows.week.platforms),
+      },
+    };
+  }
+
+  function sortedValueEntries(map, valueKey = "total") {
+    return [...map.entries()]
+      .map(([key, value]) => ({ key, [valueKey]: value }))
+      .sort((left, right) => {
+        if (right[valueKey] !== left[valueKey]) return right[valueKey] - left[valueKey];
+        return String(left.key).localeCompare(String(right.key), "zh-CN");
+      });
+  }
+
+  function sessionDisplayTitle(session) {
+    return session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话";
+  }
+
+  function tokenEffectiveTotal(tokenUsage) {
+    if (!hasTokenUsageData(tokenUsage)) return 0;
+    const total = Number(tokenUsage?.total);
+    const cachedInput = Number(tokenUsage?.cachedInput);
+    return (Number.isFinite(total) ? total : 0) + (Number.isFinite(cachedInput) ? cachedInput : 0);
+  }
+
+  function addMapValue(map, key, amount) {
+    const normalizedKey = key || "unknown";
+    map.set(normalizedKey, (map.get(normalizedKey) || 0) + amount);
+  }
+
+  function buildHourlyChart(events, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const timezoneOffsetMinutes = getTimezoneOffsetMinutes(nowMs, options.timezoneOffsetMinutes);
+    const currentHourMs = getStartOfHourMs(nowMs);
+    const bucketCount = Number.isFinite(Number(options.hourlyBucketCount))
+      ? Math.max(1, Math.min(72, Number(options.hourlyBucketCount)))
+      : 24;
+    const firstBucketMs = currentHourMs - (bucketCount - 1) * 60 * 60 * 1000;
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      time: new Date(firstBucketMs + index * 60 * 60 * 1000).toISOString(),
+      label: formatHourLabel(firstBucketMs + index * 60 * 60 * 1000, timezoneOffsetMinutes),
+      events: 0,
+      alerts: 0,
+      tokens: 0,
+      platformMap: new Map(),
+    }));
+
+    for (const event of events || []) {
+      const eventMs = toTimeMs(event?.time);
+      if (eventMs == null || eventMs < firstBucketMs || eventMs >= currentHourMs + 60 * 60 * 1000) continue;
+      const bucketIndex = Math.floor((eventMs - firstBucketMs) / (60 * 60 * 1000));
+      const bucket = buckets[bucketIndex];
+      if (!bucket) continue;
+      bucket.events += 1;
+      if (isAlertEvent(event)) bucket.alerts += 1;
+      const tokenTotal = tokenEffectiveTotal(event?.tokenUsage);
+      if (tokenTotal <= 0) continue;
+      bucket.tokens += tokenTotal;
+      addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
+    }
+
+    return buckets.map((bucket) => ({
+      time: bucket.time,
+      label: bucket.label,
+      events: bucket.events,
+      alerts: bucket.alerts,
+      tokens: bucket.tokens,
+      platforms: mapTotalsToSortedEntries(bucket.platformMap),
+    }));
+  }
+
+  function buildDailyChart(events, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const timezoneOffsetMinutes = getTimezoneOffsetMinutes(nowMs, options.timezoneOffsetMinutes);
+    const currentDayMs = getStartOfDayMs(nowMs, timezoneOffsetMinutes);
+    const bucketCount = Number.isFinite(Number(options.dailyBucketCount))
+      ? Math.max(1, Math.min(90, Number(options.dailyBucketCount)))
+      : 14;
+    const firstBucketMs = currentDayMs - (bucketCount - 1) * 24 * 60 * 60 * 1000;
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      time: new Date(firstBucketMs + index * 24 * 60 * 60 * 1000).toISOString(),
+      label: formatDayLabel(firstBucketMs + index * 24 * 60 * 60 * 1000, timezoneOffsetMinutes),
+      events: 0,
+      alerts: 0,
+      tokens: 0,
+      platformMap: new Map(),
+    }));
+
+    for (const event of events || []) {
+      const eventMs = toTimeMs(event?.time);
+      if (eventMs == null || eventMs < firstBucketMs || eventMs >= currentDayMs + 24 * 60 * 60 * 1000) continue;
+      const bucketIndex = Math.floor((eventMs - firstBucketMs) / (24 * 60 * 60 * 1000));
+      const bucket = buckets[bucketIndex];
+      if (!bucket) continue;
+      bucket.events += 1;
+      if (isAlertEvent(event)) bucket.alerts += 1;
+      const tokenTotal = tokenEffectiveTotal(event?.tokenUsage);
+      if (tokenTotal <= 0) continue;
+      bucket.tokens += tokenTotal;
+      addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
+    }
+
+    return buckets.map((bucket) => ({
+      time: bucket.time,
+      label: bucket.label,
+      events: bucket.events,
+      alerts: bucket.alerts,
+      tokens: bucket.tokens,
+      platforms: mapTotalsToSortedEntries(bucket.platformMap),
+    }));
+  }
+
+  function buildObservabilitySummary(events, options = {}) {
+    const eventList = Array.isArray(events) ? events : [];
+    const sessions = buildSessionGroups(eventList);
+    const sessionById = new Map(sessions.map((session) => [session.sessionId, session]));
+    const platformTokens = new Map();
+    const modelTokens = new Map();
+    const workspaceTokens = new Map();
+    const workspaceStats = new Map();
+    const toolStats = new Map();
+    const alertTypeCounts = new Map();
+    const alertPlatformCounts = new Map();
+    const totals = {
+      input: 0,
+      output: 0,
+      total: 0,
+      cachedInput: 0,
+      reasoningOutput: 0,
+    };
+    let effectiveTotal = 0;
+    let firstEventAt = "";
+    let lastEventAt = "";
+    let alertEvents = 0;
+    let highTokenEvents = 0;
+    const alertRecent = [];
+    const workspaceSessions = new Map();
+
+    for (const event of eventList) {
+      const time = event?.time || "";
+      if (time && (!firstEventAt || time < firstEventAt)) firstEventAt = time;
+      if (time && (!lastEventAt || time > lastEventAt)) lastEventAt = time;
+
+      const cwd = event?.cwd || "unknown";
+      const workspace = workspaceStats.get(cwd) || {
+        cwd,
+        events: 0,
+        sessions: 0,
+        tokens: 0,
+        alerts: 0,
+      };
+      workspace.events += 1;
+      workspaceStats.set(cwd, workspace);
+      if (!workspaceSessions.has(cwd)) workspaceSessions.set(cwd, new Set());
+      if (event?.sessionId && event.sessionId !== "unknown") workspaceSessions.get(cwd).add(event.sessionId);
+
+      const alert = isAlertEvent(event);
+      if (alert) {
+        alertEvents += 1;
+        workspace.alerts += 1;
+        addMapValue(alertTypeCounts, event?.callType, 1);
+        addMapValue(alertPlatformCounts, event?.sourceType, 1);
+        alertRecent.push({
+          time,
+          sessionId: event?.sessionId || "",
+          sessionTitle: sessionDisplayTitle(sessionById.get(event?.sessionId)),
+          sourceType: event?.sourceType || "unknown",
+          callType: event?.callType || "Unknown",
+          toolName: event?.toolName || "",
+          model: event?.model || "unknown",
+          cwd,
+          summary: clip(event?.summary || event?.content || event?.contentPreview || "", 180),
+          extra: event?.extra || "",
+        });
+      }
+
+      if (event?.callType === "Tool_Call" || event?.callType === "Tool_Result") {
+        const toolKey = event?.toolName || (event?.callType === "Tool_Result" ? "(tool result)" : "unknown");
+        const tool = toolStats.get(toolKey) || { key: toolKey, calls: 0, results: 0, alerts: 0 };
+        if (event.callType === "Tool_Call") tool.calls += 1;
+        if (event.callType === "Tool_Result") tool.results += 1;
+        if (alert) tool.alerts += 1;
+        toolStats.set(toolKey, tool);
+      }
+
+      if (!hasTokenUsageData(event?.tokenUsage)) continue;
+      const token = event.tokenUsage;
+      const tokenTotal = tokenEffectiveTotal(token);
+      if (tokenTotal >= Number(options.highTokenThreshold || 20000)) highTokenEvents += 1;
+      effectiveTotal += tokenTotal;
+      totals.input += Number.isFinite(Number(token.input)) ? Number(token.input) : 0;
+      totals.output += Number.isFinite(Number(token.output)) ? Number(token.output) : 0;
+      totals.total += Number.isFinite(Number(token.total)) ? Number(token.total) : 0;
+      totals.cachedInput += Number.isFinite(Number(token.cachedInput)) ? Number(token.cachedInput) : 0;
+      totals.reasoningOutput += Number.isFinite(Number(token.reasoningOutput)) ? Number(token.reasoningOutput) : 0;
+      addMapValue(platformTokens, event?.sourceType, tokenTotal);
+      addMapValue(modelTokens, event?.model, tokenTotal);
+      addMapValue(workspaceTokens, cwd, tokenTotal);
+      workspace.tokens += tokenTotal;
+    }
+
+    for (const [cwd, sessionSet] of workspaceSessions) {
+      const workspace = workspaceStats.get(cwd);
+      if (workspace) workspace.sessions = sessionSet.size;
+    }
+
+    const topSessions = sessions
+      .map((session) => ({
+        sessionId: session.sessionId,
+        title: sessionDisplayTitle(session),
+        sourceType: session.sourceType || "unknown",
+        cwd: session.cwd || "unknown",
+        latest: session.latest || "",
+        events: session.count || 0,
+        tokens: tokenEffectiveTotal(session.aggregateToken),
+        alerts: eventList.filter((event) => event.sessionId === session.sessionId && isAlertEvent(event)).length,
+      }))
+      .sort((left, right) => {
+        if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+        return String(right.latest).localeCompare(String(left.latest));
+      })
+      .slice(0, 12);
+
+    const meta = collectMeta(eventList);
+    const tokenPlatformShare = sortedValueEntries(platformTokens);
+    const tokenModelChart = sortedValueEntries(modelTokens).slice(0, 10);
+    const workspaceChart = [...workspaceStats.values()]
+      .sort((left, right) => {
+        if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+        if (right.events !== left.events) return right.events - left.events;
+        return String(left.cwd).localeCompare(String(right.cwd), "zh-CN");
+      })
+      .slice(0, 10);
+    const alertTypeChart = sortedValueEntries(alertTypeCounts, "count");
+
+    return {
+      health: {
+        eventsTotal: eventList.length,
+        sessionsTotal: sessions.length,
+        platformCount: meta.platforms.length,
+        modelCount: meta.models.length,
+        firstEventAt,
+        lastEventAt,
+        alertEvents,
+        highTokenEvents,
+      },
+      tokens: {
+        ...totals,
+        effectiveTotal,
+        windows: buildTokenUsageWindows(eventList, options),
+        byPlatform: tokenPlatformShare,
+        byModel: tokenModelChart,
+        byWorkspace: sortedValueEntries(workspaceTokens).map((item) => ({ cwd: item.key, total: item.total })),
+        topSessions,
+      },
+      alerts: {
+        total: alertEvents,
+        byType: sortedValueEntries(alertTypeCounts, "count"),
+        byPlatform: sortedValueEntries(alertPlatformCounts, "count"),
+        recent: alertRecent
+          .sort((left, right) => String(right.time).localeCompare(String(left.time)))
+          .slice(0, 30),
+      },
+      tools: {
+        totalCalls: [...toolStats.values()].reduce((sum, item) => sum + item.calls, 0),
+        totalResults: [...toolStats.values()].reduce((sum, item) => sum + item.results, 0),
+        topTools: [...toolStats.values()]
+          .sort((left, right) => {
+            const rightTotal = right.calls + right.results;
+            const leftTotal = left.calls + left.results;
+            if (rightTotal !== leftTotal) return rightTotal - leftTotal;
+            if (right.alerts !== left.alerts) return right.alerts - left.alerts;
+            return String(left.key).localeCompare(String(right.key), "zh-CN");
+          })
+          .slice(0, 20),
+      },
+      workspaces: {
+        total: workspaceStats.size,
+        topWorkspaces: workspaceChart.slice(0, 20),
+      },
+      charts: {
+        hourly: buildHourlyChart(eventList, options),
+        daily: buildDailyChart(eventList, options),
+        platformShare: tokenPlatformShare,
+        modelTokens: tokenModelChart,
+        workspaceTokens: workspaceChart,
+        alertTypes: alertTypeChart,
       },
     };
   }
@@ -988,6 +1296,7 @@
     applyEventSessionMeta,
     addTokenUsage,
     applySessionTitleOverrides,
+    buildObservabilitySummary,
     buildTokenUsageWindows,
     buildSessionGroups,
     clip,

@@ -57,6 +57,22 @@ function mockFetch() {
       });
     }
 
+    if (url.startsWith("/api/observability")) {
+      return jsonResponse({
+        generatedAt: "2026-04-20T00:00:00.000Z",
+        summary: {
+          health: { eventsTotal: 0, sessionsTotal: 0, alertEvents: 0 },
+          tokens: {
+            effectiveTotal: 0,
+            windows: { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } },
+          },
+          alerts: { total: 0, recent: [], byType: [], byPlatform: [] },
+          tools: { totalCalls: 0, totalResults: 0, topTools: [] },
+          workspaces: { topWorkspaces: [] },
+        },
+      });
+    }
+
     throw new Error(`Unexpected fetch: ${url}`);
   });
 }
@@ -101,6 +117,18 @@ describe("App URL state", () => {
       expect(window.location.search).toContain("q=incident");
       expect(window.location.search).toContain("mode=raw");
       expect(window.location.search).toContain("qf=alert");
+    });
+  });
+
+  test("hydrates observability tabs from URL state", async () => {
+    window.history.replaceState(null, "", "/?tab=tokens");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Token" })).toBeChecked();
+    await waitFor(() => {
+      expect(window.location.search).toContain("tab=tokens");
     });
   });
 

@@ -31,6 +31,10 @@ export const apiClient = {
     return request("/api/sessions");
   },
 
+  fetchObservability() {
+    return request("/api/observability");
+  },
+
   renameSession(sessionId, newName) {
     return request("/api/sessions/rename", {
       method: "POST",

@@ -1,5 +1,6 @@
 import "@fontsource-variable/manrope/wght.css";
 import "@fontsource-variable/sora/wght.css";
+import "@mantine/charts/styles.css";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import "./styles/app.css";

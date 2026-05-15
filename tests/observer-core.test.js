@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   applyEventSessionMeta,
   applySessionTitleOverrides,
+  buildObservabilitySummary,
   buildTokenUsageWindows,
   buildSessionGroups,
   dedupeEvents,
@@ -191,6 +192,7 @@ test("buildSessionGroups aggregates token usage and derives a cleaned fallback t
   assert.equal(groups.length, 1);
   assert.equal(groups[0].fallbackTitle, "/help Inspect this session carefully");
   assert.equal(groups[0].count, 2);
+  assert.deepEqual(groups[0].sourceFiles, ["claude.jsonl"]);
   assert.deepEqual(groups[0].aggregateToken, {
     input: 100,
     output: 25,
@@ -281,6 +283,147 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
       ],
     },
   });
+});
+
+test("buildObservabilitySummary aggregates health, token, alert, tool, and workspace signals", () => {
+  const summary = buildObservabilitySummary([
+    {
+      time: "2026-04-23T01:10:00.000Z",
+      sessionId: "sess-codex",
+      sessionTitle: "Fix deploy",
+      fallbackTitle: "",
+      sourceType: "codex",
+      model: "gpt-5.4",
+      cwd: "/repo/a",
+      callType: "Prompt",
+      content: "Fix deploy",
+    },
+    {
+      time: "2026-04-23T01:11:00.000Z",
+      sessionId: "sess-codex",
+      sessionTitle: "Fix deploy",
+      sourceType: "codex",
+      model: "gpt-5.4",
+      cwd: "/repo/a",
+      callType: "Tool_Call",
+      toolName: "Shell",
+      callId: "call-1",
+      content: "npm test",
+    },
+    {
+      time: "2026-04-23T01:12:00.000Z",
+      sessionId: "sess-codex",
+      sessionTitle: "Fix deploy",
+      sourceType: "codex",
+      model: "gpt-5.4",
+      cwd: "/repo/a",
+      callType: "Tool_Result",
+      toolName: "Shell",
+      callId: "call-1",
+      content: "failed with timeout",
+      extra: "exit=1",
+    },
+    {
+      time: "2026-04-23T01:13:00.000Z",
+      sessionId: "sess-codex",
+      sessionTitle: "Fix deploy",
+      sourceType: "codex",
+      model: "gpt-5.4",
+      cwd: "/repo/a",
+      callType: "Token_Usage",
+      tokenUsage: {
+        input: 1000,
+        output: 200,
+        total: 1200,
+        cachedInput: 300,
+        reasoningOutput: 50,
+      },
+    },
+    {
+      time: "2026-04-22T03:00:00.000Z",
+      sessionId: "sess-claude",
+      sessionTitle: "Review session",
+      sourceType: "claude",
+      model: "claude-sonnet-4-6",
+      cwd: "/repo/b",
+      callType: "Tool_Call",
+      toolName: "Read",
+      callId: "call-2",
+      content: "read file",
+    },
+    {
+      time: "2026-04-22T03:01:00.000Z",
+      sessionId: "sess-claude",
+      sessionTitle: "Review session",
+      sourceType: "claude",
+      model: "claude-sonnet-4-6",
+      cwd: "/repo/b",
+      callType: "Token_Usage",
+      tokenUsage: {
+        input: 400,
+        output: 100,
+        total: 500,
+        cachedInput: 0,
+        reasoningOutput: null,
+      },
+    },
+  ], {
+    nowMs: Date.parse("2026-04-23T12:00:00.000Z"),
+    timezoneOffsetMinutes: 0,
+  });
+
+  assert.equal(summary.health.eventsTotal, 6);
+  assert.equal(summary.health.sessionsTotal, 2);
+  assert.equal(summary.health.alertEvents, 1);
+  assert.equal(summary.tokens.effectiveTotal, 2000);
+  assert.deepEqual(summary.tokens.byPlatform, [
+    { key: "codex", total: 1500 },
+    { key: "claude", total: 500 },
+  ]);
+  assert.equal(summary.alerts.total, 1);
+  assert.equal(summary.alerts.recent[0].toolName, "Shell");
+  assert.equal(summary.tools.totalCalls, 2);
+  assert.equal(summary.tools.totalResults, 1);
+  assert.deepEqual(summary.tools.topTools, [
+    { key: "Shell", calls: 1, results: 1, alerts: 1 },
+    { key: "Read", calls: 1, results: 0, alerts: 0 },
+  ]);
+  assert.deepEqual(summary.workspaces.topWorkspaces, [
+    { cwd: "/repo/a", events: 4, sessions: 1, tokens: 1500, alerts: 1 },
+    { cwd: "/repo/b", events: 2, sessions: 1, tokens: 500, alerts: 0 },
+  ]);
+  assert.equal(summary.charts.hourly.length, 24);
+  assert.deepEqual(summary.charts.hourly.slice(-2), [
+    {
+      time: "2026-04-23T11:00:00.000Z",
+      label: "11:00",
+      events: 0,
+      alerts: 0,
+      tokens: 0,
+      platforms: [],
+    },
+    {
+      time: "2026-04-23T12:00:00.000Z",
+      label: "12:00",
+      events: 0,
+      alerts: 0,
+      tokens: 0,
+      platforms: [],
+    },
+  ]);
+  assert.equal(summary.charts.hourly.find((bucket) => bucket.label === "01:00").tokens, 1500);
+  assert.equal(summary.charts.hourly.find((bucket) => bucket.label === "01:00").alerts, 1);
+  assert.equal(summary.charts.daily.length, 14);
+  assert.equal(summary.charts.daily.at(-1).label, "04/23");
+  assert.equal(summary.charts.daily.at(-1).tokens, 1500);
+  assert.equal(summary.charts.daily.find((bucket) => bucket.label === "04/22").tokens, 500);
+  assert.deepEqual(summary.charts.platformShare, [
+    { key: "codex", total: 1500 },
+    { key: "claude", total: 500 },
+  ]);
+  assert.deepEqual(summary.charts.alertTypes, [
+    { key: "Tool_Result", count: 1 },
+  ]);
 });
 
 test("applySessionTitleOverrides updates only matching source groups", () => {

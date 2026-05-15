@@ -84,10 +84,12 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
   }, [deleteTarget, loadEvents, loadSessions, notify]);
 
   const toggleSessionSelection = useCallback((sessionId) => {
+    const ids = Array.isArray(sessionId) ? sessionId.filter(Boolean) : [sessionId].filter(Boolean);
+    if (!ids.length) return;
     setSelectedSessionIds((current) => (
-      current.includes(sessionId)
-        ? current.filter((id) => id !== sessionId)
-        : [...current, sessionId]
+      ids.every((id) => current.includes(id))
+        ? current.filter((id) => !ids.includes(id))
+        : [...new Set([...current, ...ids])]
     ));
   }, []);
 
@@ -148,6 +150,7 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
     setRenameValue,
     setRenameTarget,
     setDeleteTarget,
+    setSelectedSessionIds,
     openRename,
     openDelete,
     confirmRename,
