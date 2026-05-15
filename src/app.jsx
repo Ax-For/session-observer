@@ -84,6 +84,15 @@ const theme = createTheme({
   },
 });
 
+function isEditableShortcutTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']"));
+}
+
+function hasShortcutModifier(event) {
+  return event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
+}
+
 export function App() {
   const initialUrlState = useRef(
     parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
@@ -229,23 +238,27 @@ export function App() {
 
   useEffect(() => {
     function onKeyDown(event) {
-      if (event.key === "/" && !event.metaKey && !event.ctrlKey) {
+      if (event.defaultPrevented || event.isComposing) return;
+      const isEditing = isEditableShortcutTarget(event.target);
+      const hasModifier = hasShortcutModifier(event);
+
+      if (event.key === "/" && !hasModifier && !isEditing) {
         event.preventDefault();
         searchRef.current?.focus();
       }
-      if (event.key === "r" && !event.metaKey && !event.ctrlKey && dataSource === "server") {
+      if (event.key === "r" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
         loadEvents();
       }
-      if (event.key === "a" && !event.metaKey && !event.ctrlKey && dataSource === "server") {
+      if (event.key === "a" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
         setAutoRefresh((value) => !value);
       }
-      if (event.key === "t" && !event.metaKey && !event.ctrlKey) {
+      if (event.key === "t" && !hasModifier && !isEditing) {
         event.preventDefault();
         setThemeMode((value) => (value === "dark" ? "light" : "dark"));
       }
-      if (event.key === "m" && !event.metaKey && !event.ctrlKey) {
+      if (event.key === "m" && !hasModifier && !isEditing) {
         event.preventDefault();
         setMode((value) => (value === "observe" ? "raw" : "observe"));
       }

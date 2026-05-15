@@ -104,6 +104,33 @@ describe("App URL state", () => {
     });
   });
 
+  test("does not trigger global shortcuts while typing in search inputs", async () => {
+    render(<App />);
+
+    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    searchInput.focus();
+
+    expect(screen.getByRole("radio", { name: "观测" })).toBeChecked();
+    const fetchCountBeforeTyping = fetch.mock.calls.length;
+
+    fireEvent.keyDown(searchInput, { key: "m" });
+    fireEvent.keyDown(searchInput, { key: "t" });
+    fireEvent.keyDown(searchInput, { key: "r" });
+    fireEvent.keyDown(searchInput, { key: "a" });
+
+    expect(screen.getByRole("radio", { name: "观测" })).toBeChecked();
+    expect(fetch).toHaveBeenCalledTimes(fetchCountBeforeTyping);
+
+    const slashEvent = new KeyboardEvent("keydown", {
+      key: "/",
+      bubbles: true,
+      cancelable: true,
+    });
+    searchInput.dispatchEvent(slashEvent);
+
+    expect(slashEvent.defaultPrevented).toBe(false);
+  });
+
   test("clears the focused session from URL when returning to the global stream", async () => {
     window.history.replaceState(null, "", "/?session=sess-42");
 
