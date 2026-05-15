@@ -146,10 +146,10 @@
   function isAlertEvent(event) {
     if (!event) return false;
     if (event.callType === "Tool_Result" || event.callType === "Tool_Call") {
-      return ALERT_PATTERN.test(event.content || "") || ALERT_PATTERN.test(event.extra || "");
+      return ALERT_PATTERN.test(event.searchText || "") || ALERT_PATTERN.test(event.content || "") || ALERT_PATTERN.test(event.extra || "");
     }
     if (event.callType === "Agent") {
-      return ALERT_PATTERN.test(event.content || "");
+      return ALERT_PATTERN.test(event.searchText || "") || ALERT_PATTERN.test(event.content || "");
     }
     return false;
   }
@@ -178,7 +178,9 @@
 
     if (!filters.query) return true;
     return [
+      event.searchText,
       event.content,
+      event.contentPreview,
       event.callType,
       event.model,
       event.sessionId,

@@ -34,6 +34,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import ObserverData from "../shared/observer-data.js";
+import { apiClient } from "./api/client";
 import {
   downloadJson,
   downloadJsonl,
@@ -400,6 +401,24 @@ export function App() {
     });
   }
 
+  async function openEventDetail(event) {
+    setDetailEvent(event);
+    if (dataSource !== "server" || !event?.eventId || !event?.contentTruncated) return;
+
+    try {
+      const payload = await apiClient.fetchEventDetail(event.eventId);
+      setDetailEvent((current) => (
+        current?.eventId === event.eventId ? payload.event || current : current
+      ));
+    } catch (error) {
+      notify({
+        title: "事件详情加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    }
+  }
+
   return (
     <MantineProvider theme={theme} forceColorScheme={themeMode}>
       <Notifications position="top-right" />
@@ -606,7 +625,7 @@ export function App() {
                       onSelectSession={selectSession}
                       onClearSessionFocus={clearSessionFocus}
                       onOpenFilters={() => setFiltersOpen(true)}
-                      onOpenEvent={setDetailEvent}
+                      onOpenEvent={openEventDetail}
                       onLoadMore={() => loadEvents({ append: true })}
                       hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
                       loading={loadingEvents}

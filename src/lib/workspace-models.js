@@ -161,6 +161,7 @@ export function buildStreamSessionRailItems(sessions) {
       ...latest,
       count: toFiniteNumber(current.count) + toFiniteNumber(normalized.count),
       totalTokens: toFiniteNumber(current.totalTokens) + toFiniteNumber(normalized.totalTokens),
+      models: mergeUniqueValues(current.models, normalized.models),
       groupedCount: toFiniteNumber(current.groupedCount) + 1,
     });
   }
@@ -278,7 +279,7 @@ export function buildSessionSections(groups, filters = {}) {
 
   return Object.entries(groups || {})
     .map(([cwd, items]) => {
-      const sessions = (items || [])
+      const filteredSessions = (items || [])
         .filter((session) => {
           if (platform && session?.sourceType !== platform) return false;
           if (namedOnly && !String(session?.sessionTitle || "").trim()) return false;
@@ -301,8 +302,8 @@ export function buildSessionSections(groups, filters = {}) {
           ...session,
           title: session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话",
           totalTokens: toFiniteNumber(session?.aggregateToken?.total),
-        }))
-        .sort((left, right) => String(right.latest).localeCompare(String(left.latest)));
+        }));
+      const sessions = buildStreamSessionRailItems(filteredSessions);
 
       return { cwd, total: sessions.length, sessions };
     })

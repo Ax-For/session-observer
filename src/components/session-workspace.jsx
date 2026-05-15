@@ -91,6 +91,7 @@ export function SessionWorkspace({
                       <div className="session-row__meta-line">
                         <span>{formatDateTime(session.latest)}</span>
                         <span>{formatNumber(session.count)} 条事件</span>
+                        {session.groupedCount > 1 ? <span>{formatNumber(session.groupedCount)} 会话</span> : null}
                         <span>{formatCompactNumber(session.totalTokens)} Tok</span>
                       </div>
                     </button>

@@ -8,6 +8,7 @@ import {
 } from "../lib/conversation-paging";
 
 const BACKGROUND_LOAD_DELAY_MS = 16;
+const MAX_BACKGROUND_PRELOAD_EVENTS = 3000;
 
 function waitForNextConversationBatch() {
   return new Promise((resolve) => {
@@ -43,10 +44,12 @@ export function useConversationData({ dataSource, localEvents, notify }) {
 
   const preloadRemainingConversation = useCallback(async (requestId, session) => {
     if (dataSource !== "server") return;
+    if (conversationPageRef.current.total > MAX_BACKGROUND_PRELOAD_EVENTS) return;
 
     setConversationLoadingMore(true);
     try {
       while (requestId === conversationRequestId.current && conversationPageRef.current.hasMore) {
+        if (conversationPageRef.current.total > MAX_BACKGROUND_PRELOAD_EVENTS) return;
         const offset = conversationPageRef.current.nextOffset;
         const payload = await apiClient.fetchEvents({
           sessionId: session.sessionId,
@@ -54,6 +57,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
           limit: CONVERSATION_PAGE_LIMIT,
           offset,
           mode: "raw",
+          summary: 0,
         });
         if (requestId !== conversationRequestId.current) return;
 
@@ -117,6 +121,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
         limit: CONVERSATION_PAGE_LIMIT,
         offset: 0,
         mode: "raw",
+        summary: 0,
       });
       if (requestId !== conversationRequestId.current) return;
       commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0, { replace: true });
@@ -161,6 +166,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
         limit: CONVERSATION_PAGE_LIMIT,
         offset: conversationPageRef.current.nextOffset,
         mode: "raw",
+        summary: 0,
       });
       if (requestId !== conversationRequestId.current) return;
       commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0);

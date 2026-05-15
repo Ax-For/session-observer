@@ -3,6 +3,8 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
+const zlib = require("zlib");
 const { URL } = require("url");
 const { spawnSync } = require("child_process");
 const ObserverCore = require("./shared/observer-core");
@@ -35,9 +37,12 @@ const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jso
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1000;
+const EVENT_CONTENT_PREVIEW_LENGTH = 280;
+const EVENT_SEARCH_TEXT_LENGTH = EVENT_CONTENT_PREVIEW_LENGTH;
 const INDEX_REFRESH_DEBOUNCE_MS = 400;
 const INDEX_WARMUP_INTERVAL_MS = 3000;
 const fileEventCache = new Map();
+const stringPool = new Map();
 let aggregateCache = { key: "", events: [] };
 
 // Read Claude Code version at startup
@@ -98,14 +103,107 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
-function sendJson(res, status, data) {
+function sendJson(req, res, status, data) {
   const body = JSON.stringify(data);
+  const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
+  const shouldGzip = acceptsGzip && Buffer.byteLength(body) > 1024;
+  const payload = shouldGzip ? zlib.gzipSync(body) : Buffer.from(body);
   res.writeHead(status, {
     "Content-Type": MIME[".json"],
+    ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
     "Cache-Control": "no-store",
-    "Content-Length": Buffer.byteLength(body),
+    "Content-Length": payload.length,
   });
-  res.end(body);
+  res.end(payload);
+}
+
+function signatureHash(value) {
+  return crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 12);
+}
+
+function internString(value) {
+  if (typeof value !== "string" || !value) return value;
+  const cached = stringPool.get(value);
+  if (cached) return cached;
+  stringPool.set(value, value);
+  return value;
+}
+
+function internEventStrings(event) {
+  for (const key of [
+    "sessionId",
+    "model",
+    "toolName",
+    "cwd",
+    "sessionTitle",
+    "sourceFile",
+    "sourceType",
+    "callType",
+    "rawType",
+    "rawSubType",
+  ]) {
+    if (typeof event[key] === "string") event[key] = internString(event[key]);
+  }
+  return event;
+}
+
+function eventLocatorId(file, lineNumber, eventIndex) {
+  return crypto
+    .createHash("sha1")
+    .update(`${file}:${lineNumber}:${eventIndex}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function attachEventLocator(event, file, lineNumber, eventIndex) {
+  event.sourceFile = event.sourceFile || file;
+  event.sourceLine = lineNumber;
+  event.lineEventIndex = eventIndex;
+  event.eventId = eventLocatorId(file, lineNumber, eventIndex);
+  return event;
+}
+
+function makeIndexedEvent(event) {
+  const content = String(event.content || "");
+  const contentPreview = content.length > EVENT_CONTENT_PREVIEW_LENGTH
+    ? `${content.slice(0, EVENT_CONTENT_PREVIEW_LENGTH)}…`
+    : content;
+  const searchText = content.length > EVENT_SEARCH_TEXT_LENGTH
+    ? content.slice(0, EVENT_SEARCH_TEXT_LENGTH)
+    : content;
+  const indexed = {
+    ...event,
+    content: contentPreview,
+    contentPreview,
+    contentTruncated: content.length > EVENT_CONTENT_PREVIEW_LENGTH,
+    contentLength: content.length,
+  };
+  if (EVENT_SEARCH_TEXT_LENGTH > EVENT_CONTENT_PREVIEW_LENGTH && searchText !== contentPreview) {
+    indexed.searchText = searchText;
+  }
+  delete indexed.raw;
+  return internEventStrings(indexed);
+}
+
+function publicIndexState(currentAggregateKey) {
+  return {
+    dirty: indexState.dirty,
+    lastBuiltAt: indexState.lastBuiltAt,
+    lastError: indexState.lastError,
+    aggregateHash: signatureHash(indexState.aggregateKey),
+    currentAggregateHash: signatureHash(currentAggregateKey),
+  };
+}
+
+function trimHeapSoon() {
+  if (typeof global.gc !== "function") return;
+  setTimeout(() => {
+    try {
+      global.gc();
+    } catch {
+      // optional memory trimming only
+    }
+  }, 0).unref();
 }
 
 function listJsonlFiles(dir) {
@@ -144,6 +242,7 @@ function parseRequestFilters(searchParams) {
     order: searchParams.get("order") === "asc" ? "asc" : "desc",
     offset: toPositiveIntCore(searchParams.get("offset"), 0),
     limit: toPositiveIntCore(searchParams.get("limit"), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE),
+    includeSummary: searchParams.get("summary") !== "0",
   };
 }
 
@@ -283,6 +382,7 @@ function parseFileEvents(file, stateSignature, threadMeta) {
     : { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
   const parsed = canAppendIncrementally ? cached.events.slice() : [];
   let tailBuffer = canAppendIncrementally ? cached.tailBuffer || "" : "";
+  let lineNumber = canAppendIncrementally ? Number(cached.lineCount) || 0 : 0;
   let text = "";
 
   if (canAppendIncrementally && stat.size > cached.size) {
@@ -305,11 +405,12 @@ function parseFileEvents(file, stateSignature, threadMeta) {
 
   const pushLine = (line) => {
     if (!line) return;
+    lineNumber += 1;
     try {
       const obj = JSON.parse(line);
       const evtOrArray = parser(obj, context);
       const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-      for (const evt of events) {
+      events.forEach((evt, eventIndex) => {
         const meta = threadMeta.get(evt.sessionId);
         if (meta) {
           const titleStrategy =
@@ -318,8 +419,8 @@ function parseFileEvents(file, stateSignature, threadMeta) {
               : "missing-only";
           applyEventSessionMetaCore(evt, meta, { titleStrategy });
         }
-        parsed.push(evt);
-      }
+        parsed.push(makeIndexedEvent(attachEventLocator(evt, file, lineNumber, eventIndex)));
+      });
     } catch {
       // skip invalid lines
     }
@@ -340,18 +441,171 @@ function parseFileEvents(file, stateSignature, threadMeta) {
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     tailBuffer,
+    lineCount: lineNumber,
     context: { ...context },
     events: parsed,
   });
   return parsed;
 }
 
-function computeAggregate() {
+function parseFullFileEvents(file, threadMeta, options = {}) {
+  if (!fs.existsSync(file)) return [];
+  const { parser } = resolveParserForFile(file);
+  const context = { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
+  const events = [];
+  const targetLine = Number(options.targetLine) || 0;
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    const lineNumber = index + 1;
+    try {
+      const obj = JSON.parse(line);
+      const evtOrArray = parser(obj, context);
+      const parsedEvents = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
+      if (targetLine && lineNumber !== targetLine) {
+        if (lineNumber >= targetLine) break;
+        continue;
+      }
+      parsedEvents.forEach((evt, eventIndex) => {
+        const meta = threadMeta.get(evt.sessionId);
+        if (meta) {
+          const titleStrategy =
+            parser === parseCodexLineToEventCore || meta.explicitTitle
+              ? "always"
+              : "missing-only";
+          applyEventSessionMetaCore(evt, meta, { titleStrategy });
+        }
+        events.push(attachEventLocator(evt, file, lineNumber, eventIndex));
+      });
+    } catch {
+      // skip invalid lines
+    }
+    if (targetLine && lineNumber >= targetLine) break;
+  }
+
+  return events;
+}
+
+function readJsonlLine(file, targetLine) {
+  if (!fs.existsSync(file) || !(targetLine > 0)) return "";
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  const parts = [];
+  let currentLine = 1;
+  let collecting = currentLine === targetLine;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead <= 0) break;
+
+      let segmentStart = 0;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] !== 10) continue;
+
+        if (collecting) {
+          parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
+          return Buffer.concat(parts).toString("utf8").replace(/\r$/, "");
+        }
+
+        currentLine += 1;
+        segmentStart = index + 1;
+        collecting = currentLine === targetLine;
+      }
+
+      if (collecting && segmentStart < bytesRead) {
+        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return collecting && parts.length ? Buffer.concat(parts).toString("utf8").replace(/\r$/, "") : "";
+}
+
+function forEachJsonlLine(file, onLine) {
+  if (!fs.existsSync(file)) return;
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let parts = [];
+  let lineNumber = 1;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead <= 0) break;
+
+      let segmentStart = 0;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] !== 10) continue;
+
+        parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
+        const keepGoing = onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
+        parts = [];
+        lineNumber += 1;
+        segmentStart = index + 1;
+        if (keepGoing === false) return;
+      }
+
+      if (segmentStart < bytesRead) {
+        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
+      }
+    }
+
+    if (parts.length) {
+      onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function parseEventLineFromIndex(indexedEvent, threadMeta) {
+  const line = readJsonlLine(indexedEvent.sourceFile, Number(indexedEvent.sourceLine));
+  if (!line) return [];
+  const { parser } = resolveParserForFile(indexedEvent.sourceFile);
+  const context = {
+    model: indexedEvent.model || "unknown",
+    sessionId: indexedEvent.sessionId || "unknown",
+    sourceFile: indexedEvent.sourceFile,
+    cwd: indexedEvent.cwd || "",
+    sessionTitle: indexedEvent.sessionTitle || "",
+  };
+
+  try {
+    const obj = JSON.parse(line);
+    const evtOrArray = parser(obj, context);
+    const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
+    return events.map((evt, eventIndex) => {
+      const meta = threadMeta.get(evt.sessionId);
+      if (meta) {
+        const titleStrategy =
+          parser === parseCodexLineToEventCore || meta.explicitTitle
+            ? "always"
+            : "missing-only";
+        applyEventSessionMetaCore(evt, meta, { titleStrategy });
+      }
+      return attachEventLocator(evt, indexedEvent.sourceFile, Number(indexedEvent.sourceLine), eventIndex);
+    });
+  } catch {
+    return [];
+  }
+}
+
+function loadMergedThreadMetadata() {
   const threadMeta = loadCodexSessionMeta();
   const claudeMeta = loadClaudeCodeSessionMeta();
   for (const [id, meta] of claudeMeta) {
     threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
   }
+  return threadMeta;
+}
+
+function computeAggregate() {
+  const threadMeta = loadMergedThreadMetadata();
   const { files, stateSignature, aggregateKey } = computeAggregateSignature();
   const liveFiles = new Set(files);
   for (const cachedFile of fileEventCache.keys()) {
@@ -392,6 +646,7 @@ function refreshIndex(reason = "manual") {
     indexState.lastBuiltAt = new Date().toISOString();
     indexState.lastError = "";
     indexState.dirty = false;
+    trimHeapSoon();
     return indexState.events;
   } catch (err) {
     indexState.lastError = String(err);
@@ -405,6 +660,143 @@ function ensureIndexReady() {
     refreshIndex(indexState.events.length ? "dirty-read" : "cold-start");
   }
   return { events: indexState.events, currentAggregateKey: aggregateKey };
+}
+
+function sourceFilesForSession(events, sessionId) {
+  return [...new Set(
+    (events || [])
+      .filter((event) => event.sessionId === sessionId && event.sourceFile)
+      .map((event) => event.sourceFile),
+  )];
+}
+
+function canStreamSessionPage(filters) {
+  return filters.order === "asc" && !filters.query;
+}
+
+function querySessionEventsStreamed(filters, ready, files, threadMeta) {
+  const indexedVisible = (ready.events || []).filter((event) => (
+    event.sessionId === filters.sessionId && eventMatchesModeCore(event, filters.mode)
+  ));
+  const totalVisible = indexedVisible.length;
+  const totalMatching = indexedVisible.filter((event) => eventMatchesFiltersCore(event, filters)).length;
+  const paged = [];
+  let matchedSeen = 0;
+  let done = false;
+
+  for (const file of files) {
+    if (done) break;
+    const { parser } = resolveParserForFile(file);
+    const context = { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
+
+    forEachJsonlLine(file, (line, lineNumber) => {
+      if (done) return false;
+      if (!line) return;
+      try {
+        const obj = JSON.parse(line);
+        const evtOrArray = parser(obj, context);
+        const parsedEvents = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
+        parsedEvents.forEach((evt, eventIndex) => {
+          const meta = threadMeta.get(evt.sessionId);
+          if (meta) {
+            const titleStrategy =
+              parser === parseCodexLineToEventCore || meta.explicitTitle
+                ? "always"
+                : "missing-only";
+            applyEventSessionMetaCore(evt, meta, { titleStrategy });
+          }
+          attachEventLocator(evt, file, lineNumber, eventIndex);
+          if (evt.sessionId !== filters.sessionId) return;
+          if (!eventMatchesModeCore(evt, filters.mode)) return;
+          if (!eventMatchesFiltersCore(evt, filters)) return;
+          matchedSeen += 1;
+          if (matchedSeen <= filters.offset || paged.length >= filters.limit) return;
+          paged.push(evt);
+          done = paged.length >= filters.limit;
+        });
+      } catch {
+        // skip invalid lines
+      }
+      if (done) return false;
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sessionsDir: SESSIONS_DIR,
+    mode: filters.mode,
+    claudeVersion,
+    codexVersion,
+    index: {
+      ...publicIndexState(ready.currentAggregateKey),
+    },
+    totalVisible,
+    totalMatching,
+    sessions: [],
+    tokenWindows: null,
+    meta: { models: [], types: [], platforms: [] },
+    page: {
+      offset: filters.offset,
+      limit: filters.limit,
+      hasMore: filters.offset + paged.length < totalMatching,
+    },
+    events: paged,
+  };
+}
+
+function querySessionEventsDirect(filters, ready) {
+  const files = sourceFilesForSession(ready.events, filters.sessionId);
+  const threadMeta = loadMergedThreadMetadata();
+  if (canStreamSessionPage(filters)) {
+    return querySessionEventsStreamed(filters, ready, files, threadMeta);
+  }
+
+  const allEvents = [];
+
+  for (const file of files) {
+    allEvents.push(...parseFullFileEvents(file, threadMeta).filter((event) => event.sessionId === filters.sessionId));
+  }
+
+  const visibleEvents = allEvents.filter((event) => eventMatchesModeCore(event, filters.mode));
+  const matched = visibleEvents.filter((event) => eventMatchesFiltersCore(event, filters));
+  matched.sort((a, b) => {
+    const am = toTimeMsCore(a.time) ?? 0;
+    const bm = toTimeMsCore(b.time) ?? 0;
+    return filters.order === "asc" ? am - bm : bm - am;
+  });
+  const paged = matched.slice(filters.offset, filters.offset + filters.limit);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sessionsDir: SESSIONS_DIR,
+    mode: filters.mode,
+    claudeVersion,
+    codexVersion,
+    index: {
+      ...publicIndexState(ready.currentAggregateKey),
+    },
+    totalVisible: visibleEvents.length,
+    totalMatching: matched.length,
+    sessions: [],
+    tokenWindows: null,
+    meta: { models: [], types: [], platforms: [] },
+    page: {
+      offset: filters.offset,
+      limit: filters.limit,
+      hasMore: filters.offset + paged.length < matched.length,
+    },
+    events: paged,
+  };
+}
+
+function getEventDetail(eventId) {
+  const ready = ensureIndexReady();
+  const indexedEvent = ready.events.find((event) => event.eventId === eventId);
+  if (!indexedEvent?.sourceFile || !indexedEvent?.sourceLine) return null;
+
+  const threadMeta = loadMergedThreadMetadata();
+  const events = parseEventLineFromIndex(indexedEvent, threadMeta);
+  return events.find((event) => event.eventId === eventId) || null;
 }
 
 function watchPath(target, listener) {
@@ -446,17 +838,22 @@ function startIndexWatchers() {
 
 function queryEvents(filters) {
   const ready = ensureIndexReady();
+  if (!filters.includeSummary && filters.sessionId) {
+    return querySessionEventsDirect(filters, ready);
+  }
+
   const allEvents = ready.events;
   const visibleEvents = allEvents.filter((event) => eventMatchesModeCore(event, filters.mode));
-  const meta = collectMetaCore(visibleEvents);
   const matched = visibleEvents.filter((event) => eventMatchesFiltersCore(event, filters));
-  const aggregateMatchedSessions = visibleEvents.filter((event) => eventMatchesFiltersCore(event, {
-    ...filters,
-    query: "",
-    type: "",
-    quickFilter: "all",
-    sessionId: "",
-  }));
+  const aggregateMatchedSessions = filters.includeSummary
+    ? visibleEvents.filter((event) => eventMatchesFiltersCore(event, {
+      ...filters,
+      query: "",
+      type: "",
+      quickFilter: "all",
+      sessionId: "",
+    }))
+    : [];
   matched.sort((a, b) => {
     const am = toTimeMsCore(a.time) ?? 0;
     const bm = toTimeMsCore(b.time) ?? 0;
@@ -470,20 +867,18 @@ function queryEvents(filters) {
     claudeVersion,
     codexVersion,
     index: {
-      dirty: indexState.dirty,
-      lastBuiltAt: indexState.lastBuiltAt,
-      lastError: indexState.lastError,
-      aggregateKey: indexState.aggregateKey,
-      currentAggregateKey: ready.currentAggregateKey,
+      ...publicIndexState(ready.currentAggregateKey),
     },
     totalVisible: visibleEvents.length,
     totalMatching: matched.length,
-    sessions: mergeSessionTokenAggregates(
-      buildSessionGroupsCore(matched),
-      buildSessionGroupsCore(aggregateMatchedSessions),
-    ),
-    tokenWindows: buildTokenUsageWindowsCore(matched),
-    meta,
+    sessions: filters.includeSummary
+      ? mergeSessionTokenAggregates(
+        buildSessionGroupsCore(matched),
+        buildSessionGroupsCore(aggregateMatchedSessions),
+      )
+      : [],
+    tokenWindows: filters.includeSummary ? buildTokenUsageWindowsCore(matched) : null,
+    meta: filters.includeSummary ? collectMetaCore(visibleEvents) : { models: [], types: [], platforms: [] },
     page: {
       offset: filters.offset,
       limit: filters.limit,
@@ -761,20 +1156,36 @@ function deleteClaudeSessionFiles(sessionId) {
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://${req.headers.host}`);
 
+  if (u.pathname === "/api/events/detail" && req.method === "GET") {
+    try {
+      const eventId = u.searchParams.get("eventId") || "";
+      if (!eventId) return sendJson(req, res, 400, { error: "eventId required" });
+      const event = getEventDetail(eventId);
+      if (!event) return sendJson(req, res, 404, { error: "Event not found" });
+      sendJson(req, res, 200, { event });
+      trimHeapSoon();
+      return;
+    } catch (err) {
+      return sendJson(req, res, 500, { error: String(err) });
+    }
+  }
+
   if (u.pathname === "/api/events") {
     try {
       const filters = parseRequestFilters(u.searchParams);
-      return sendJson(res, 200, queryEvents(filters));
+      sendJson(req, res, 200, queryEvents(filters));
+      trimHeapSoon();
+      return;
     } catch (err) {
-      return sendJson(res, 500, { error: String(err), index: indexState });
+      return sendJson(req, res, 500, { error: String(err), index: publicIndexState("") });
     }
   }
 
   if (u.pathname === "/api/sessions" && req.method === "GET") {
     try {
-      return sendJson(res, 200, querySessions());
+      return sendJson(req, res, 200, querySessions());
     } catch (err) {
-      return sendJson(res, 500, { error: String(err) });
+      return sendJson(req, res, 500, { error: String(err) });
     }
   }
 
@@ -786,7 +1197,7 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const { sessionId, newName } = JSON.parse(body);
-        if (!sessionId || !newName) return sendJson(res, 400, { error: "sessionId and newName required" });
+        if (!sessionId || !newName) return sendJson(req, res, 400, { error: "sessionId and newName required" });
 
         // Try Claude Code first
         const claudeFile = findClaudeSessionFile(sessionId);
@@ -795,7 +1206,7 @@ const server = http.createServer((req, res) => {
           data.name = newName;
           fs.writeFileSync(claudeFile, JSON.stringify(data), "utf8");
           scheduleIndexRefresh("session-renamed");
-          return sendJson(res, 200, { success: true, sessionId, name: newName, platform: "claude" });
+          return sendJson(req, res, 200, { success: true, sessionId, name: newName, platform: "claude" });
         }
 
         // Try Codex
@@ -803,12 +1214,12 @@ const server = http.createServer((req, res) => {
         const codexIndexUpdated = updateCodexSessionIndex(sessionId, newName);
         if (codexDbUpdated || codexIndexUpdated) {
           scheduleIndexRefresh("session-renamed");
-          return sendJson(res, 200, { success: true, sessionId, name: newName, platform: "codex" });
+          return sendJson(req, res, 200, { success: true, sessionId, name: newName, platform: "codex" });
         }
 
-        return sendJson(res, 404, { error: "Session not found" });
+        return sendJson(req, res, 404, { error: "Session not found" });
       } catch (err) {
-        return sendJson(res, 500, { error: String(err) });
+        return sendJson(req, res, 500, { error: String(err) });
       }
     });
     return;
@@ -824,7 +1235,7 @@ const server = http.createServer((req, res) => {
       try {
         const { sessionIds } = JSON.parse(body);
         if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
-          return sendJson(res, 400, { error: "sessionIds array required" });
+          return sendJson(req, res, 400, { error: "sessionIds array required" });
         }
 
         const results = [];
@@ -860,9 +1271,9 @@ const server = http.createServer((req, res) => {
 
         scheduleIndexRefresh("batch-delete");
         const deletedCount = results.filter((r) => r.success).length;
-        return sendJson(res, 200, { success: true, total: sessionIds.length, deleted: deletedCount, results });
+        return sendJson(req, res, 200, { success: true, total: sessionIds.length, deleted: deletedCount, results });
       } catch (err) {
-        return sendJson(res, 500, { error: String(err) });
+        return sendJson(req, res, 500, { error: String(err) });
       }
     });
     return;
@@ -870,7 +1281,7 @@ const server = http.createServer((req, res) => {
 
   if (u.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
     const sessionId = u.pathname.split("/").pop();
-    if (!sessionId) return sendJson(res, 400, { error: "sessionId required" });
+    if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
     try {
       // Try Claude Code deletion
       const claudeFile = findClaudeSessionFile(sessionId);
@@ -882,7 +1293,7 @@ const server = http.createServer((req, res) => {
         // Delete transcript JSONL files and other session data
         deleteClaudeSessionFiles(sessionId);
         scheduleIndexRefresh("session-deleted");
-        return sendJson(res, 200, { success: true, sessionId, platform: "claude" });
+        return sendJson(req, res, 200, { success: true, sessionId, platform: "claude" });
       }
 
       // Try Codex deletion
@@ -893,12 +1304,12 @@ const server = http.createServer((req, res) => {
         }
         removeCodexSessionFromIndex(sessionId);
         scheduleIndexRefresh("session-deleted");
-        return sendJson(res, 200, { success: true, sessionId, platform: "codex" });
+        return sendJson(req, res, 200, { success: true, sessionId, platform: "codex" });
       }
 
-      return sendJson(res, 404, { error: "Session not found" });
+      return sendJson(req, res, 404, { error: "Session not found" });
     } catch (err) {
-      return sendJson(res, 500, { error: String(err) });
+      return sendJson(req, res, 500, { error: String(err) });
     }
   }
 

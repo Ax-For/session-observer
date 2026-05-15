@@ -22,6 +22,11 @@ export const apiClient = {
     return request(`/api/events${query ? `?${query}` : ""}`);
   },
 
+  fetchEventDetail(eventId) {
+    const query = buildQuery({ eventId });
+    return request(`/api/events/detail?${query}`);
+  },
+
   fetchSessions() {
     return request("/api/sessions");
   },

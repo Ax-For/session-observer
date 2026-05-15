@@ -158,7 +158,7 @@ env.update({
 
 with open(log_file, "ab", buffering=0) as log_file_handle, open(os.devnull, "rb") as devnull:
     proc = subprocess.Popen(
-        ["node", "server.js"],
+        ["node", "--expose-gc", "server.js"],
         cwd=root_dir,
         env=env,
         stdin=devnull,
@@ -175,7 +175,7 @@ PY
   (
     cd "${ROOT_DIR}"
     HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" \
-      nohup node server.js </dev/null >> "${LOG_FILE}" 2>&1 &
+      nohup node --expose-gc server.js </dev/null >> "${LOG_FILE}" 2>&1 &
     echo $!
   )
 }
@@ -285,7 +285,7 @@ run_foreground() {
   ensure_node
   ensure_frontend_build
   cd "${ROOT_DIR}"
-  HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" node server.js
+  HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" node --expose-gc server.js
 }
 
 cmd="${1:-}"

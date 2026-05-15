@@ -205,6 +205,50 @@ describe("buildSessionSections", () => {
       }),
     ]);
   });
+
+  test("deduplicates repeated fallback-title sessions inside session sections", () => {
+    const sections = buildSessionSections({
+      "/Users/me": [
+        {
+          sessionId: "151831b9-83e5-4f57-af0f-4f8b60bbeab8",
+          sessionTitle: "",
+          fallbackTitle: "这个 npm script 怎么启动",
+          cwd: "/Users/me",
+          sourceType: "claude",
+          latest: "2026-04-29T13:23:25.174Z",
+          count: 6,
+          aggregateToken: { total: 0 },
+          models: [],
+        },
+        {
+          sessionId: "baac828f-e96c-4e96-8841-a31888dfc7f1",
+          sessionTitle: "",
+          fallbackTitle: "这个 npm script 怎么启动",
+          cwd: "/Users/me",
+          sourceType: "claude",
+          latest: "2026-04-29T13:23:25.806Z",
+          count: 6,
+          aggregateToken: { total: 0 },
+          models: [],
+        },
+      ],
+    });
+
+    expect(sections).toEqual([
+      expect.objectContaining({
+        cwd: "/Users/me",
+        total: 1,
+        sessions: [
+          expect.objectContaining({
+            sessionId: "baac828f-e96c-4e96-8841-a31888dfc7f1",
+            title: "这个 npm script 怎么启动",
+            count: 12,
+            groupedCount: 2,
+          }),
+        ],
+      }),
+    ]);
+  });
 });
 
 describe("local workspace models", () => {
