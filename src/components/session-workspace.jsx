@@ -14,6 +14,7 @@ import {
 } from "@mantine/core";
 import {
   IconArrowRight,
+  IconActivity,
   IconChevronRight,
   IconCopy,
   IconEdit,
@@ -54,6 +55,76 @@ function groupedEventText(session) {
     return `${formatNumber(groupedCount)} 个原始会话 · 每个约 ${formatNumber(average)} 条事件`;
   }
   return `${formatNumber(eventCount)} 条事件`;
+}
+
+function formatAgeText(ageMs) {
+  const minutes = Math.max(0, Math.round(Number(ageMs || 0) / 60000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours} 小时 ${rest} 分钟前` : `${hours} 小时前`;
+}
+
+function ActiveSessionsPanel({ overview, onOpenConversation }) {
+  const sessions = overview?.sessions || [];
+  const total = Number(overview?.total || 0);
+  const hiddenCount = Math.max(0, total - sessions.length);
+
+  return (
+    <Paper radius="xl" p="lg" className="active-sessions-panel">
+      <Group justify="space-between" align="flex-start" gap="md" className="active-sessions-panel__head">
+        <Group gap="sm" align="flex-start" wrap="nowrap">
+          <ThemeIcon radius="lg" size={42} variant="light" color={total ? "teal" : "gray"} className="active-sessions-panel__icon">
+            <IconActivity size={21} stroke={2} />
+          </ThemeIcon>
+          <div className="active-sessions-panel__copy">
+            <Text className="eyebrow">当前活跃</Text>
+            <Title order={4}>最近 {formatNumber(overview?.windowMinutes || 30)} 分钟仍在写入的会话</Title>
+            <Text className="active-sessions-panel__subline">
+              {total ? `按最新事件排序，可直接进入对话查看上下文` : "当前筛选范围内没有持续写入的会话"}
+            </Text>
+          </div>
+        </Group>
+        <div className="active-sessions-panel__summary">
+          <strong>{formatNumber(total)}</strong>
+          <span>活跃会话</span>
+        </div>
+      </Group>
+
+      {sessions.length ? (
+        <div className="active-session-list">
+          {sessions.map((session) => (
+            <button
+              key={session.sessionId}
+              type="button"
+              className="active-session-row"
+              aria-label={`打开活跃会话 ${session.title}`}
+              onClick={() => onOpenConversation(session)}
+            >
+              <span className="active-session-row__pulse" aria-hidden="true" />
+              <span className="active-session-row__main">
+                <strong>{clipText(session.title, 56)}</strong>
+                <span>{clipText(session.cwd || "unknown", 72)}</span>
+              </span>
+              <span className="active-session-row__meta">
+                <Badge radius="xl" size="xs" variant="light" color={session.sourceType === "codex" ? "blue" : "orange"}>
+                  {platformLabel(session.sourceType)}
+                </Badge>
+                <span>{formatAgeText(session.ageMs)}</span>
+                <span>{formatNumber(session.count || 0)} 事件</span>
+              </span>
+              <IconArrowRight size={16} className="active-session-row__arrow" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {hiddenCount ? (
+        <Text className="active-sessions-panel__more">还有 {formatNumber(hiddenCount)} 个活跃会话</Text>
+      ) : null}
+    </Paper>
+  );
 }
 
 function WorkspaceTreeNode({ node, onFocusWorkspace }) {
@@ -117,6 +188,7 @@ function WorkspaceTreeNode({ node, onFocusWorkspace }) {
 }
 
 export function SessionWorkspace({
+  activeOverview,
   sections,
   selectedIds,
   onToggleSelect,
@@ -144,6 +216,7 @@ export function SessionWorkspace({
     <div className="session-workspace-layout">
       <ScrollArea offsetScrollbars className="sessions-page">
         <Stack gap="md">
+          <ActiveSessionsPanel overview={activeOverview} onOpenConversation={onOpenConversation} />
           {(sections || []).map((section) => {
             const sectionTokenTotal = section.sessions.reduce((sum, session) => sum + Number(session.totalTokens || 0), 0);
             const sectionHasTokenData = section.sessions.some((session) => session.hasTokenData);

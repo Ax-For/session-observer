@@ -49,6 +49,7 @@ import {
   parseUrlState,
 } from "./lib/url-state";
 import {
+  buildActiveSessionOverview,
   buildLocalSessionGroups,
   buildLocalStreamPayload,
   buildDashboardSummary,
@@ -222,6 +223,9 @@ export function App() {
   const streamSessions = buildStreamSessionRailItems(currentStream.sessions);
 
   const sessionGroups = dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents);
+  const activeSessionOverview = buildActiveSessionOverview(sessionGroups, {
+    filters: sessionFilters,
+  });
   const sessionSections = buildSessionSections(sessionGroups, sessionFilters);
   const sessionWorkspaceIndex = buildSessionWorkspaceIndex(sessionSections);
   const sessionWorkspaceTree = buildSessionWorkspaceTree(sessionWorkspaceIndex);
@@ -834,6 +838,7 @@ export function App() {
 
                   <Suspense fallback={<WorkspaceFallback label="正在加载会话列表…" />}>
                     <SessionWorkspace
+                      activeOverview={activeSessionOverview}
                       sections={sessionSections}
                       workspaceIndex={sessionWorkspaceIndex}
                       workspaceTree={sessionWorkspaceTree}

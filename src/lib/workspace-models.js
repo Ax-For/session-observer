@@ -1,5 +1,19 @@
 import ObserverCore from "../../shared/observer-core.js";
 
+/**
+ * @typedef {Object} SessionGroup
+ * @property {string} sessionId
+ * @property {string} sessionTitle
+ * @property {string} fallbackTitle
+ * @property {string} cwd
+ * @property {string} sourceType
+ * @property {string} latest
+ * @property {number} count
+ * @property {Object} [aggregateToken]
+ * @property {string[]} models
+ * @property {string[]} sourceFiles
+ */
+
 const PLATFORM_LABELS = {
   codex: "Codex",
   claude: "Claude Code",
@@ -18,6 +32,9 @@ const QUICK_FILTER_LABELS = {
   alert: "告警视图",
   high_token: "高 Token",
 };
+
+const DEFAULT_ACTIVE_SESSION_WINDOW_MS = 30 * 60 * 1000;
+const DEFAULT_ACTIVE_SESSION_LIMIT = 6;
 
 function toFiniteNumber(value) {
   const num = Number(value);
@@ -118,6 +135,11 @@ function matchesSessionContentFilters(session, filters = {}) {
   return true;
 }
 
+/**
+ * Group sessions by working directory.
+ * @param {SessionGroup[]} sessions
+ * @returns {Object.<string, SessionGroup[]>}
+ */
 export function groupSessionsByCwd(sessions) {
   return (sessions || []).reduce((groups, session) => {
     const key = session.cwd || "未分类";
@@ -379,6 +401,54 @@ export function buildSessionSections(groups, filters = {}) {
       const leftLatest = left.sessions[0]?.latest || "";
       return String(rightLatest).localeCompare(String(leftLatest));
     });
+}
+
+export function buildActiveSessionOverview(groups, options = {}) {
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const activeWindowMs = Number.isFinite(Number(options.activeWindowMs))
+    ? Math.max(60 * 1000, Number(options.activeWindowMs))
+    : DEFAULT_ACTIVE_SESSION_WINDOW_MS;
+  const limit = Number.isFinite(Number(options.limit))
+    ? Math.max(1, Number(options.limit))
+    : DEFAULT_ACTIVE_SESSION_LIMIT;
+  const filters = options.filters || {};
+  const platformCounts = new Map();
+
+  const activeSessions = flattenSessions(groups)
+    .filter((session) => matchesSessionBaseFilters(session, filters))
+    .map(normalizeSessionForWorkspace)
+    .filter((session) => matchesSessionContentFilters(session, filters))
+    .map((session) => {
+      const latestMs = toTimeMs(session.latest);
+      return {
+        ...session,
+        ageMs: latestMs == null ? Number.POSITIVE_INFINITY : Math.max(0, nowMs - latestMs),
+      };
+    })
+    .filter((session) => Number.isFinite(session.ageMs) && session.ageMs <= activeWindowMs)
+    .sort((left, right) => {
+      if (left.ageMs !== right.ageMs) return left.ageMs - right.ageMs;
+      return String(right.latest || "").localeCompare(String(left.latest || ""));
+    });
+
+  for (const session of activeSessions) {
+    const key = session.sourceType || "unknown";
+    platformCounts.set(key, (platformCounts.get(key) || 0) + 1);
+  }
+
+  return {
+    total: activeSessions.length,
+    windowMinutes: Math.round(activeWindowMs / 60000),
+    latestAt: activeSessions[0]?.latest || "",
+    hasMore: activeSessions.length > limit,
+    platforms: [...platformCounts.entries()]
+      .map(([key, sessions]) => ({ key, sessions }))
+      .sort((left, right) => {
+        if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+        return String(left.key).localeCompare(String(right.key), "zh-CN");
+      }),
+    sessions: activeSessions.slice(0, limit),
+  };
 }
 
 export function buildSessionWorkspaceIndex(sections) {

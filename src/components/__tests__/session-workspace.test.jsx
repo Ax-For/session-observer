@@ -4,6 +4,56 @@ import { describe, expect, test, vi } from "vitest";
 import { SessionWorkspace } from "../session-workspace";
 
 describe("SessionWorkspace", () => {
+  test("renders active sessions above the grouped session list", () => {
+    const onOpenConversation = vi.fn();
+
+    render(
+      <MantineProvider>
+        <SessionWorkspace
+          activeOverview={{
+            total: 2,
+            windowMinutes: 30,
+            hasMore: true,
+            platforms: [
+              { key: "codex", sessions: 1 },
+              { key: "claude", sessions: 1 },
+            ],
+            sessions: [
+              {
+                sessionId: "active-1",
+                sourceType: "codex",
+                title: "当前项目 UI 调整",
+                latest: "2026-05-25T15:30:00.000Z",
+                ageMs: 120000,
+                count: 42,
+                totalTokens: 1200,
+                hasTokenData: true,
+                cwd: "/Users/me/code/session-observer",
+                sourceFiles: [],
+                models: ["gpt-5.4"],
+              },
+            ],
+          }}
+          sections={[]}
+          workspaceIndex={[]}
+          selectedIds={[]}
+          onToggleSelect={() => {}}
+          onOpenConversation={onOpenConversation}
+          onFocusWorkspace={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onCopySessionId={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("当前活跃")).toBeInTheDocument();
+    expect(screen.getByText("最近 30 分钟仍在写入的会话")).toBeInTheDocument();
+    expect(screen.getByText("还有 1 个活跃会话")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /打开活跃会话 当前项目 UI 调整/ }));
+    expect(onOpenConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
+  });
+
   test("keeps a session id copy action on session cards", () => {
     const onCopySessionId = vi.fn();
     const onFocusWorkspace = vi.fn();

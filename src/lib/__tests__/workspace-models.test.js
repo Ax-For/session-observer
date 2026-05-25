@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildDashboardSummary,
+  buildActiveSessionOverview,
   buildLocalSessionGroups,
   buildLocalStreamPayload,
   buildLowContentSessionIds,
@@ -419,6 +420,43 @@ describe("buildSessionSections", () => {
         tokens: 1000,
       }),
     ]);
+  });
+});
+
+describe("buildActiveSessionOverview", () => {
+  test("returns sessions updated inside the active window with platform totals", () => {
+    const overview = buildActiveSessionOverview(sampleGroups, {
+      nowMs: Date.parse("2026-04-19T14:45:10.720Z"),
+      activeWindowMs: 30 * 60 * 1000,
+    });
+
+    expect(overview.total).toBe(1);
+    expect(overview.windowMinutes).toBe(30);
+    expect(overview.latestAt).toBe("2026-04-19T14:36:10.720Z");
+    expect(overview.platforms).toEqual([{ key: "codex", sessions: 1 }]);
+    expect(overview.sessions).toEqual([
+      expect.objectContaining({
+        sessionId: "sess-1",
+        title: "Incident triage",
+        ageMs: 9 * 60 * 1000,
+        sourceType: "codex",
+      }),
+    ]);
+  });
+
+  test("respects session filters and limits the visible active list", () => {
+    const overview = buildActiveSessionOverview(sampleGroups, {
+      nowMs: Date.parse("2026-04-19T15:00:00.000Z"),
+      activeWindowMs: 72 * 60 * 60 * 1000,
+      limit: 1,
+      filters: { platform: "codex", query: "" },
+    });
+
+    expect(overview.total).toBe(2);
+    expect(overview.sessions).toHaveLength(1);
+    expect(overview.sessions[0].sessionId).toBe("sess-1");
+    expect(overview.hasMore).toBe(true);
+    expect(overview.platforms).toEqual([{ key: "codex", sessions: 2 }]);
   });
 });
 
