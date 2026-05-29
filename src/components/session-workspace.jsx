@@ -11,7 +11,10 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  Tree,
+  useTree,
 } from "@mantine/core";
+import { useMemo } from "react";
 import {
   IconArrowRight,
   IconActivity,
@@ -127,63 +130,159 @@ function ActiveSessionsPanel({ overview, onOpenConversation }) {
   );
 }
 
-function WorkspaceTreeNode({ node, onFocusWorkspace }) {
-  const hasChildren = (node.children || []).length > 0;
-  const isLeaf = Boolean(node.workspace);
-  const content = (
-    <>
-      <ThemeIcon
-        radius="md"
-        size={isLeaf ? 30 : 26}
-        variant={isLeaf ? "light" : "subtle"}
-        color={isLeaf ? "blue" : "gray"}
-        className="workspace-index-item__icon"
+function cx(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function basename(path) {
+  const text = String(path || "").trim().replace(/\/+$/, "");
+  if (!text) return "";
+  const segments = text.split("/").filter(Boolean);
+  return segments[segments.length - 1] || text;
+}
+
+function normalizeWorkspaceTreeNode(node, depth = 1) {
+  const children = (node.children || []).map((child) => normalizeWorkspaceTreeNode(child, depth + 1));
+  const workspace = node.workspace || (!children.length && node.cwd ? node : null);
+  const path = workspace?.cwd || node.path || node.cwd || node.label || "";
+  const label = node.label && !String(node.label).includes("/") ? node.label : basename(path) || node.label || "工作目录";
+  const value = String(node.key || path || label);
+
+  return {
+    label,
+    value,
+    children,
+    nodeProps: {
+      label,
+      path,
+      workspace,
+      sessions: Number(node.sessions || workspace?.sessions || 0),
+      tokens: Number(node.tokens || workspace?.tokens || 0),
+      hasTokenData: Boolean(node.hasTokenData ?? workspace?.hasTokenData ?? node.tokens),
+      depth,
+    },
+  };
+}
+
+function buildWorkspaceTreeData(workspaceTree, workspaceIndex) {
+  const sourceNodes = (workspaceTree?.children || []).length
+    ? workspaceTree.children
+    : (workspaceIndex || []).map((item) => ({
+      key: item.key || item.cwd,
+      label: item.cwd,
+      path: item.cwd,
+      sessions: item.sessions,
+      tokens: item.tokens,
+      hasTokenData: item.hasTokenData,
+      workspace: item,
+      children: [],
+    }));
+
+  return sourceNodes.map((node) => normalizeWorkspaceTreeNode(node));
+}
+
+function getInitialWorkspaceExpandedState(nodes, maxLevel = 2) {
+  const state = {};
+
+  function visit(items, level = 1) {
+    items.forEach((item) => {
+      if ((item.children || []).length) {
+        state[item.value] = level <= maxLevel;
+        visit(item.children, level + 1);
+      }
+    });
+  }
+
+  visit(nodes);
+  return state;
+}
+
+function WorkspaceTreeView({ data, onFocusWorkspace }) {
+  const treeController = useTree({
+    initialExpandedState: getInitialWorkspaceExpandedState(data),
+  });
+
+  const renderNode = ({ node, level, expanded, hasChildren, selected, elementProps, tree }) => {
+    const meta = node.nodeProps || {};
+    const hasWorkspace = Boolean(meta.workspace);
+    const isLeaf = hasWorkspace && !hasChildren;
+    const isBranch = hasChildren;
+    const Icon = hasChildren ? IconFolders : IconFolder;
+    const fullPath = meta.path || String(node.label || "");
+    const handleClick = (event) => {
+      elementProps.onClick?.(event);
+      const clickedTwisty = event.target?.closest?.(".workspace-tree-item__twisty");
+
+      if (hasChildren && (!hasWorkspace || clickedTwisty)) {
+        tree.toggleExpanded(node.value);
+        return;
+      }
+
+      if (hasWorkspace) {
+        tree.select(node.value);
+        onFocusWorkspace?.(meta.workspace.cwd);
+      }
+    };
+
+    return (
+      <button
+        {...elementProps}
+        type="button"
+        title={fullPath}
+        aria-label={hasWorkspace ? `定位工作目录 ${fullPath}` : `${expanded ? "折叠" : "展开"}工作目录 ${fullPath}`}
+        aria-expanded={hasChildren ? expanded : undefined}
+        className={cx(
+          elementProps.className,
+          "workspace-tree-item",
+          isBranch && "workspace-tree-item--branch",
+          hasWorkspace && "workspace-tree-item--workspace",
+          isLeaf && "workspace-tree-item--leaf",
+          expanded && "workspace-tree-item--expanded",
+          selected && "workspace-tree-item--selected",
+        )}
+        style={{ ...elementProps.style, "--workspace-tree-level": level - 1 }}
+        onClick={handleClick}
       >
-        {hasChildren ? <IconFolders size={16} /> : <IconFolder size={15} />}
-      </ThemeIcon>
-      <span className="workspace-index-item__copy">
-        <strong>{clipText(node.label, isLeaf ? 42 : 34)}</strong>
-        <span>
-          {formatNumber(node.sessions)} 会话 · {formatTokenText(node.tokens, node.hasTokenData)}
+        <span className="workspace-tree-item__twisty" aria-hidden="true">
+          {hasChildren ? <IconChevronRight size={14} /> : <IconArrowRight size={14} />}
         </span>
-      </span>
-      {isLeaf ? (
-        <>
-          <Badge radius="xl" variant="filled" color="blue" className="workspace-index-item__count">
-            {formatNumber(node.sessions)}
+        <ThemeIcon
+          radius="md"
+          size={hasWorkspace ? 30 : 28}
+          variant={hasWorkspace ? "light" : "subtle"}
+          color={hasWorkspace ? "blue" : "gray"}
+          className="workspace-tree-item__icon"
+        >
+          <Icon size={15} stroke={1.9} />
+        </ThemeIcon>
+        <span className="workspace-tree-item__copy">
+          <strong>{meta.label || node.label}</strong>
+          <span>{formatNumber(meta.sessions)} 会话 · {formatTokenText(meta.tokens, meta.hasTokenData)}</span>
+        </span>
+        {hasWorkspace ? (
+          <Badge radius="xl" variant="filled" color="blue" className="workspace-tree-item__count">
+            {formatNumber(meta.sessions)}
           </Badge>
-          <IconArrowRight size={15} className="workspace-index-item__arrow" />
-        </>
-      ) : (
-        <IconChevronRight size={15} className="workspace-index-item__branch-arrow" />
-      )}
-    </>
-  );
+        ) : null}
+      </button>
+    );
+  };
 
   return (
-    <div className="workspace-index-tree-node" style={{ "--workspace-depth": node.depth || 0 }}>
-      {isLeaf ? (
-        <button
-          type="button"
-          className="workspace-index-item"
-          aria-label={`定位工作目录 ${node.workspace.cwd}`}
-          onClick={() => onFocusWorkspace?.(node.workspace.cwd)}
-        >
-          {content}
-        </button>
-      ) : (
-        <div className="workspace-index-branch">
-          {content}
-        </div>
-      )}
-      {hasChildren ? (
-        <div className="workspace-index-children">
-          {node.children.map((child) => (
-            <WorkspaceTreeNode key={child.key} node={child} onFocusWorkspace={onFocusWorkspace} />
-          ))}
-        </div>
-      ) : null}
-    </div>
+    <Tree
+      data={data}
+      tree={treeController}
+      renderNode={renderNode}
+      expandOnClick={false}
+      selectOnClick={false}
+      levelOffset="md"
+      className="workspace-tree"
+      classNames={{
+        node: "workspace-tree__node",
+        subtree: "workspace-tree__subtree",
+        label: "workspace-tree__label",
+      }}
+    />
   );
 }
 
@@ -211,6 +310,9 @@ export function SessionWorkspace({
     sourceFile: IconFileText,
     platform: IconLayersIntersect,
   };
+  const workspaceTreeData = useMemo(() => buildWorkspaceTreeData(workspaceTree, workspaceIndex), [workspaceTree, workspaceIndex]);
+  const workspaceTreeKey = workspaceTreeData.map((node) => node.value).join("|") || "empty";
+  const workspaceRootLabel = workspaceTree?.label || "关联会话";
 
   return (
     <div className="session-workspace-layout">
@@ -395,35 +497,16 @@ export function SessionWorkspace({
           <ThemeIcon radius="lg" size={42} variant="gradient" gradient={{ from: "blue", to: "cyan" }}>
             <IconRoute size={21} stroke={1.9} />
           </ThemeIcon>
-          <div>
+          <div className="workspace-index__head-copy">
             <Text className="eyebrow">工作目录</Text>
-            <Title order={5}>{workspaceTree?.label || "关联会话"}</Title>
+            <Title order={5} className="workspace-index__title" title={workspaceRootLabel}>{workspaceRootLabel}</Title>
             <Text className="workspace-index__hint">按公共路径折叠，点击叶子定位分组</Text>
           </div>
         </Group>
 
-        <div className="workspace-index-tree">
-          {(workspaceTree?.children || workspaceIndex || []).map((item) => (
-            item.children
-              ? <WorkspaceTreeNode key={item.key} node={item} onFocusWorkspace={onFocusWorkspace} />
-              : (
-                <WorkspaceTreeNode
-                  key={item.key}
-                  node={{
-                    key: item.key,
-        label: item.cwd,
-        depth: 1,
-        sessions: item.sessions,
-        rawSessions: item.rawSessions,
-        tokens: item.tokens,
-        workspace: item,
-        children: [],
-                  }}
-                  onFocusWorkspace={onFocusWorkspace}
-                />
-              )
-          ))}
-        </div>
+        <ScrollArea.Autosize mah="min(66vh, 620px)" offsetScrollbars className="workspace-index-tree-scroll">
+          <WorkspaceTreeView key={workspaceTreeKey} data={workspaceTreeData} onFocusWorkspace={onFocusWorkspace} />
+        </ScrollArea.Autosize>
       </Paper>
     </div>
   );

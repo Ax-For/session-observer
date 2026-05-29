@@ -293,7 +293,7 @@ describe("StreamWorkspace", () => {
       sourceType: "codex",
       model: "gpt-5.4",
       sessionId: "sess-1",
-      summary: index % 2 === 0 ? `tool=exec_command args={\"index\":${index}}` : `Token usage · Total ${index}`,
+      summary: index % 2 === 0 ? `tool=exec_command args={"index":${index}}` : `Token usage · Total ${index}`,
       extra: `event-${index}`,
     }));
 

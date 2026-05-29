@@ -1,13 +1,14 @@
 #!/usr/bin/env node
+/**
+ * Session Observer — thin entry point.
+ * Wires together config, index manager, routes, and session ops.
+ */
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
-const crypto = require("crypto");
-const zlib = require("zlib");
-const { URL } = require("url");
-const { spawnSync } = require("child_process");
 const ObserverCore = require("./shared/observer-core");
+const config = require("./server/config");
+const indexManager = require("./server/index-manager");
+const routes = require("./server/routes");
+const sessionOps = require("./server/session-ops");
 
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
@@ -26,878 +27,18 @@ const {
   toTimeMs: toTimeMsCore,
 } = ObserverCore;
 
-const HOST = process.env.HOST || "127.0.0.1";
-const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
-const ROOT = __dirname;
-const DIST_ROOT = path.join(ROOT, "dist");
-const DIST_INDEX = path.join(DIST_ROOT, "index.html");
-const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
-const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
-const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
-const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jsonl");
-const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
-const DEFAULT_PAGE_SIZE = 250;
-const MAX_PAGE_SIZE = 1000;
-const EVENT_CONTENT_PREVIEW_LENGTH = 280;
-const EVENT_SEARCH_TEXT_LENGTH = EVENT_CONTENT_PREVIEW_LENGTH;
-const INDEX_REFRESH_DEBOUNCE_MS = 400;
-const INDEX_WARMUP_INTERVAL_MS = 3000;
-const fileEventCache = new Map();
-const stringPool = new Map();
-let aggregateCache = { key: "", events: [] };
-
-// Read Claude Code version at startup
-let claudeVersion = "unknown";
-try {
-  const proc = spawnSync("claude", ["--version"], { encoding: "utf8", timeout: 3000 });
-  if (proc.status === 0 && proc.stdout.trim()) {
-    claudeVersion = proc.stdout.trim();
-  }
-} catch { /* ignore */ }
-
-// Read Codex version at startup
-let codexVersion = "unknown";
-try {
-  const proc = spawnSync("codex", ["--version"], { encoding: "utf8", timeout: 3000 });
-  if (proc.status === 0 && proc.stdout.trim()) {
-    codexVersion = proc.stdout.trim();
-  }
-} catch { /* ignore */ }
-const indexState = {
-  events: [],
-  aggregateKey: "",
-  dirty: true,
-  refreshTimer: null,
-  lastBuiltAt: "",
-  lastError: "",
+const parsers = {
+  parseCodexLineToEvent: parseCodexLineToEventCore,
+  parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
 };
-
-function ensureFrontendBuild() {
-  const packageJsonPath = path.join(ROOT, "package.json");
-  if (!fs.existsSync(packageJsonPath)) return;
-  if (fs.existsSync(DIST_INDEX)) return;
-
-  console.log("[frontend] dist not found, running npm build...");
-  const proc = spawnSync("npm", ["run", "build"], {
-    cwd: ROOT,
-    stdio: "inherit",
-    env: process.env,
-  });
-
-  if (proc.status !== 0 || !fs.existsSync(DIST_INDEX)) {
-    throw new Error("Frontend build failed; dist/index.html is missing.");
-  }
-}
-
-function resolveStaticRoot() {
-  ensureFrontendBuild();
-  if (fs.existsSync(DIST_INDEX)) return DIST_ROOT;
-  return ROOT;
-}
-
-const STATIC_ROOT = resolveStaticRoot();
-
-const MIME = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-};
-
-function sendJson(req, res, status, data) {
-  const body = JSON.stringify(data);
-  const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
-  const shouldGzip = acceptsGzip && Buffer.byteLength(body) > 1024;
-  const payload = shouldGzip ? zlib.gzipSync(body) : Buffer.from(body);
-  res.writeHead(status, {
-    "Content-Type": MIME[".json"],
-    ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
-    "Cache-Control": "no-store",
-    "Content-Length": payload.length,
-  });
-  res.end(payload);
-}
-
-function signatureHash(value) {
-  return crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 12);
-}
-
-function internString(value) {
-  if (typeof value !== "string" || !value) return value;
-  const cached = stringPool.get(value);
-  if (cached) return cached;
-  stringPool.set(value, value);
-  return value;
-}
-
-function internEventStrings(event) {
-  for (const key of [
-    "sessionId",
-    "model",
-    "toolName",
-    "cwd",
-    "sessionTitle",
-    "sourceFile",
-    "sourceType",
-    "callType",
-    "rawType",
-    "rawSubType",
-  ]) {
-    if (typeof event[key] === "string") event[key] = internString(event[key]);
-  }
-  return event;
-}
-
-function eventLocatorId(file, lineNumber, eventIndex) {
-  return crypto
-    .createHash("sha1")
-    .update(`${file}:${lineNumber}:${eventIndex}`)
-    .digest("hex")
-    .slice(0, 16);
-}
-
-function attachEventLocator(event, file, lineNumber, eventIndex) {
-  event.sourceFile = event.sourceFile || file;
-  event.sourceLine = lineNumber;
-  event.lineEventIndex = eventIndex;
-  event.eventId = eventLocatorId(file, lineNumber, eventIndex);
-  return event;
-}
-
-function makeIndexedEvent(event) {
-  const content = String(event.content || "");
-  const contentPreview = content.length > EVENT_CONTENT_PREVIEW_LENGTH
-    ? `${content.slice(0, EVENT_CONTENT_PREVIEW_LENGTH)}…`
-    : content;
-  const searchText = content.length > EVENT_SEARCH_TEXT_LENGTH
-    ? content.slice(0, EVENT_SEARCH_TEXT_LENGTH)
-    : content;
-  const indexed = {
-    ...event,
-    content: contentPreview,
-    contentPreview,
-    contentTruncated: content.length > EVENT_CONTENT_PREVIEW_LENGTH,
-    contentLength: content.length,
-  };
-  if (EVENT_SEARCH_TEXT_LENGTH > EVENT_CONTENT_PREVIEW_LENGTH && searchText !== contentPreview) {
-    indexed.searchText = searchText;
-  }
-  delete indexed.raw;
-  return internEventStrings(indexed);
-}
-
-function publicIndexState(currentAggregateKey) {
-  return {
-    dirty: indexState.dirty,
-    lastBuiltAt: indexState.lastBuiltAt,
-    lastError: indexState.lastError,
-    aggregateHash: signatureHash(indexState.aggregateKey),
-    currentAggregateHash: signatureHash(currentAggregateKey),
-  };
-}
-
-function trimHeapSoon() {
-  if (typeof global.gc !== "function") return;
-  setTimeout(() => {
-    try {
-      global.gc();
-    } catch {
-      // optional memory trimming only
-    }
-  }, 0).unref();
-}
-
-function listJsonlFiles(dir) {
-  const out = [];
-  if (!fs.existsSync(dir)) return out;
-  const stack = [dir];
-  while (stack.length) {
-    const current = stack.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
-    for (const e of entries) {
-      const full = path.join(current, e.name);
-      if (e.isDirectory()) {
-        // Skip subagent directories — their events are already merged into parent sessions
-        if (e.name === "subagents") continue;
-        stack.push(full);
-      } else if (e.isFile() && full.endsWith(".jsonl")) {
-        out.push(full);
-      }
-    }
-  }
-  return out;
-}
-
-function parseRequestFilters(searchParams) {
-  return {
-    mode: searchParams.get("mode") === "raw" ? "raw" : "observe",
-    platform: searchParams.get("platform") || "",
-    model: searchParams.get("model") || "",
-    type: searchParams.get("type") || "",
-    sessionId: searchParams.get("sessionId") || "",
-    quickFilter: searchParams.get("quickFilter") || "all",
-    tokenThreshold: toPositiveIntCore(searchParams.get("tokenThreshold"), 20000),
-    query: (searchParams.get("q") || "").trim().toLowerCase(),
-    startMs: toTimeMsCore(searchParams.get("start") || ""),
-    endMs: toTimeMsCore(searchParams.get("end") || ""),
-    order: searchParams.get("order") === "asc" ? "asc" : "desc",
-    offset: toPositiveIntCore(searchParams.get("offset"), 0),
-    limit: toPositiveIntCore(searchParams.get("limit"), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE),
-    includeSummary: searchParams.get("summary") !== "0",
-  };
-}
-
-function resolveParserForFile(filePath) {
-  if (filePath.includes("/.codex/")) return { parser: parseCodexLineToEventCore, sessionsDir: SESSIONS_DIR };
-  if (filePath.includes("/.claude/")) return { parser: parseClaudeCodeLineToEventCore, sessionsDir: CLAUDE_PROJECTS_DIR };
-  // Default to Codex parser for backwards compatibility
-  return { parser: parseCodexLineToEventCore, sessionsDir: SESSIONS_DIR };
-}
-
-function loadThreadMetadataMap() {
-  const map = new Map();
-  if (!fs.existsSync(STATE_DB)) return map;
-
-  const sql = "select id, coalesce(title, ''), coalesce(cwd, ''), coalesce(updated_at_ms, updated_at * 1000, 0) from threads;";
-  const proc = spawnSync("sqlite3", ["-separator", "\t", STATE_DB, sql], { encoding: "utf8" });
-  if (proc.status !== 0 || !proc.stdout) {
-    if (proc.error?.code === "ENOENT") {
-      console.warn("[sqlite3] Command not found — Codex session titles will be empty. Install sqlite3 to fix.");
-    }
-    return map;
-  }
-
-  const lines = proc.stdout.split(/\r?\n/).filter(Boolean);
-  for (const line of lines) {
-    const [id, title, cwd, updatedAtMs] = line.split("\t");
-    if (!id) continue;
-    map.set(id, {
-      title: title || "",
-      cwd: cwd || "",
-      updatedAtMs: Number.isFinite(Number(updatedAtMs)) ? Number(updatedAtMs) : 0,
-    });
-  }
-  return map;
-}
-
-function loadClaudeCodeSessionMeta() {
-  const map = new Map();
-  if (!fs.existsSync(CLAUDE_SESSIONS_DIR)) return map;
-
-  const sessionFiles = fs.readdirSync(CLAUDE_SESSIONS_DIR).filter((f) => f.endsWith(".json"));
-  for (const file of sessionFiles) {
-    try {
-      const fullPath = path.join(CLAUDE_SESSIONS_DIR, file);
-      const data = JSON.parse(fs.readFileSync(fullPath, "utf8"));
-      const stat = fs.statSync(fullPath);
-      if (data.sessionId) {
-        map.set(data.sessionId, {
-          title: data.name || "",
-          cwd: data.cwd || "",
-          updatedAtMs: Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0,
-          explicitTitle: typeof data.name === "string" && Boolean(data.name.trim()),
-        });
-      }
-    } catch {
-      // skip invalid files
-    }
-  }
-  return map;
-}
-
-function loadCodexSessionIndexMeta() {
-  const map = new Map();
-  if (!fs.existsSync(CODEX_SESSION_INDEX)) return map;
-  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      const id = typeof obj.id === "string" ? obj.id.trim() : "";
-      const title = typeof obj.thread_name === "string" ? obj.thread_name.trim() : "";
-      if (!id || !title) continue;
-      const updatedAtMs = Date.parse(obj.updated_at || "");
-      map.set(id, mergeSessionMetaRecordsCore(map.get(id), {
-        title,
-        cwd: "",
-        updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
-      }));
-    } catch {
-      // skip invalid lines
-    }
-  }
-  return map;
-}
-
-function loadCodexSessionMeta() {
-  const merged = loadThreadMetadataMap();
-  const indexed = loadCodexSessionIndexMeta();
-  for (const [id, meta] of indexed) {
-    merged.set(id, mergeSessionMetaRecordsCore(merged.get(id), meta));
-  }
-  return merged;
-}
-
-function getPathSignature(target) {
-  if (!fs.existsSync(target)) return "missing";
-  const stat = fs.statSync(target);
-  return `${stat.size}:${stat.mtimeMs}`;
-}
-
-function getStateSignature() {
-  return getPathSignature(STATE_DB);
-}
-
-function computeAggregateSignature() {
-  const codexFiles = listJsonlFiles(SESSIONS_DIR);
-  const claudeFiles = listJsonlFiles(CLAUDE_PROJECTS_DIR);
-  const files = [...codexFiles, ...claudeFiles];
-  const stateSignature = getStateSignature();
-  const codexIndexSignature = getPathSignature(CODEX_SESSION_INDEX);
-  const parts = files.map((file) => {
-    const stat = fs.statSync(file);
-    return `${file}:${stat.size}:${stat.mtimeMs}`;
-  });
-  return {
-    files,
-    stateSignature,
-    aggregateKey: `${stateSignature}|${codexIndexSignature}|${parts.join("|")}`,
-  };
-}
-
-function parseFileEvents(file, stateSignature, threadMeta) {
-  const stat = fs.statSync(file);
-  const { parser, sessionsDir: srcDir } = resolveParserForFile(file);
-  const cached = fileEventCache.get(file);
-  const canAppendIncrementally =
-    cached &&
-    cached.stateSignature === stateSignature &&
-    stat.size >= cached.size &&
-    cached.context;
-
-  if (cached && cached.stateSignature === stateSignature && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-    return cached.events;
-  }
-
-  const context = canAppendIncrementally
-    ? { ...cached.context, sourceFile: file }
-    : { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
-  const parsed = canAppendIncrementally ? cached.events.slice() : [];
-  let tailBuffer = canAppendIncrementally ? cached.tailBuffer || "" : "";
-  let lineNumber = canAppendIncrementally ? Number(cached.lineCount) || 0 : 0;
-  let text = "";
-
-  if (canAppendIncrementally && stat.size > cached.size) {
-    const fd = fs.openSync(file, "r");
-    try {
-      const length = stat.size - cached.size;
-      const buf = Buffer.alloc(length);
-      fs.readSync(fd, buf, 0, length, cached.size);
-      text = buf.toString("utf8");
-    } finally {
-      fs.closeSync(fd);
-    }
-  } else if (!canAppendIncrementally) {
-    text = fs.readFileSync(file, "utf8");
-  }
-
-  const chunk = `${tailBuffer}${text}`;
-  const lines = chunk.split(/\r?\n/);
-  tailBuffer = lines.pop() || "";
-
-  const pushLine = (line) => {
-    if (!line) return;
-    lineNumber += 1;
-    try {
-      const obj = JSON.parse(line);
-      const evtOrArray = parser(obj, context);
-      const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-      events.forEach((evt, eventIndex) => {
-        const meta = threadMeta.get(evt.sessionId);
-        if (meta) {
-          const titleStrategy =
-            parser === parseCodexLineToEventCore || meta.explicitTitle
-              ? "always"
-              : "missing-only";
-          applyEventSessionMetaCore(evt, meta, { titleStrategy });
-        }
-        parsed.push(makeIndexedEvent(attachEventLocator(evt, file, lineNumber, eventIndex)));
-      });
-    } catch {
-      // skip invalid lines
-    }
-  };
-
-  for (const line of lines) pushLine(line);
-  if (tailBuffer && stat.size > 0) {
-    const lastChar = text ? text[text.length - 1] : "";
-    const fileEndedWithNewline = lastChar === "\n";
-    if (fileEndedWithNewline) {
-      pushLine(tailBuffer);
-      tailBuffer = "";
-    }
-  }
-
-  fileEventCache.set(file, {
-    stateSignature,
-    size: stat.size,
-    mtimeMs: stat.mtimeMs,
-    tailBuffer,
-    lineCount: lineNumber,
-    context: { ...context },
-    events: parsed,
-  });
-  return parsed;
-}
-
-function parseFullFileEvents(file, threadMeta, options = {}) {
-  if (!fs.existsSync(file)) return [];
-  const { parser } = resolveParserForFile(file);
-  const context = { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
-  const events = [];
-  const targetLine = Number(options.targetLine) || 0;
-  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (!line) continue;
-    const lineNumber = index + 1;
-    try {
-      const obj = JSON.parse(line);
-      const evtOrArray = parser(obj, context);
-      const parsedEvents = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-      if (targetLine && lineNumber !== targetLine) {
-        if (lineNumber >= targetLine) break;
-        continue;
-      }
-      parsedEvents.forEach((evt, eventIndex) => {
-        const meta = threadMeta.get(evt.sessionId);
-        if (meta) {
-          const titleStrategy =
-            parser === parseCodexLineToEventCore || meta.explicitTitle
-              ? "always"
-              : "missing-only";
-          applyEventSessionMetaCore(evt, meta, { titleStrategy });
-        }
-        events.push(attachEventLocator(evt, file, lineNumber, eventIndex));
-      });
-    } catch {
-      // skip invalid lines
-    }
-    if (targetLine && lineNumber >= targetLine) break;
-  }
-
-  return events;
-}
-
-function readJsonlLine(file, targetLine) {
-  if (!fs.existsSync(file) || !(targetLine > 0)) return "";
-  const fd = fs.openSync(file, "r");
-  const buffer = Buffer.alloc(64 * 1024);
-  const parts = [];
-  let currentLine = 1;
-  let collecting = currentLine === targetLine;
-
-  try {
-    while (true) {
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (bytesRead <= 0) break;
-
-      let segmentStart = 0;
-      for (let index = 0; index < bytesRead; index += 1) {
-        if (buffer[index] !== 10) continue;
-
-        if (collecting) {
-          parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
-          return Buffer.concat(parts).toString("utf8").replace(/\r$/, "");
-        }
-
-        currentLine += 1;
-        segmentStart = index + 1;
-        collecting = currentLine === targetLine;
-      }
-
-      if (collecting && segmentStart < bytesRead) {
-        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
-      }
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  return collecting && parts.length ? Buffer.concat(parts).toString("utf8").replace(/\r$/, "") : "";
-}
-
-function forEachJsonlLine(file, onLine) {
-  if (!fs.existsSync(file)) return;
-  const fd = fs.openSync(file, "r");
-  const buffer = Buffer.alloc(64 * 1024);
-  let parts = [];
-  let lineNumber = 1;
-
-  try {
-    while (true) {
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (bytesRead <= 0) break;
-
-      let segmentStart = 0;
-      for (let index = 0; index < bytesRead; index += 1) {
-        if (buffer[index] !== 10) continue;
-
-        parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
-        const keepGoing = onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
-        parts = [];
-        lineNumber += 1;
-        segmentStart = index + 1;
-        if (keepGoing === false) return;
-      }
-
-      if (segmentStart < bytesRead) {
-        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
-      }
-    }
-
-    if (parts.length) {
-      onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function parseEventLineFromIndex(indexedEvent, threadMeta) {
-  const line = readJsonlLine(indexedEvent.sourceFile, Number(indexedEvent.sourceLine));
-  if (!line) return [];
-  const { parser } = resolveParserForFile(indexedEvent.sourceFile);
-  const context = {
-    model: indexedEvent.model || "unknown",
-    sessionId: indexedEvent.sessionId || "unknown",
-    sourceFile: indexedEvent.sourceFile,
-    cwd: indexedEvent.cwd || "",
-    sessionTitle: indexedEvent.sessionTitle || "",
-  };
-
-  try {
-    const obj = JSON.parse(line);
-    const evtOrArray = parser(obj, context);
-    const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-    return events.map((evt, eventIndex) => {
-      const meta = threadMeta.get(evt.sessionId);
-      if (meta) {
-        const titleStrategy =
-          parser === parseCodexLineToEventCore || meta.explicitTitle
-            ? "always"
-            : "missing-only";
-        applyEventSessionMetaCore(evt, meta, { titleStrategy });
-      }
-      return attachEventLocator(evt, indexedEvent.sourceFile, Number(indexedEvent.sourceLine), eventIndex);
-    });
-  } catch {
-    return [];
-  }
-}
-
-function loadMergedThreadMetadata() {
-  const threadMeta = loadCodexSessionMeta();
-  const claudeMeta = loadClaudeCodeSessionMeta();
-  for (const [id, meta] of claudeMeta) {
-    threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
-  }
-  return threadMeta;
-}
-
-function computeAggregate() {
-  const threadMeta = loadMergedThreadMetadata();
-  const { files, stateSignature, aggregateKey } = computeAggregateSignature();
-  const liveFiles = new Set(files);
-  for (const cachedFile of fileEventCache.keys()) {
-    if (!liveFiles.has(cachedFile)) fileEventCache.delete(cachedFile);
-  }
-  if (aggregateCache.key === aggregateKey) {
-    return { aggregateKey, events: aggregateCache.events };
-  }
-
-  const all = [];
-  for (const file of files) {
-    all.push(...parseFileEvents(file, stateSignature, threadMeta));
-  }
-  all.sort((a, b) => (a.time < b.time ? -1 : 1));
-  const deduped = dedupeEventsCore(all);
-  aggregateCache = { key: aggregateKey, events: deduped };
-  return { aggregateKey, events: deduped };
-}
-
-function scheduleIndexRefresh(reason = "unknown") {
-  indexState.dirty = true;
-  if (indexState.refreshTimer) clearTimeout(indexState.refreshTimer);
-  indexState.refreshTimer = setTimeout(() => {
-    indexState.refreshTimer = null;
-    try {
-      refreshIndex(reason);
-    } catch {
-      // leave dirty state to retry on next request/tick
-    }
-  }, INDEX_REFRESH_DEBOUNCE_MS);
-}
-
-function refreshIndex(reason = "manual") {
-  try {
-    const built = computeAggregate();
-    indexState.events = built.events;
-    indexState.aggregateKey = built.aggregateKey;
-    indexState.lastBuiltAt = new Date().toISOString();
-    indexState.lastError = "";
-    indexState.dirty = false;
-    trimHeapSoon();
-    return indexState.events;
-  } catch (err) {
-    indexState.lastError = String(err);
-    throw err;
-  }
-}
-
-function ensureIndexReady() {
-  const { aggregateKey } = computeAggregateSignature();
-  if (!indexState.events.length || indexState.dirty || indexState.aggregateKey !== aggregateKey) {
-    refreshIndex(indexState.events.length ? "dirty-read" : "cold-start");
-  }
-  return { events: indexState.events, currentAggregateKey: aggregateKey };
-}
-
-function sourceFilesForSession(events, sessionId) {
-  return [...new Set(
-    (events || [])
-      .filter((event) => event.sessionId === sessionId && event.sourceFile)
-      .map((event) => event.sourceFile),
-  )];
-}
-
-function canStreamSessionPage(filters) {
-  return filters.order === "asc" && !filters.query;
-}
-
-function querySessionEventsStreamed(filters, ready, files, threadMeta) {
-  const indexedVisible = (ready.events || []).filter((event) => (
-    event.sessionId === filters.sessionId && eventMatchesModeCore(event, filters.mode)
-  ));
-  const totalVisible = indexedVisible.length;
-  const totalMatching = indexedVisible.filter((event) => eventMatchesFiltersCore(event, filters)).length;
-  const paged = [];
-  let matchedSeen = 0;
-  let done = false;
-
-  for (const file of files) {
-    if (done) break;
-    const { parser } = resolveParserForFile(file);
-    const context = { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
-
-    forEachJsonlLine(file, (line, lineNumber) => {
-      if (done) return false;
-      if (!line) return;
-      try {
-        const obj = JSON.parse(line);
-        const evtOrArray = parser(obj, context);
-        const parsedEvents = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
-        parsedEvents.forEach((evt, eventIndex) => {
-          const meta = threadMeta.get(evt.sessionId);
-          if (meta) {
-            const titleStrategy =
-              parser === parseCodexLineToEventCore || meta.explicitTitle
-                ? "always"
-                : "missing-only";
-            applyEventSessionMetaCore(evt, meta, { titleStrategy });
-          }
-          attachEventLocator(evt, file, lineNumber, eventIndex);
-          if (evt.sessionId !== filters.sessionId) return;
-          if (!eventMatchesModeCore(evt, filters.mode)) return;
-          if (!eventMatchesFiltersCore(evt, filters)) return;
-          matchedSeen += 1;
-          if (matchedSeen <= filters.offset || paged.length >= filters.limit) return;
-          paged.push(evt);
-          done = paged.length >= filters.limit;
-        });
-      } catch {
-        // skip invalid lines
-      }
-      if (done) return false;
-    });
-  }
-
-  return {
-    generatedAt: new Date().toISOString(),
-    sessionsDir: SESSIONS_DIR,
-    mode: filters.mode,
-    claudeVersion,
-    codexVersion,
-    index: {
-      ...publicIndexState(ready.currentAggregateKey),
-    },
-    totalVisible,
-    totalMatching,
-    sessions: [],
-    tokenWindows: null,
-    meta: { models: [], types: [], platforms: [] },
-    page: {
-      offset: filters.offset,
-      limit: filters.limit,
-      hasMore: filters.offset + paged.length < totalMatching,
-    },
-    events: paged,
-  };
-}
-
-function querySessionEventsDirect(filters, ready) {
-  const files = sourceFilesForSession(ready.events, filters.sessionId);
-  const threadMeta = loadMergedThreadMetadata();
-  if (canStreamSessionPage(filters)) {
-    return querySessionEventsStreamed(filters, ready, files, threadMeta);
-  }
-
-  const allEvents = [];
-
-  for (const file of files) {
-    allEvents.push(...parseFullFileEvents(file, threadMeta).filter((event) => event.sessionId === filters.sessionId));
-  }
-
-  const visibleEvents = allEvents.filter((event) => eventMatchesModeCore(event, filters.mode));
-  const matched = visibleEvents.filter((event) => eventMatchesFiltersCore(event, filters));
-  matched.sort((a, b) => {
-    const am = toTimeMsCore(a.time) ?? 0;
-    const bm = toTimeMsCore(b.time) ?? 0;
-    return filters.order === "asc" ? am - bm : bm - am;
-  });
-  const paged = matched.slice(filters.offset, filters.offset + filters.limit);
-
-  return {
-    generatedAt: new Date().toISOString(),
-    sessionsDir: SESSIONS_DIR,
-    mode: filters.mode,
-    claudeVersion,
-    codexVersion,
-    index: {
-      ...publicIndexState(ready.currentAggregateKey),
-    },
-    totalVisible: visibleEvents.length,
-    totalMatching: matched.length,
-    sessions: [],
-    tokenWindows: null,
-    meta: { models: [], types: [], platforms: [] },
-    page: {
-      offset: filters.offset,
-      limit: filters.limit,
-      hasMore: filters.offset + paged.length < matched.length,
-    },
-    events: paged,
-  };
-}
-
-function getEventDetail(eventId) {
-  const ready = ensureIndexReady();
-  const indexedEvent = ready.events.find((event) => event.eventId === eventId);
-  if (!indexedEvent?.sourceFile || !indexedEvent?.sourceLine) return null;
-
-  const threadMeta = loadMergedThreadMetadata();
-  const events = parseEventLineFromIndex(indexedEvent, threadMeta);
-  return events.find((event) => event.eventId === eventId) || null;
-}
-
-function watchPath(target, listener) {
-  if (!fs.existsSync(target)) return null;
-  try {
-    return fs.watch(target, { recursive: true }, listener);
-  } catch {
-    try {
-      return fs.watch(target, listener);
-    } catch {
-      return null;
-    }
-  }
-}
-
-function startIndexWatchers() {
-  const sessionWatcher = watchPath(SESSIONS_DIR, () => scheduleIndexRefresh("sessions-watch"));
-  const stateWatcher = watchPath(STATE_DB, () => scheduleIndexRefresh("state-watch"));
-  const claudeWatcher = watchPath(CLAUDE_PROJECTS_DIR, () => scheduleIndexRefresh("claude-watch"));
-  if (!sessionWatcher) {
-    console.warn(`Session watcher unavailable for ${SESSIONS_DIR}, fallback warmup tick enabled.`);
-  }
-  if (!stateWatcher && fs.existsSync(STATE_DB)) {
-    console.warn(`State DB watcher unavailable for ${STATE_DB}, fallback warmup tick enabled.`);
-  }
-  if (!claudeWatcher) {
-    console.warn(`Claude Code watcher unavailable for ${CLAUDE_PROJECTS_DIR}, fallback warmup tick enabled.`);
-  }
-  setInterval(() => {
-    if (indexState.dirty) {
-      try {
-        refreshIndex("warmup-tick");
-      } catch {
-        // keep retrying lazily
-      }
-    }
-  }, INDEX_WARMUP_INTERVAL_MS).unref();
-}
-
-function queryEvents(filters) {
-  const ready = ensureIndexReady();
-  if (!filters.includeSummary && filters.sessionId) {
-    return querySessionEventsDirect(filters, ready);
-  }
-
-  const allEvents = ready.events;
-  const visibleEvents = allEvents.filter((event) => eventMatchesModeCore(event, filters.mode));
-  const matched = visibleEvents.filter((event) => eventMatchesFiltersCore(event, filters));
-  const aggregateMatchedSessions = filters.includeSummary
-    ? visibleEvents.filter((event) => eventMatchesFiltersCore(event, {
-      ...filters,
-      query: "",
-      type: "",
-      quickFilter: "all",
-      sessionId: "",
-    }))
-    : [];
-  matched.sort((a, b) => {
-    const am = toTimeMsCore(a.time) ?? 0;
-    const bm = toTimeMsCore(b.time) ?? 0;
-    return filters.order === "asc" ? am - bm : bm - am;
-  });
-  const paged = matched.slice(filters.offset, filters.offset + filters.limit);
-  return {
-    generatedAt: new Date().toISOString(),
-    sessionsDir: SESSIONS_DIR,
-    mode: filters.mode,
-    claudeVersion,
-    codexVersion,
-    index: {
-      ...publicIndexState(ready.currentAggregateKey),
-    },
-    totalVisible: visibleEvents.length,
-    totalMatching: matched.length,
-    sessions: filters.includeSummary
-      ? mergeSessionTokenAggregates(
-        buildSessionGroupsCore(matched),
-        buildSessionGroupsCore(aggregateMatchedSessions),
-      )
-      : [],
-    tokenWindows: filters.includeSummary ? buildTokenUsageWindowsCore(matched) : null,
-    meta: filters.includeSummary ? collectMetaCore(visibleEvents) : { models: [], types: [], platforms: [] },
-    page: {
-      offset: filters.offset,
-      limit: filters.limit,
-      hasMore: filters.offset + paged.length < matched.length,
-    },
-    events: paged,
-  };
-}
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
   const aggregateBySessionId = new Map(
     (aggregateSessions || []).map((session) => [session.sessionId, session]),
   );
-
   return (sessions || []).map((session) => {
     const aggregate = aggregateBySessionId.get(session.sessionId);
     if (!aggregate) return session;
-
     return {
       ...session,
       sessionTitle: session.sessionTitle || aggregate.sessionTitle,
@@ -915,481 +56,144 @@ function mergeUniqueValues(left, right) {
   return [...new Set([...(left || []), ...(right || [])])].filter(Boolean).sort();
 }
 
-function serveStatic(reqPath, res) {
-  let filePath = reqPath === "/" ? "/index.html" : reqPath;
-  filePath = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
-  const abs = path.join(STATIC_ROOT, filePath);
-  if (!abs.startsWith(STATIC_ROOT)) {
-    res.writeHead(403);
-    return res.end("Forbidden");
-  }
-  if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
-    res.writeHead(404);
-    return res.end("Not Found");
-  }
-  const ext = path.extname(abs);
-  res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-  fs.createReadStream(abs).pipe(res);
-}
+// Initialize routes with injected dependencies
+routes.init({
+  indexManager,
+  parsers,
+  applyEventSessionMetaCore,
+  dedupeEventsCore,
+  mergeSessionMetaRecordsCore,
+  eventMatchesModeCore,
+  eventMatchesFiltersCore,
+  buildSessionGroupsCore,
+  mergeSessionTokenAggregates,
+  buildTokenUsageWindowsCore,
+  collectMetaCore,
+  toPositiveIntCore,
+  toTimeMsCore,
+  buildObservabilitySummaryCore,
+  applySessionTitleOverridesCore,
+});
 
-function loadClaudeSessionIndex() {
-  const claudeSessionsDir = path.join(os.homedir(), ".claude", "sessions");
-  const map = new Map();
-  if (!fs.existsSync(claudeSessionsDir)) return map;
-  const files = fs.readdirSync(claudeSessionsDir).filter((file) => file.endsWith(".json"));
-  for (const file of files) {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(claudeSessionsDir, file), "utf8"));
-      if (data.sessionId && typeof data.name === "string" && data.name.trim()) {
-        map.set(data.sessionId, data.name.trim());
-      }
-    } catch {
-      // skip
-    }
-  }
-  return map;
-}
+// Bound index functions for use in session ops and watchers
+const boundRefreshIndex = (reason) => indexManager.refreshIndex(
+  reason, parsers, applyEventSessionMetaCore, dedupeEventsCore, mergeSessionMetaRecordsCore
+);
+const boundScheduleIndexRefresh = (reason) => indexManager.scheduleIndexRefresh(reason, boundRefreshIndex);
 
-function querySessions() {
-  const ready = ensureIndexReady();
-  const groups = buildSessionGroupsCore(ready.events);
-
-  applySessionTitleOverridesCore(groups, loadClaudeSessionIndex(), "claude");
-
-  // Group by cwd
-  const cwdGroups = new Map();
-  for (const g of groups) {
-    const cwd = g.cwd || "unknown";
-    if (!cwdGroups.has(cwd)) cwdGroups.set(cwd, []);
-    cwdGroups.get(cwd).push(g);
-  }
-
-  return {
-    generatedAt: new Date().toISOString(),
-    total: groups.length,
-    groups: Object.fromEntries(cwdGroups),
-  };
-}
-
-function directoryStatus(target) {
-  try {
-    if (!fs.existsSync(target)) {
-      return { path: target, exists: false, files: 0, bytes: 0, updatedAt: "" };
-    }
-    const files = listJsonlFiles(target);
-    let bytes = 0;
-    let updatedAtMs = 0;
-    for (const file of files) {
-      try {
-        const stat = fs.statSync(file);
-        bytes += stat.size;
-        if (stat.mtimeMs > updatedAtMs) updatedAtMs = stat.mtimeMs;
-      } catch {
-        // ignore files that disappear during a refresh
-      }
-    }
-    return {
-      path: target,
-      exists: true,
-      files: files.length,
-      bytes,
-      updatedAt: updatedAtMs ? new Date(updatedAtMs).toISOString() : "",
-    };
-  } catch (err) {
-    return { path: target, exists: false, files: 0, bytes: 0, updatedAt: "", error: String(err) };
-  }
-}
-
-function queryObservability() {
-  const ready = ensureIndexReady();
-  const visibleEvents = ready.events.filter((event) => eventMatchesModeCore(event, "observe"));
-  const summary = buildObservabilitySummaryCore(visibleEvents);
-
-  return {
-    generatedAt: new Date().toISOString(),
-    mode: "observe",
-    index: {
-      ...publicIndexState(ready.currentAggregateKey),
-    },
-    runtime: {
-      versions: {
-        codex: codexVersion,
-        claude: claudeVersion,
-      },
-      memory: process.memoryUsage(),
-      uptimeSeconds: Math.round(process.uptime()),
-    },
-    sources: {
-      codex: directoryStatus(SESSIONS_DIR),
-      claude: directoryStatus(CLAUDE_PROJECTS_DIR),
-    },
-    summary,
-  };
-}
-
-function findClaudeSessionFile(sessionId) {
-  const claudeSessionsDir = path.join(os.homedir(), ".claude", "sessions");
-  if (!fs.existsSync(claudeSessionsDir)) return null;
-  const files = fs.readdirSync(claudeSessionsDir).filter((f) => f.endsWith(".json"));
-  for (const file of files) {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(claudeSessionsDir, file), "utf8"));
-      if (data.sessionId === sessionId) return path.join(claudeSessionsDir, file);
-    } catch {
-      // skip
-    }
-  }
-  return null;
-}
-
-function findClaudeTranscriptFiles(sessionId) {
-  // Find JSONL files in ~/.claude/projects/**/ that match the sessionId
-  const files = [];
-  if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) return files;
-  const projects = fs.readdirSync(CLAUDE_PROJECTS_DIR);
-  for (const project of projects) {
-    const projectDir = path.join(CLAUDE_PROJECTS_DIR, project);
-    if (!fs.statSync(projectDir).isDirectory()) continue;
-    try {
-      const entries = fs.readdirSync(projectDir, { withFileTypes: true });
-      for (const e of entries) {
-        if (e.isFile() && e.name.startsWith(sessionId) && e.name.endsWith(".jsonl")) {
-          files.push(path.join(projectDir, e.name));
-        } else if (e.isDirectory()) {
-          // Check subagent directories
-          try {
-            const subEntries = fs.readdirSync(path.join(projectDir, e.name), { withFileTypes: true });
-            for (const se of subEntries) {
-              if (se.isFile() && se.name.endsWith(".jsonl")) {
-                files.push(path.join(projectDir, e.name, se.name));
-              }
-            }
-          } catch {
-            // skip
-          }
-        }
-      }
-    } catch {
-      // skip
-    }
-  }
-  return files;
-}
-
-function findCodexSessionFiles(sessionId) {
-  const codexSessionsDir = path.join(os.homedir(), ".codex", "sessions");
-  if (!fs.existsSync(codexSessionsDir)) return [];
-  const files = [];
-  // Recursively search for JSONL files matching the sessionId
-  const searchDir = (dir) => {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        searchDir(fullPath);
-      } else if (entry.isFile() && entry.name.includes(sessionId) && entry.name.endsWith(".jsonl")) {
-        files.push(fullPath);
-      }
-    }
-  };
-  searchDir(codexSessionsDir);
-  return files;
-}
-
-function updateCodexSessionIndex(sessionId, newName) {
-  if (!fs.existsSync(CODEX_SESSION_INDEX)) {
-    // Create new index file with the session entry
-    const entry = JSON.stringify({
-      id: sessionId,
-      thread_name: newName,
-      updated_at: new Date().toISOString(),
-    });
-    fs.writeFileSync(CODEX_SESSION_INDEX, entry + "\n", "utf8");
-    return true;
-  }
-  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
-  const updated = [];
-  let found = false;
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      if (obj.id === sessionId) {
-        obj.thread_name = newName;
-        obj.updated_at = new Date().toISOString();
-        found = true;
-      }
-      updated.push(JSON.stringify(obj));
-    } catch {
-      updated.push(line);
-    }
-  }
-  // If not found, append a new entry
-  if (!found) {
-    updated.push(JSON.stringify({
-      id: sessionId,
-      thread_name: newName,
-      updated_at: new Date().toISOString(),
-    }));
-  }
-  fs.writeFileSync(CODEX_SESSION_INDEX, updated.join("\n") + "\n", "utf8");
-  return true;
-}
-
-function escapeSqliteString(value) {
-  return `'${String(value || "").replace(/'/g, "''")}'`;
-}
-
-function updateCodexThreadTitle(sessionId, newName) {
-  if (!fs.existsSync(STATE_DB)) return false;
-  const nowMs = Date.now();
-  const nowSec = Math.floor(nowMs / 1000);
-  const sql = [
-    `update threads set title = ${escapeSqliteString(newName)}, updated_at = ${nowSec}, updated_at_ms = ${nowMs}`,
-    `where id = ${escapeSqliteString(sessionId)};`,
-    "select changes();",
-  ].join(" ");
-  const proc = spawnSync("sqlite3", [STATE_DB, sql], { encoding: "utf8" });
-  if (proc.status !== 0) return false;
-  const changes = Number.parseInt((proc.stdout || "").trim().split(/\r?\n/).pop() || "0", 10);
-  return Number.isFinite(changes) && changes > 0;
-}
-
-function removeCodexSessionFromIndex(sessionId) {
-  if (!fs.existsSync(CODEX_SESSION_INDEX)) return;
-  const lines = fs.readFileSync(CODEX_SESSION_INDEX, "utf8").split("\n").filter((l) => l.trim());
-  const updated = lines.filter((line) => {
-    try {
-      const obj = JSON.parse(line);
-      return obj.id !== sessionId;
-    } catch {
-      return true;
-    }
-  });
-  fs.writeFileSync(CODEX_SESSION_INDEX, updated.join("\n") + (updated.length > 0 ? "\n" : ""), "utf8");
-}
-
-function deleteClaudeSessionFiles(sessionId) {
-  const home = os.homedir();
-  const dirs = [
-    { dir: path.join(home, ".claude", "session-env", sessionId), recursive: true },
-    { dir: path.join(home, ".claude", "tasks", sessionId), recursive: true },
-    { dir: path.join(home, ".claude", "file-history", sessionId), recursive: true },
-    { dir: path.join(home, ".claude", "debug", `${sessionId}.txt`), recursive: false },
-    { dir: path.join(home, ".claude", "shell-snapshots", `${sessionId}.sh`), recursive: false },
-  ];
-
-  // Find and delete transcript files
-  if (fs.existsSync(CLAUDE_PROJECTS_DIR)) {
-    const projects = fs.readdirSync(CLAUDE_PROJECTS_DIR);
-    for (const project of projects) {
-      const projectDir = path.join(CLAUDE_PROJECTS_DIR, project);
-      if (!fs.statSync(projectDir).isDirectory()) continue;
-      try {
-        const entries = fs.readdirSync(projectDir, { withFileTypes: true });
-        for (const e of entries) {
-          if (e.isFile() && e.name.startsWith(sessionId) && e.name.endsWith(".jsonl")) {
-            fs.unlinkSync(path.join(projectDir, e.name));
-          }
-        }
-      } catch {
-        // skip
-      }
-    }
-  }
-
-  for (const { dir, recursive } of dirs) {
-    try {
-      if (recursive) {
-        if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-      } else {
-        if (fs.existsSync(dir)) fs.unlinkSync(dir);
-      }
-    } catch {
-      // skip
-    }
-  }
-}
-
+// Create HTTP server
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://${req.headers.host}`);
 
-  if (u.pathname === "/api/events/detail" && req.method === "GET") {
-    try {
+  try {
+    if (u.pathname === "/api/events/detail" && req.method === "GET") {
       const eventId = u.searchParams.get("eventId") || "";
       if (!eventId) return sendJson(req, res, 400, { error: "eventId required" });
-      const event = getEventDetail(eventId);
+      const event = routes.getEventDetail(eventId);
       if (!event) return sendJson(req, res, 404, { error: "Event not found" });
       sendJson(req, res, 200, { event });
-      trimHeapSoon();
+      indexManager.trimHeapSoon();
       return;
-    } catch (err) {
-      return sendJson(req, res, 500, { error: String(err) });
     }
-  }
 
-  if (u.pathname === "/api/events") {
-    try {
-      const filters = parseRequestFilters(u.searchParams);
-      sendJson(req, res, 200, queryEvents(filters));
-      trimHeapSoon();
+    if (u.pathname === "/api/events") {
+      const filters = routes.parseRequestFilters(u.searchParams);
+      sendJson(req, res, 200, routes.queryEvents(filters));
+      indexManager.trimHeapSoon();
       return;
-    } catch (err) {
-      return sendJson(req, res, 500, { error: String(err), index: publicIndexState("") });
     }
-  }
 
-  if (u.pathname === "/api/sessions" && req.method === "GET") {
-    try {
-      return sendJson(req, res, 200, querySessions());
-    } catch (err) {
-      return sendJson(req, res, 500, { error: String(err) });
+    if (u.pathname === "/api/sessions" && req.method === "GET") {
+      return sendJson(req, res, 200, routes.querySessions());
     }
-  }
 
-  if (u.pathname === "/api/observability" && req.method === "GET") {
-    try {
-      sendJson(req, res, 200, queryObservability());
-      trimHeapSoon();
+    if (u.pathname === "/api/observability" && req.method === "GET") {
+      sendJson(req, res, 200, routes.queryObservability());
+      indexManager.trimHeapSoon();
       return;
-    } catch (err) {
-      return sendJson(req, res, 500, { error: String(err), index: publicIndexState("") });
     }
-  }
 
-  if (u.pathname === "/api/sessions/rename" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-    });
-    req.on("end", () => {
-      try {
-        const { sessionId, newName } = JSON.parse(body);
-        if (!sessionId || !newName) return sendJson(req, res, 400, { error: "sessionId and newName required" });
-
-        // Try Claude Code first
-        const claudeFile = findClaudeSessionFile(sessionId);
-        if (claudeFile) {
-          const data = JSON.parse(fs.readFileSync(claudeFile, "utf8"));
-          data.name = newName;
-          fs.writeFileSync(claudeFile, JSON.stringify(data), "utf8");
-          scheduleIndexRefresh("session-renamed");
-          return sendJson(req, res, 200, { success: true, sessionId, name: newName, platform: "claude" });
+    if (u.pathname === "/api/sessions/rename" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { sessionId, newName } = JSON.parse(body);
+          if (!sessionId || !newName) return sendJson(req, res, 400, { error: "sessionId and newName required" });
+          const result = sessionOps.renameSession(sessionId, newName, boundScheduleIndexRefresh);
+          if (!result.success) return sendJson(req, res, 404, { error: result.error });
+          sendJson(req, res, 200, result);
+        } catch (err) {
+          return sendJson(req, res, 500, { error: String(err) });
         }
+      });
+      return;
+    }
 
-        // Try Codex
-        const codexDbUpdated = updateCodexThreadTitle(sessionId, newName);
-        const codexIndexUpdated = updateCodexSessionIndex(sessionId, newName);
-        if (codexDbUpdated || codexIndexUpdated) {
-          scheduleIndexRefresh("session-renamed");
-          return sendJson(req, res, 200, { success: true, sessionId, name: newName, platform: "codex" });
-        }
-
-        return sendJson(req, res, 404, { error: "Session not found" });
-      } catch (err) {
-        return sendJson(req, res, 500, { error: String(err) });
-      }
-    });
-    return;
-  }
-
-  // Batch delete sessions
-  if (u.pathname === "/api/sessions/batch-delete" && req.method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-    });
-    req.on("end", () => {
-      try {
-        const { sessionIds } = JSON.parse(body);
-        if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
-          return sendJson(req, res, 400, { error: "sessionIds array required" });
-        }
-
-        const results = [];
-        for (const sessionId of sessionIds) {
-          try {
-            // Try Claude Code deletion
-            const claudeFile = findClaudeSessionFile(sessionId);
-            const claudeTranscripts = findClaudeTranscriptFiles(sessionId);
-
-            if (claudeFile || claudeTranscripts.length > 0) {
-              if (claudeFile && fs.existsSync(claudeFile)) fs.unlinkSync(claudeFile);
-              deleteClaudeSessionFiles(sessionId);
-              results.push({ sessionId, success: true, platform: "claude" });
-              continue;
-            }
-
-            // Try Codex deletion
-            const codexFiles = findCodexSessionFiles(sessionId);
-            if (codexFiles.length > 0) {
-              for (const f of codexFiles) {
-                if (fs.existsSync(f)) fs.unlinkSync(f);
-              }
-              removeCodexSessionFromIndex(sessionId);
-              results.push({ sessionId, success: true, platform: "codex" });
-              continue;
-            }
-
-            results.push({ sessionId, success: false, error: "not found" });
-          } catch (err) {
-            results.push({ sessionId, success: false, error: String(err) });
+    if (u.pathname === "/api/sessions/batch-delete" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { sessionIds } = JSON.parse(body);
+          if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+            return sendJson(req, res, 400, { error: "sessionIds array required" });
           }
+          const result = sessionOps.batchDeleteSessions(sessionIds, boundScheduleIndexRefresh);
+          return sendJson(req, res, 200, result);
+        } catch (err) {
+          return sendJson(req, res, 500, { error: String(err) });
         }
-
-        scheduleIndexRefresh("batch-delete");
-        const deletedCount = results.filter((r) => r.success).length;
-        return sendJson(req, res, 200, { success: true, total: sessionIds.length, deleted: deletedCount, results });
-      } catch (err) {
-        return sendJson(req, res, 500, { error: String(err) });
-      }
-    });
-    return;
-  }
-
-  if (u.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
-    const sessionId = u.pathname.split("/").pop();
-    if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-    try {
-      // Try Claude Code deletion
-      const claudeFile = findClaudeSessionFile(sessionId);
-      const claudeTranscripts = findClaudeTranscriptFiles(sessionId);
-
-      if (claudeFile || claudeTranscripts.length > 0) {
-        // Delete session metadata JSON if exists
-        if (claudeFile && fs.existsSync(claudeFile)) fs.unlinkSync(claudeFile);
-        // Delete transcript JSONL files and other session data
-        deleteClaudeSessionFiles(sessionId);
-        scheduleIndexRefresh("session-deleted");
-        return sendJson(req, res, 200, { success: true, sessionId, platform: "claude" });
-      }
-
-      // Try Codex deletion
-      const codexFiles = findCodexSessionFiles(sessionId);
-      if (codexFiles.length > 0) {
-        for (const f of codexFiles) {
-          if (fs.existsSync(f)) fs.unlinkSync(f);
-        }
-        removeCodexSessionFromIndex(sessionId);
-        scheduleIndexRefresh("session-deleted");
-        return sendJson(req, res, 200, { success: true, sessionId, platform: "codex" });
-      }
-
-      return sendJson(req, res, 404, { error: "Session not found" });
-    } catch (err) {
-      return sendJson(req, res, 500, { error: String(err) });
+      });
+      return;
     }
+
+    if (u.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
+      const sessionId = u.pathname.split("/").pop();
+      if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
+      const result = sessionOps.deleteSession(sessionId, boundScheduleIndexRefresh);
+      if (!result.success) return sendJson(req, res, 404, { error: result.error });
+      return sendJson(req, res, 200, result);
+    }
+  } catch (err) {
+    console.error(`[server] Unhandled error for ${req.method} ${u.pathname}:`, err);
+    return sendJson(req, res, 500, { error: "Internal server error" });
   }
 
-  return serveStatic(u.pathname, res);
+  return routes.serveStatic(u.pathname, res);
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Session Observer running at http://${HOST}:${PORT}`);
-  console.log(`Codex sessions: ${SESSIONS_DIR}`);
-  console.log(`Claude Code sessions: ${CLAUDE_PROJECTS_DIR}`);
-  startIndexWatchers();
+function sendJson(req, res, status, data) {
+  const zlib = require("zlib");
+  const body = JSON.stringify(data);
+  const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
+  const shouldGzip = acceptsGzip && Buffer.byteLength(body) > 1024;
+  const payload = shouldGzip ? zlib.gzipSync(body) : Buffer.from(body);
+  res.writeHead(status, {
+    "Content-Type": config.MIME[".json"],
+    ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
+    "Cache-Control": "no-store",
+    "Content-Length": payload.length,
+  });
+  res.end(payload);
+}
+
+// Handle uncaught errors gracefully
+process.on("uncaughtException", (err) => {
+  console.error("[server] Uncaught exception:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] Unhandled rejection:", reason);
+});
+
+server.listen(config.PORT, config.HOST, () => {
+  console.log(`Session Observer running at http://${config.HOST}:${config.PORT}`);
+  console.log(`Codex sessions: ${config.SESSIONS_DIR}`);
+  console.log(`Claude Code sessions: ${config.CLAUDE_PROJECTS_DIR}`);
+  indexManager.startIndexWatchers(boundScheduleIndexRefresh);
   try {
-    refreshIndex("startup");
+    boundRefreshIndex("startup");
   } catch (err) {
     console.error(`Initial index build failed: ${err}`);
   }

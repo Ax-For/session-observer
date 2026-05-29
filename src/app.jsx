@@ -284,7 +284,7 @@ export function App() {
       }
       if (event.key === "r" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
-        if (tab === "overview" || tab === "tokens" || tab === "alerts") {
+        if (tab === "overview" || tab === "tokens" || tab === "insights") {
           loadObservability();
         } else if (tab === "sessions") {
           loadSessions();
@@ -385,7 +385,7 @@ export function App() {
   }
 
   function refreshCurrentView() {
-    if (tab === "overview" || tab === "tokens" || tab === "alerts") {
+    if (tab === "overview" || tab === "tokens" || tab === "insights") {
       loadObservability();
       return;
     }
@@ -394,12 +394,6 @@ export function App() {
       return;
     }
     loadEvents();
-  }
-
-  function openAlertStream(alert) {
-    setQuickFilter("alert");
-    setSelectedSessionId(alert?.sessionId || "");
-    setTab("stream");
   }
 
   function selectLowContentSessions() {
@@ -582,7 +576,7 @@ export function App() {
                     data={[
                       { label: "总览", value: "overview" },
                       { label: "Token", value: "tokens" },
-                      { label: "异常队列", value: "alerts" },
+                      { label: "洞察", value: "insights" },
                       { label: "事件流", value: "stream" },
                       { label: "会话", value: "sessions" },
                     ]}
@@ -621,7 +615,7 @@ export function App() {
                   ) : (
                     <Group gap="xs">
                       <Badge radius="xl" variant="light" color="gray">
-                        {loadingObservability ? "刷新中" : `异常 ${formatNumber(observabilityPayload.summary?.alerts?.total || 0)}`}
+                        {loadingObservability ? "刷新中" : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
                       </Badge>
                       <Badge radius="xl" variant="light" color="gray">
                         Token {formatHumanNumber(observabilityPayload.summary?.tokens?.effectiveTotal || 0)}
@@ -631,14 +625,15 @@ export function App() {
                 </Group>
               </Paper>
 
-              {tab === "overview" || tab === "tokens" || tab === "alerts" ? (
+              {tab === "overview" || tab === "tokens" || tab === "insights" ? (
                 <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
                   <ObservabilityWorkspace
                     payload={observabilityPayload}
                     view={tab}
+                    activeOverview={activeSessionOverview}
                     loading={loadingObservability}
                     onRefresh={loadObservability}
-                    onOpenAlertStream={openAlertStream}
+                    onOpenConversation={openConversation}
                   />
                 </Suspense>
               ) : tab === "stream" ? (

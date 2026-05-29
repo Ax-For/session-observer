@@ -4,6 +4,8 @@
 *.pid
 node_modules/
 dist/
+.codegraph/
+test-results/
 
 # OS files
 .DS_Store

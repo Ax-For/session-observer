@@ -1,0 +1,15 @@
+#!/bin/sh
+# Run ESLint on staged JS/JSX files before commit
+echo "Running pre-commit lint check..."
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|jsx|mjs)$' || true)
+if [ -z "$STAGED_FILES" ]; then
+  echo "No JS/JSX files staged, skipping lint."
+  exit 0
+fi
+npx eslint $STAGED_FILES
+RESULT=$?
+if [ $RESULT -ne 0 ]; then
+  echo "Lint check failed. Run 'npm run lint:fix' to auto-fix issues."
+  exit 1
+fi
+echo "Lint check passed."

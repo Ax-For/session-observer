@@ -1,3 +1,22 @@
+/**
+ * API client for the Session Observer backend.
+ * @module apiClient
+ */
+
+/**
+ * @typedef {Object} FetchEventsParams
+ * @property {string} [mode] - "observe" | "raw"
+ * @property {string} [platform]
+ * @property {string} [model]
+ * @property {string} [type]
+ * @property {string} [sessionId]
+ * @property {string} [q] - Search query
+ * @property {number} [offset]
+ * @property {number} [limit]
+ * @property {string} [order] - "asc" | "desc"
+ */
+
+/** Build URL query string from params, omitting empty values */
 function buildQuery(params = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -8,8 +27,20 @@ function buildQuery(params = {}) {
 }
 
 async function request(url, options) {
-  const response = await fetch(url, options);
-  const payload = await response.json().catch(() => ({}));
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    throw new Error(`Network error: ${error.message || "request failed"}`);
+  }
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`Invalid JSON response: ${response.status} ${response.statusText}`);
+  }
+
   if (!response.ok) {
     throw new Error(payload?.error || `Request failed: ${response.status}`);
   }

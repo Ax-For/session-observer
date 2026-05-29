@@ -132,6 +132,18 @@ describe("App URL state", () => {
     });
   });
 
+  test("maps the retired alert queue URL to activity insights", async () => {
+    window.history.replaceState(null, "", "/?tab=alerts");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "活动洞察" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "洞察" })).toBeChecked();
+    await waitFor(() => {
+      expect(window.location.search).toContain("tab=insights");
+    });
+  });
+
   test("does not trigger global shortcuts while typing in search inputs", async () => {
     render(<App />);
 

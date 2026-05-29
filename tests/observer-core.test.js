@@ -78,6 +78,8 @@ test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from 
     output: 5,
     total: 17,
     cachedInput: 5,
+    cacheReadInput: 2,
+    cacheCreationInput: 3,
     reasoningOutput: null,
   });
 });
@@ -198,6 +200,8 @@ test("buildSessionGroups aggregates token usage and derives a cleaned fallback t
     output: 25,
     total: 125,
     cachedInput: 10,
+    cacheReadInput: 10,
+    cacheCreationInput: 0,
     reasoningOutput: 0,
   });
 });
@@ -249,19 +253,19 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
       time: "2026-04-23T01:10:00.000Z",
       sourceType: "codex",
       callType: "Token_Usage",
-      tokenUsage: { total: 1200, cachedInput: 300 },
+      tokenUsage: { input: 900, output: 300, total: 1200, cachedInput: 300, reasoningOutput: 50 },
     },
     {
       time: "2026-04-22T11:20:00.000Z",
       sourceType: "claude",
       callType: "Token_Usage",
-      tokenUsage: { total: 800, cachedInput: 200 },
+      tokenUsage: { input: 600, output: 200, total: 800, cachedInput: 200 },
     },
     {
       time: "2026-04-19T09:20:00.000Z",
       sourceType: "codex",
       callType: "Token_Usage",
-      tokenUsage: { total: 400 },
+      tokenUsage: { input: 300, output: 100, total: 400 },
     },
   ], {
     nowMs: Date.parse("2026-04-23T12:00:00.000Z"),
@@ -270,15 +274,31 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
 
   assert.deepEqual(windows, {
     day: {
-      total: 1500,
+      total: 1200,
+      rawTotal: 1200,
+      input: 900,
+      inputTotal: 900,
+      output: 300,
+      cachedInput: 300,
+      cacheReadInput: 300,
+      cacheCreationInput: 0,
+      reasoningOutput: 50,
       platforms: [
-        { key: "codex", total: 1500 },
+        { key: "codex", total: 1200 },
       ],
     },
     week: {
-      total: 2500,
+      total: 2200,
+      rawTotal: 2000,
+      input: 1500,
+      inputTotal: 1700,
+      output: 500,
+      cachedInput: 500,
+      cacheReadInput: 500,
+      cacheCreationInput: 0,
+      reasoningOutput: 50,
       platforms: [
-        { key: "codex", total: 1500 },
+        { key: "codex", total: 1200 },
         { key: "claude", total: 1000 },
       ],
     },
@@ -375,9 +395,12 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.equal(summary.health.eventsTotal, 6);
   assert.equal(summary.health.sessionsTotal, 2);
   assert.equal(summary.health.alertEvents, 1);
-  assert.equal(summary.tokens.effectiveTotal, 2000);
+  assert.equal(summary.tokens.effectiveTotal, 1700);
+  assert.equal(summary.tokens.inputTotal, 1400);
+  assert.equal(summary.tokens.cacheReadInput, 300);
+  assert.equal(summary.tokens.cacheCreationInput, 0);
   assert.deepEqual(summary.tokens.byPlatform, [
-    { key: "codex", total: 1500 },
+    { key: "codex", total: 1200 },
     { key: "claude", total: 500 },
   ]);
   assert.equal(summary.alerts.total, 1);
@@ -389,7 +412,7 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
     { key: "Read", calls: 1, results: 0, alerts: 0 },
   ]);
   assert.deepEqual(summary.workspaces.topWorkspaces, [
-    { cwd: "/repo/a", events: 4, sessions: 1, tokens: 1500, alerts: 1 },
+    { cwd: "/repo/a", events: 4, sessions: 1, tokens: 1200, alerts: 1 },
     { cwd: "/repo/b", events: 2, sessions: 1, tokens: 500, alerts: 0 },
   ]);
   assert.equal(summary.charts.hourly.length, 24);
@@ -411,14 +434,14 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
       platforms: [],
     },
   ]);
-  assert.equal(summary.charts.hourly.find((bucket) => bucket.label === "01:00").tokens, 1500);
+  assert.equal(summary.charts.hourly.find((bucket) => bucket.label === "01:00").tokens, 1200);
   assert.equal(summary.charts.hourly.find((bucket) => bucket.label === "01:00").alerts, 1);
   assert.equal(summary.charts.daily.length, 14);
   assert.equal(summary.charts.daily.at(-1).label, "04/23");
-  assert.equal(summary.charts.daily.at(-1).tokens, 1500);
+  assert.equal(summary.charts.daily.at(-1).tokens, 1200);
   assert.equal(summary.charts.daily.find((bucket) => bucket.label === "04/22").tokens, 500);
   assert.deepEqual(summary.charts.platformShare, [
-    { key: "codex", total: 1500 },
+    { key: "codex", total: 1200 },
     { key: "claude", total: 500 },
   ]);
   assert.deepEqual(summary.charts.alertTypes, [

@@ -32,7 +32,7 @@
 
   function hasTokenUsageData(tokenUsage) {
     if (!tokenUsage) return false;
-    return ["input", "output", "total", "cachedInput", "reasoningOutput"].some((key) => {
+    return ["input", "output", "total", "cachedInput", "cacheReadInput", "cacheCreationInput", "reasoningOutput"].some((key) => {
       const value = tokenUsage[key];
       return value != null && Number.isFinite(Number(value));
     });
@@ -41,11 +41,14 @@
   function addTokenUsage(base, next) {
     const out = base
       ? { ...base }
-      : { input: 0, output: 0, total: 0, cachedInput: 0, reasoningOutput: 0 };
+      : { input: 0, output: 0, total: 0, cachedInput: 0, cacheReadInput: 0, cacheCreationInput: 0, reasoningOutput: 0 };
     if (!hasTokenUsageData(next)) return out;
-    for (const key of ["input", "output", "total", "cachedInput", "reasoningOutput"]) {
+    for (const key of ["input", "output", "total", "cachedInput", "cacheReadInput", "cacheCreationInput", "reasoningOutput"]) {
       const value = next[key];
       if (value != null && Number.isFinite(Number(value))) out[key] += Number(value);
+    }
+    if (next.cacheReadInput == null && next.cacheCreationInput == null && next.cachedInput != null && Number.isFinite(Number(next.cachedInput))) {
+      out.cacheReadInput += Number(next.cachedInput);
     }
     return out;
   }
@@ -370,42 +373,82 @@
     const windows = {
       day: {
         total: 0,
+        rawTotal: 0,
+        input: 0,
+        inputTotal: 0,
+        output: 0,
+        cachedInput: 0,
+        cacheReadInput: 0,
+        cacheCreationInput: 0,
+        reasoningOutput: 0,
         platforms: new Map(),
       },
       week: {
         total: 0,
+        rawTotal: 0,
+        input: 0,
+        inputTotal: 0,
+        output: 0,
+        cachedInput: 0,
+        cacheReadInput: 0,
+        cacheCreationInput: 0,
+        reasoningOutput: 0,
         platforms: new Map(),
       },
     };
 
+    function addUsageToWindow(window, tokenUsage, sourceType, countedTotal, platformKey) {
+      window.total += countedTotal;
+      window.rawTotal += Number.isFinite(Number(tokenUsage?.total)) ? Number(tokenUsage.total) : 0;
+      window.input += Number.isFinite(Number(tokenUsage?.input)) ? Number(tokenUsage.input) : 0;
+      window.inputTotal += tokenInputTotal(tokenUsage, sourceType);
+      window.output += Number.isFinite(Number(tokenUsage?.output)) ? Number(tokenUsage.output) : 0;
+      window.cachedInput += Number.isFinite(Number(tokenUsage?.cachedInput)) ? Number(tokenUsage.cachedInput) : 0;
+      window.cacheReadInput += tokenCacheReadInput(tokenUsage);
+      window.cacheCreationInput += tokenCacheCreationInput(tokenUsage);
+      window.reasoningOutput += Number.isFinite(Number(tokenUsage?.reasoningOutput)) ? Number(tokenUsage.reasoningOutput) : 0;
+      window.platforms.set(platformKey, (window.platforms.get(platformKey) || 0) + countedTotal);
+    }
+
     for (const event of events || []) {
       const eventMs = toTimeMs(event?.time);
       if (eventMs == null) continue;
-      const total = Number(event?.tokenUsage?.total);
-      const cachedInput = Number(event?.tokenUsage?.cachedInput);
-      const usageTotal = (Number.isFinite(total) ? total : 0) + (Number.isFinite(cachedInput) ? cachedInput : 0);
-      const countedTotal = Number.isFinite(usageTotal) ? usageTotal : 0;
+      const countedTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
       if (countedTotal <= 0) continue;
       const platformKey = event?.sourceType || "unknown";
 
       if (eventMs >= startOfWeekMs && eventMs <= nowMs) {
-        windows.week.total += countedTotal;
-        windows.week.platforms.set(platformKey, (windows.week.platforms.get(platformKey) || 0) + countedTotal);
+        addUsageToWindow(windows.week, event?.tokenUsage, event?.sourceType, countedTotal, platformKey);
       }
 
       if (eventMs >= startOfDayMs && eventMs <= nowMs) {
-        windows.day.total += countedTotal;
-        windows.day.platforms.set(platformKey, (windows.day.platforms.get(platformKey) || 0) + countedTotal);
+        addUsageToWindow(windows.day, event?.tokenUsage, event?.sourceType, countedTotal, platformKey);
       }
     }
 
     return {
       day: {
         total: windows.day.total,
+        rawTotal: windows.day.rawTotal,
+        input: windows.day.input,
+        inputTotal: windows.day.inputTotal,
+        output: windows.day.output,
+        cachedInput: windows.day.cachedInput,
+        cacheReadInput: windows.day.cacheReadInput,
+        cacheCreationInput: windows.day.cacheCreationInput,
+        reasoningOutput: windows.day.reasoningOutput,
         platforms: mapTotalsToSortedEntries(windows.day.platforms),
       },
       week: {
         total: windows.week.total,
+        rawTotal: windows.week.rawTotal,
+        input: windows.week.input,
+        inputTotal: windows.week.inputTotal,
+        output: windows.week.output,
+        cachedInput: windows.week.cachedInput,
+        cacheReadInput: windows.week.cacheReadInput,
+        cacheCreationInput: windows.week.cacheCreationInput,
+        reasoningOutput: windows.week.reasoningOutput,
         platforms: mapTotalsToSortedEntries(windows.week.platforms),
       },
     };
@@ -424,11 +467,36 @@
     return session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话";
   }
 
-  function tokenEffectiveTotal(tokenUsage) {
+  function tokenCacheReadInput(tokenUsage) {
+    const cacheReadInput = Number(tokenUsage?.cacheReadInput);
+    if (Number.isFinite(cacheReadInput)) return cacheReadInput;
+    const cachedInput = Number(tokenUsage?.cachedInput);
+    return Number.isFinite(cachedInput) ? cachedInput : 0;
+  }
+
+  function tokenCacheCreationInput(tokenUsage) {
+    const cacheCreationInput = Number(tokenUsage?.cacheCreationInput);
+    return Number.isFinite(cacheCreationInput) ? cacheCreationInput : 0;
+  }
+
+  function tokenInputTotal(tokenUsage, sourceType) {
+    if (!hasTokenUsageData(tokenUsage)) return 0;
+    const input = Number(tokenUsage?.input);
+    const countedInput = Number.isFinite(input) ? input : 0;
+    if (sourceType === "claude") {
+      return countedInput + tokenCacheReadInput(tokenUsage) + tokenCacheCreationInput(tokenUsage);
+    }
+    return countedInput;
+  }
+
+  function tokenCountedTotal(tokenUsage, sourceType) {
     if (!hasTokenUsageData(tokenUsage)) return 0;
     const total = Number(tokenUsage?.total);
-    const cachedInput = Number(tokenUsage?.cachedInput);
-    return (Number.isFinite(total) ? total : 0) + (Number.isFinite(cachedInput) ? cachedInput : 0);
+    const countedTotal = Number.isFinite(total) ? total : 0;
+    if (sourceType === "claude") {
+      return countedTotal + tokenCacheReadInput(tokenUsage) + tokenCacheCreationInput(tokenUsage);
+    }
+    return countedTotal;
   }
 
   function addMapValue(map, key, amount) {
@@ -461,7 +529,7 @@
       if (!bucket) continue;
       bucket.events += 1;
       if (isAlertEvent(event)) bucket.alerts += 1;
-      const tokenTotal = tokenEffectiveTotal(event?.tokenUsage);
+      const tokenTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
       if (tokenTotal <= 0) continue;
       bucket.tokens += tokenTotal;
       addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
@@ -502,7 +570,7 @@
       if (!bucket) continue;
       bucket.events += 1;
       if (isAlertEvent(event)) bucket.alerts += 1;
-      const tokenTotal = tokenEffectiveTotal(event?.tokenUsage);
+      const tokenTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
       if (tokenTotal <= 0) continue;
       bucket.tokens += tokenTotal;
       addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
@@ -531,9 +599,12 @@
     const alertPlatformCounts = new Map();
     const totals = {
       input: 0,
+      inputTotal: 0,
       output: 0,
       total: 0,
       cachedInput: 0,
+      cacheReadInput: 0,
+      cacheCreationInput: 0,
       reasoningOutput: 0,
     };
     let effectiveTotal = 0;
@@ -593,13 +664,16 @@
 
       if (!hasTokenUsageData(event?.tokenUsage)) continue;
       const token = event.tokenUsage;
-      const tokenTotal = tokenEffectiveTotal(token);
+      const tokenTotal = tokenCountedTotal(token, event?.sourceType);
       if (tokenTotal >= Number(options.highTokenThreshold || 20000)) highTokenEvents += 1;
       effectiveTotal += tokenTotal;
       totals.input += Number.isFinite(Number(token.input)) ? Number(token.input) : 0;
+      totals.inputTotal += tokenInputTotal(token, event?.sourceType);
       totals.output += Number.isFinite(Number(token.output)) ? Number(token.output) : 0;
       totals.total += Number.isFinite(Number(token.total)) ? Number(token.total) : 0;
       totals.cachedInput += Number.isFinite(Number(token.cachedInput)) ? Number(token.cachedInput) : 0;
+      totals.cacheReadInput += tokenCacheReadInput(token);
+      totals.cacheCreationInput += tokenCacheCreationInput(token);
       totals.reasoningOutput += Number.isFinite(Number(token.reasoningOutput)) ? Number(token.reasoningOutput) : 0;
       addMapValue(platformTokens, event?.sourceType, tokenTotal);
       addMapValue(modelTokens, event?.model, tokenTotal);
@@ -620,7 +694,7 @@
         cwd: session.cwd || "unknown",
         latest: session.latest || "",
         events: session.count || 0,
-        tokens: tokenEffectiveTotal(session.aggregateToken),
+        tokens: tokenCountedTotal(session.aggregateToken, session.sourceType),
         alerts: eventList.filter((event) => event.sessionId === session.sessionId && isAlertEvent(event)).length,
       }))
       .sort((left, right) => {
@@ -865,6 +939,8 @@
           output: usage.output_tokens ?? null,
           total: usage.total_tokens ?? null,
           cachedInput: usage.cached_input_tokens ?? null,
+          cacheReadInput: usage.cached_input_tokens ?? null,
+          cacheCreationInput: 0,
           reasoningOutput: usage.reasoning_output_tokens ?? null,
         },
       };
@@ -1155,6 +1231,8 @@
             output,
             total,
             cachedInput,
+            cacheReadInput,
+            cacheCreationInput,
             reasoningOutput,
           },
         };

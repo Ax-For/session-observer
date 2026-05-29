@@ -1,6 +1,6 @@
 import { MantineProvider } from "@mantine/core";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test } from "vitest";
 import { ObservabilityWorkspace } from "../observability-workspace";
 
 const payload = {
@@ -39,13 +39,24 @@ const payload = {
     },
     tokens: {
       input: 10_000,
+      inputTotal: 16_000,
       output: 2000,
       cachedInput: 6000,
+      cacheReadInput: 5000,
+      cacheCreationInput: 1000,
       reasoningOutput: 800,
       effectiveTotal: 18_000,
       windows: {
         day: {
           total: 8000,
+          rawTotal: 6000,
+          input: 5000,
+          inputTotal: 6800,
+          output: 1000,
+          cachedInput: 2000,
+          cacheReadInput: 1800,
+          cacheCreationInput: 200,
+          reasoningOutput: 250,
           platforms: [
             { key: "codex", total: 5000 },
             { key: "claude", total: 3000 },
@@ -53,6 +64,14 @@ const payload = {
         },
         week: {
           total: 18_000,
+          rawTotal: 12_000,
+          input: 10_000,
+          inputTotal: 16_000,
+          output: 2000,
+          cachedInput: 6000,
+          cacheReadInput: 5000,
+          cacheCreationInput: 1000,
+          reasoningOutput: 800,
           platforms: [
             { key: "codex", total: 12_000 },
             { key: "claude", total: 6000 },
@@ -126,6 +145,25 @@ const payload = {
   },
 };
 
+const activeOverview = {
+  total: 1,
+  windowMinutes: 30,
+  latestAt: "2026-04-23T11:58:00.000Z",
+  hasMore: false,
+  platforms: [{ key: "codex", sessions: 1 }],
+  sessions: [
+    {
+      sessionId: "sess-active",
+      title: "Active Codex session",
+      sourceType: "codex",
+      cwd: "/Users/me/code/session-observer",
+      latest: "2026-04-23T11:58:00.000Z",
+      count: 42,
+      ageMs: 120000,
+    },
+  ],
+};
+
 describe("ObservabilityWorkspace", () => {
   afterEach(() => {
     cleanup();
@@ -134,7 +172,13 @@ describe("ObservabilityWorkspace", () => {
   test("renders the overview health, source, runtime, workspace, and tool panels", () => {
     render(
       <MantineProvider>
-        <ObservabilityWorkspace payload={payload} view="overview" loading={false} onRefresh={() => {}} />
+        <ObservabilityWorkspace
+          payload={payload}
+          view="overview"
+          activeOverview={activeOverview}
+          loading={false}
+          onRefresh={() => {}}
+        />
       </MantineProvider>,
     );
 
@@ -144,7 +188,9 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("数据源状态")).toBeInTheDocument();
     expect(screen.getByText("按天 Token 趋势")).toBeInTheDocument();
     expect(screen.getByText("平台 Token 占比")).toBeInTheDocument();
-    expect(screen.getByText("24h 异常热度")).toBeInTheDocument();
+    expect(screen.getByText("活跃会话")).toBeInTheDocument();
+    expect(screen.getByText("最近活跃会话")).toBeInTheDocument();
+    expect(screen.getByText("Active Codex session")).toBeInTheDocument();
     expect(screen.getByText("/Users/me/.codex/sessions")).toBeInTheDocument();
     expect(screen.getByText("运行健康")).toBeInTheDocument();
     expect(screen.getByText("Codex codex-cli 0.130.0 / Claude 1.0.0")).toBeInTheDocument();
@@ -161,42 +207,48 @@ describe("ObservabilityWorkspace", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
+    expect(screen.getAllByText("有效总量").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("输入 Token").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("缓存命中 Token").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("输出 Token").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("推理输出 Token").length).toBeGreaterThan(0);
     expect(screen.getByText("近 14 天 Token 消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("Token 明细")).toBeInTheDocument();
     expect(screen.getByText("平台占比")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
     expect(screen.getByTestId("platform-donut-chart")).toBeInTheDocument();
     expect(screen.getByText("时间窗口")).toBeInTheDocument();
     expect(screen.getByText("Codex 5,000 · Claude Code 3,000")).toBeInTheDocument();
+    expect(screen.getByText("输入 5,000")).toBeInTheDocument();
+    expect(screen.getByText("命中 1,800")).toBeInTheDocument();
+    expect(screen.getByText("写入 200")).toBeInTheDocument();
+    expect(screen.getByText("输出 1,000")).toBeInTheDocument();
     expect(screen.getByText("模型消耗")).toBeInTheDocument();
     expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
     expect(screen.getByText("高消耗会话")).toBeInTheDocument();
     expect(screen.getByText("Investigate timeout")).toBeInTheDocument();
   });
 
-  test("renders alert rows and opens the alert stream when selected", () => {
-    const onOpenAlertStream = vi.fn();
-
+  test("renders activity insights without the old alert queue", () => {
     render(
       <MantineProvider>
         <ObservabilityWorkspace
           payload={payload}
-          view="alerts"
+          view="insights"
+          activeOverview={activeOverview}
           loading={false}
           onRefresh={() => {}}
-          onOpenAlertStream={onOpenAlertStream}
         />
       </MantineProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /failed with timeout/ }));
-
-    expect(screen.getByRole("heading", { name: "异常队列" })).toBeInTheDocument();
-    expect(screen.getByText("24h 异常热度")).toBeInTheDocument();
-    expect(screen.getByText("异常类型分布")).toBeInTheDocument();
-    expect(screen.getByText("异常分布")).toBeInTheDocument();
-    expect(onOpenAlertStream).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "sess-alert",
-      toolName: "Shell",
-    }));
+    expect(screen.getByRole("heading", { name: "活动洞察" })).toBeInTheDocument();
+    expect(screen.getByText("24h 活动热度")).toBeInTheDocument();
+    expect(screen.getByTestId("activity-heat-chart")).toBeInTheDocument();
+    expect(screen.getByText("工具吞吐排行")).toBeInTheDocument();
+    expect(screen.getByText("工作区活动排行")).toBeInTheDocument();
+    expect(screen.getByText("模型消耗排行")).toBeInTheDocument();
+    expect(screen.getByText("活跃与高消耗会话")).toBeInTheDocument();
+    expect(screen.queryByText("异常队列")).not.toBeInTheDocument();
   });
 });

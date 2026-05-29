@@ -1,3 +1,38 @@
+/**
+ * @typedef {Object} ConversationEntry
+ * @property {string} id
+ * @property {string} kind - "message" | "tool" | "thinking"
+ * @property {string} role - "user" | "assistant"
+ * @property {string} time
+ * @property {string} content
+ * @property {string} [toolName]
+ * @property {string} [phase]
+ * @property {string} [category]
+ * @property {boolean} [isError]
+ * @property {Object} [display]
+ * @property {string} [agentPrefix]
+ * @property {boolean} [grouped]
+ */
+
+/**
+ * @typedef {Object} ToolSummary
+ * @property {number} total
+ * @property {number} errors
+ * @property {string[]} labels
+ */
+
+/**
+ * @typedef {Object} ConversationTurn
+ * @property {string} id
+ * @property {number} index
+ * @property {string} startedAt
+ * @property {ConversationEntry[]} userMessages
+ * @property {ConversationEntry[]} assistantMessages
+ * @property {ConversationEntry[]} toolEntries
+ * @property {ConversationEntry[]} thinkingEntries
+ * @property {ToolSummary} toolSummary
+ */
+
 const INTERNAL_CONTENT_MARKERS = [
   "[subagent:",
   "<command-name>",
@@ -159,6 +194,7 @@ function cleanContent(content) {
   return content.replace(CONTEXT_BLOCK_PATTERN, "").trim();
 }
 
+/** Check if content appears to contain Markdown formatting */
 export function looksLikeMarkdownContent(content) {
   const text = cleanContent(content);
   if (!text) return false;
@@ -303,6 +339,11 @@ function detectToolResultError(content) {
   return TOOL_RESULT_ERROR_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+/**
+ * Normalize events for conversation display (clean internal markers).
+ * @param {Array} events - Raw event array
+ * @returns {Array} Cleaned events
+ */
 export function prepareConversationEvents(events) {
   return (Array.isArray(events) ? events : [])
     .filter(Boolean)
@@ -322,6 +363,11 @@ export function prepareConversationEvents(events) {
     });
 }
 
+/**
+ * Build a flat list of display entries from events.
+ * @param {Array} events - Raw event array
+ * @returns {ConversationEntry[]} Display entries
+ */
 export function buildConversationEntries(events) {
   const prepared = prepareConversationEvents(events);
   const entries = [];
@@ -407,6 +453,11 @@ function summarizeTurnTools(toolEntries) {
   };
 }
 
+/**
+ * Group conversation entries into turns (user-initiated exchange cycles).
+ * @param {Array} events - Raw event array
+ * @returns {ConversationTurn[]} Grouped turns
+ */
 export function buildConversationTurns(events) {
   const entries = buildConversationEntries(events);
   const turns = [];

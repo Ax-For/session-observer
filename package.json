@@ -9,7 +9,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:core": "node --test tests/*.test.js",
-    "check": "npm test && npm run test:core && npm run build"
+    "lint": "eslint .",
+    "lint:strict": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "check": "npm run lint && npm test && npm run test:core && npm run build",
+    "prepare": "husky"
   },
   "dependencies": {
     "@fontsource-variable/manrope": "^5.2.8",
@@ -26,10 +30,16 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.2",
+    "playwright": "^1.60.0",
     "vite": "^8.0.8",
     "vitest": "^4.1.4"
   }
