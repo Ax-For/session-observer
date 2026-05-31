@@ -46,6 +46,17 @@ const payload = {
       cacheCreationInput: 1000,
       reasoningOutput: 800,
       effectiveTotal: 18_000,
+      cost: {
+        estimatedUsd: 0.0525,
+        knownTokenTotal: 18_000,
+        currency: "USD",
+        source: "built-in-estimate",
+        unknownModels: [],
+        byModel: [
+          { model: "gpt-5.4", estimatedUsd: 0.035, knownTokenTotal: 12_000 },
+          { model: "claude-sonnet-4-6", estimatedUsd: 0.0175, knownTokenTotal: 6000 },
+        ],
+      },
       windows: {
         day: {
           total: 8000,
@@ -142,6 +153,15 @@ const payload = {
       ],
       alertTypes: [{ key: "Tool_Result", count: 3 }],
     },
+    traces: {
+      traces: 32,
+      spans: 480,
+      llmSpans: 300,
+      toolSpans: 120,
+      tokenSpans: 60,
+      thinkingSpans: 0,
+      maxDepth: 3,
+    },
   },
 };
 
@@ -160,6 +180,12 @@ const activeOverview = {
       latest: "2026-04-23T11:58:00.000Z",
       count: 42,
       ageMs: 120000,
+      activity: {
+        projectedHourlyTokens: 2400,
+        tokensPerMinute: 40,
+        eventsPerMinute: 1.4,
+        confidence: "low",
+      },
     },
   ],
 };
@@ -187,16 +213,23 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("1,200")).toBeInTheDocument();
     expect(screen.getByText("数据源状态")).toBeInTheDocument();
     expect(screen.getByText("按天 Token 趋势")).toBeInTheDocument();
-    expect(screen.getByText("平台 Token 占比")).toBeInTheDocument();
     expect(screen.getByText("活跃会话")).toBeInTheDocument();
+    expect(screen.getByText("Trace Span")).toBeInTheDocument();
+    expect(screen.getAllByText("480").length).toBeGreaterThan(0);
+    expect(screen.getByText("观测覆盖")).toBeInTheDocument();
+    expect(screen.getByText("成本覆盖")).toBeInTheDocument();
+    expect(screen.getByText("模型集中度")).toBeInTheDocument();
+    expect(screen.getByText("关键观察")).toBeInTheDocument();
+    expect(screen.getByText("最贵模型")).toBeInTheDocument();
     expect(screen.getByText("最近活跃会话")).toBeInTheDocument();
     expect(screen.getByText("Active Codex session")).toBeInTheDocument();
+    expect(screen.getByText("预计 2,400/h")).toBeInTheDocument();
     expect(screen.getByText("/Users/me/.codex/sessions")).toBeInTheDocument();
     expect(screen.getByText("运行健康")).toBeInTheDocument();
     expect(screen.getByText("Codex codex-cli 0.130.0 / Claude 1.0.0")).toBeInTheDocument();
-    expect(screen.getByText("高活跃工作区")).toBeInTheDocument();
-    expect(screen.getByText("工具调用画像")).toBeInTheDocument();
-    expect(screen.getByText("Shell")).toBeInTheDocument();
+    expect(screen.getByText("工作区集中度")).toBeInTheDocument();
+    expect(screen.getAllByText("Shell").length).toBeGreaterThan(0);
+    expect(screen.queryByText("平台 Token 占比")).not.toBeInTheDocument();
   });
 
   test("renders token windows, model ranking, and high-cost sessions", () => {
@@ -208,25 +241,32 @@ describe("ObservabilityWorkspace", () => {
 
     expect(screen.getByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
     expect(screen.getAllByText("有效总量").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("输入 Token").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("输入侧总量").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("非缓存输入 Token").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存命中 Token").length).toBeGreaterThan(0);
     expect(screen.getAllByText("输出 Token").length).toBeGreaterThan(0);
     expect(screen.getAllByText("推理输出 Token").length).toBeGreaterThan(0);
+    expect(screen.getByText("成本估算")).toBeInTheDocument();
+    expect(screen.getByText("$0.0525")).toBeInTheDocument();
+    expect(screen.getByText("缓存经济性")).toBeInTheDocument();
+    expect(screen.getByText("命中覆盖")).toBeInTheDocument();
+    expect(screen.getByText("读写杠杆")).toBeInTheDocument();
+    expect(screen.getByText("模型成本效率")).toBeInTheDocument();
+    expect(screen.getAllByText((_, element) => element.textContent.includes("/M")).length).toBeGreaterThan(0);
     expect(screen.getByText("近 14 天 Token 消耗趋势")).toBeInTheDocument();
     expect(screen.getByText("Token 明细")).toBeInTheDocument();
-    expect(screen.getByText("平台占比")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
-    expect(screen.getByTestId("platform-donut-chart")).toBeInTheDocument();
     expect(screen.getByText("时间窗口")).toBeInTheDocument();
     expect(screen.getByText("Codex 5,000 · Claude Code 3,000")).toBeInTheDocument();
-    expect(screen.getByText("输入 5,000")).toBeInTheDocument();
+    expect(screen.getByText("输入侧 6,800")).toBeInTheDocument();
+    expect(screen.getByText("非缓存 5,000")).toBeInTheDocument();
     expect(screen.getByText("命中 1,800")).toBeInTheDocument();
     expect(screen.getByText("写入 200")).toBeInTheDocument();
     expect(screen.getByText("输出 1,000")).toBeInTheDocument();
-    expect(screen.getByText("模型消耗")).toBeInTheDocument();
-    expect(screen.getByText("gpt-5.4")).toBeInTheDocument();
+    expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
     expect(screen.getByText("高消耗会话")).toBeInTheDocument();
     expect(screen.getByText("Investigate timeout")).toBeInTheDocument();
+    expect(screen.queryByText("平台占比")).not.toBeInTheDocument();
   });
 
   test("renders activity insights without the old alert queue", () => {
@@ -245,10 +285,14 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByRole("heading", { name: "活动洞察" })).toBeInTheDocument();
     expect(screen.getByText("24h 活动热度")).toBeInTheDocument();
     expect(screen.getByTestId("activity-heat-chart")).toBeInTheDocument();
-    expect(screen.getByText("工具吞吐排行")).toBeInTheDocument();
-    expect(screen.getByText("工作区活动排行")).toBeInTheDocument();
-    expect(screen.getByText("模型消耗排行")).toBeInTheDocument();
-    expect(screen.getByText("活跃与高消耗会话")).toBeInTheDocument();
+    expect(screen.getByText("工具调用结构")).toBeInTheDocument();
+    expect(screen.getByText("命名调用")).toBeInTheDocument();
+    expect(screen.getByText("Trace 组成")).toBeInTheDocument();
+    expect(screen.getByText("活跃速率")).toBeInTheDocument();
+    expect(screen.getByText("工作区负载象限")).toBeInTheDocument();
+    expect(screen.getByText("会话压力分布")).toBeInTheDocument();
+    expect(screen.getByText("活动结构")).toBeInTheDocument();
+    expect(screen.queryByText("模型消耗排行")).not.toBeInTheDocument();
     expect(screen.queryByText("异常队列")).not.toBeInTheDocument();
   });
 });

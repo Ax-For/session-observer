@@ -6,6 +6,8 @@
 const config = require("./config");
 const sessionOps = require("./session-ops");
 const sessionMeta = require("./session-meta");
+const { createSessionExport } = require("./session-export");
+const { listSourceAdapters } = require("../shared/source-adapters");
 
 let _deps = null;
 
@@ -154,6 +156,49 @@ function getEventDetail(eventId) {
 }
 
 /**
+ * Export a full session as sanitized Markdown or JSONL.
+ */
+function resolveSessionIdentifier(events, sessionId) {
+  const needle = String(sessionId || "").trim();
+  if (!needle) return "";
+
+  const sessionIds = [...new Set((events || []).map((event) => event.sessionId).filter(Boolean))];
+  if (sessionIds.includes(needle)) return needle;
+
+  const matches = sessionIds.filter((id) => id.startsWith(needle));
+  return matches.length === 1 ? matches[0] : needle;
+}
+
+function exportSession(sessionId, options = {}) {
+  const { indexManager } = _deps;
+  const ready = indexManager.ensureIndexReady(
+    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
+  );
+  const resolvedSessionId = resolveSessionIdentifier(ready.events, sessionId);
+  const threadMeta = sessionMeta.loadMergedThreadMetadata(_deps.mergeSessionMetaRecordsCore);
+  const files = indexManager.sourceFilesForSession(ready.events, resolvedSessionId);
+  const events = [];
+
+  for (const file of files) {
+    events.push(...indexManager.parseFullFileEvents(file, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore)
+      .filter((event) => event.sessionId === resolvedSessionId));
+  }
+
+  events.sort((left, right) => {
+    const leftMs = _deps.toTimeMsCore(left.time) ?? 0;
+    const rightMs = _deps.toTimeMsCore(right.time) ?? 0;
+    return leftMs - rightMs;
+  });
+
+  if (!events.length) return null;
+  return createSessionExport(events, {
+    format: options.format,
+    sanitize: options.sanitize !== false,
+    sessionId: resolvedSessionId,
+  });
+}
+
+/**
  * List sessions grouped by cwd.
  */
 function querySessions() {
@@ -205,6 +250,7 @@ function queryObservability() {
     sources: {
       codex: sessionOps.directoryStatus(config.SESSIONS_DIR),
       claude: sessionOps.directoryStatus(config.CLAUDE_PROJECTS_DIR),
+      adapters: listSourceAdapters(),
     },
     summary,
   };
@@ -237,6 +283,8 @@ module.exports = {
   parseRequestFilters,
   queryEvents,
   getEventDetail,
+  exportSession,
+  resolveSessionIdentifier,
   querySessions,
   queryObservability,
   serveStatic,

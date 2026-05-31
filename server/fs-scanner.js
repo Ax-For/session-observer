@@ -6,6 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const config = require("./config");
+const { resolveSourceAdapterForFile } = require("../shared/source-adapters");
 
 /**
  * Recursively list all .jsonl files under a directory, skipping subagent dirs.
@@ -128,9 +129,10 @@ function getPathSignature(target) {
  * Check if a file path belongs to Codex or Claude Code, returning the appropriate parser.
  */
 function resolveParserForFile(filePath, parsers) {
-  if (filePath.includes("/.codex/")) return { parser: parsers.parseCodexLineToEvent, sessionsDir: config.SESSIONS_DIR };
-  if (filePath.includes("/.claude/")) return { parser: parsers.parseClaudeCodeLineToEvent, sessionsDir: config.CLAUDE_PROJECTS_DIR };
-  return { parser: parsers.parseCodexLineToEvent, sessionsDir: config.SESSIONS_DIR };
+  const adapter = resolveSourceAdapterForFile(filePath);
+  const parser = parsers[adapter.parserKey] || parsers.parseCodexLineToEvent;
+  const sessionsDir = adapter.key === "claude" ? config.CLAUDE_PROJECTS_DIR : config.SESSIONS_DIR;
+  return { adapter, parser, sessionsDir };
 }
 
 module.exports = {

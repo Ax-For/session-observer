@@ -459,6 +459,12 @@ describe("buildActiveSessionOverview", () => {
         sourceType: "codex",
       }),
     ]);
+    expect(overview.sessions[0].activity).toEqual(expect.objectContaining({
+      eventsPerMinute: expect.any(Number),
+      tokensPerMinute: expect.any(Number),
+      projectedHourlyTokens: expect.any(Number),
+      confidence: "low",
+    }));
   });
 
   test("respects session filters and limits the visible active list", () => {

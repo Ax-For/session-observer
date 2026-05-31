@@ -47,6 +47,32 @@ async function request(url, options) {
   return payload;
 }
 
+async function requestDownload(url) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    throw new Error(`Network error: ${error.message || "request failed"}`);
+  }
+
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // fall back to status text below
+    }
+    throw new Error(payload?.error || `Request failed: ${response.status}`);
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || "session-export.md",
+  };
+}
+
 export const apiClient = {
   fetchEvents(params = {}) {
     const query = buildQuery(params);
@@ -86,5 +112,13 @@ export const apiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionIds }),
     });
+  },
+
+  exportSession(sessionId, options = {}) {
+    const query = buildQuery({
+      format: options.format || "markdown",
+      sanitize: options.sanitize === false ? 0 : 1,
+    });
+    return requestDownload(`/api/sessions/${encodeURIComponent(sessionId)}/export?${query}`);
   },
 };

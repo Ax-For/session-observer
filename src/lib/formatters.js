@@ -94,6 +94,10 @@ export function downloadJsonl(filename, records) {
   triggerDownload(filename, blob);
 }
 
+export function downloadBlob(filename, blob) {
+  triggerDownload(filename, blob);
+}
+
 function triggerDownload(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

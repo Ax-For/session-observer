@@ -89,6 +89,19 @@ function sessionHasTokenData(session) {
   return Boolean(session?.hasTokenData || session?.aggregateToken || session?.latestToken);
 }
 
+function buildSessionActivity(session, activeWindowMs) {
+  const windowMinutes = Math.max(1, Number(activeWindowMs || DEFAULT_ACTIVE_SESSION_WINDOW_MS) / 60000);
+  const eventsPerMinute = toFiniteNumber(session?.count) / windowMinutes;
+  const tokensPerMinute = toFiniteNumber(session?.totalTokens) / windowMinutes;
+
+  return {
+    eventsPerMinute,
+    tokensPerMinute,
+    projectedHourlyTokens: Math.round(tokensPerMinute * 60),
+    confidence: "low",
+  };
+}
+
 function normalizeSessionForWorkspace(session) {
   return {
     ...session,
@@ -423,6 +436,7 @@ export function buildActiveSessionOverview(groups, options = {}) {
       return {
         ...session,
         ageMs: latestMs == null ? Number.POSITIVE_INFINITY : Math.max(0, nowMs - latestMs),
+        activity: buildSessionActivity(session, activeWindowMs),
       };
     })
     .filter((session) => Number.isFinite(session.ageMs) && session.ageMs <= activeWindowMs)

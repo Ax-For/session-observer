@@ -120,6 +120,18 @@ describe("App URL state", () => {
     });
   });
 
+  test("clears the focused session from the sessions page", async () => {
+    window.history.replaceState(null, "", "/?tab=sessions&session=sess-42");
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "取消聚焦会话 sess-42" }));
+
+    await waitFor(() => {
+      expect(window.location.search).not.toContain("session=sess-42");
+    });
+  });
+
   test("hydrates observability tabs from URL state", async () => {
     window.history.replaceState(null, "", "/?tab=tokens");
 

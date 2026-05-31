@@ -5,6 +5,9 @@ import { StreamWorkspace } from "../stream-workspace";
 
 describe("StreamWorkspace", () => {
   test("renders the stream scope rail, summary cards, session list, and event feed", () => {
+    const onOpenSessionDetail = vi.fn();
+    const onOpenEvent = vi.fn();
+
     render(
       <MantineProvider>
         <StreamWorkspace
@@ -111,7 +114,8 @@ describe("StreamWorkspace", () => {
           onClearSessionFocus={() => {}}
           generatedAt="2026-04-19T15:00:00.000Z"
           onOpenFilters={() => {}}
-          onOpenEvent={() => {}}
+          onOpenEvent={onOpenEvent}
+          onOpenSessionDetail={onOpenSessionDetail}
         />
       </MantineProvider>,
     );
@@ -157,6 +161,12 @@ describe("StreamWorkspace", () => {
     expect(screen.getByText("这里需要突出用户消息")).toBeInTheDocument();
     expect(screen.getAllByText("Agent").length).toBeGreaterThan(0);
     expect(screen.getByText("我会优先展示对话内容")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看会话详情 Incident triage/ }));
+    expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 sess-1/ })[0]);
+    expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    fireEvent.click(screen.getByText("Token usage · In 2.4k · Out 220 · Total 2.6k"));
+    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });
 
   test("formats large token metrics with chinese units in the overview panel", () => {

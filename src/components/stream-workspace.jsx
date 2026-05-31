@@ -60,7 +60,7 @@ function getWindowPlatformTotal(windowSummary, platformKey) {
   return Number(match?.total) || 0;
 }
 
-function EventRow({ event, onOpenEvent }) {
+function EventRow({ event, onOpenEvent, onOpenSessionDetail }) {
   const dialogueRole = eventDialogueRole(event.callType);
   const rowClasses = [
     "event-row",
@@ -70,45 +70,51 @@ function EventRow({ event, onOpenEvent }) {
   const summary = dialogueRole ? readableDialogueContent(event) : readableEventSummary(event);
 
   return (
-    <button
-      type="button"
-      className={rowClasses}
-      onClick={() => onOpenEvent(event)}
-    >
-      <span className="event-row__rail" aria-hidden="true">
-        <span className="event-row__dot" />
-      </span>
-
-      <div className="event-row__body">
-        <div className="event-row__kicker">
-          <span className="event-row__platform">{event.sourceType === "codex" ? "CX" : "CC"}</span>
-          {dialogueRole ? (
-            <span className="event-row__speaker">
-              {dialogueRole === "user" ? "用户" : "Agent"}
-            </span>
-          ) : null}
-          {!dialogueRole ? <span className="event-row__type">{callTypeLabel(event.callType)}</span> : null}
-          <span className="event-row__model">{event.model || "unknown"}</span>
-        </div>
-        <Text className="event-row__summary">{summary}</Text>
-        <div className="event-row__meta-line">
-          <span>{shortSessionId(event.sessionId)}</span>
-          <span>{event.extra || "事件详情"}</span>
-          <span>{clipText(event.cwd || "", 48)}</span>
-        </div>
-      </div>
-
-      <div className="event-row__side">
-        <Text className="event-row__timestamp">{formatDateTime(event.time)}</Text>
-        <span className="event-row__arrow" aria-hidden="true">
-          <IconArrowRight size={14} />
+    <div className={rowClasses}>
+      <button type="button" className="event-row__open" onClick={() => onOpenEvent(event)}>
+        <span className="event-row__rail" aria-hidden="true">
+          <span className="event-row__dot" />
         </span>
-      </div>
-    </button>
+
+        <div className="event-row__body">
+          <div className="event-row__kicker">
+            <span className="event-row__platform">{event.sourceType === "codex" ? "CX" : "CC"}</span>
+            {dialogueRole ? (
+              <span className="event-row__speaker">
+                {dialogueRole === "user" ? "用户" : "Agent"}
+              </span>
+            ) : null}
+            {!dialogueRole ? <span className="event-row__type">{callTypeLabel(event.callType)}</span> : null}
+            <span className="event-row__model">{event.model || "unknown"}</span>
+          </div>
+          <Text className="event-row__summary">{summary}</Text>
+          <div className="event-row__meta-line">
+            <span>{shortSessionId(event.sessionId)}</span>
+            <span>{event.extra || "事件详情"}</span>
+            <span>{clipText(event.cwd || "", 48)}</span>
+          </div>
+        </div>
+
+        <div className="event-row__side">
+          <Text className="event-row__timestamp">{formatDateTime(event.time)}</Text>
+          <span className="event-row__arrow" aria-hidden="true">
+            <IconArrowRight size={14} />
+          </span>
+        </div>
+      </button>
+      <button
+        type="button"
+        className="event-row__session-action"
+        aria-label={`查看会话详情 ${shortSessionId(event.sessionId)}`}
+        onClick={() => onOpenSessionDetail?.(event)}
+      >
+        会话详情
+      </button>
+    </div>
   );
 }
 
-function VirtualEventList({ events, onOpenEvent }) {
+function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail }) {
   const viewportRef = useRef(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(520);
@@ -150,7 +156,7 @@ function VirtualEventList({ events, onOpenEvent }) {
               className="feed-virtual-scroll__item"
               style={{ transform: `translateY(${absoluteIndex * EVENT_ROW_HEIGHT}px)` }}
             >
-              <EventRow event={event} onOpenEvent={onOpenEvent} />
+              <EventRow event={event} onOpenEvent={onOpenEvent} onOpenSessionDetail={onOpenSessionDetail} />
             </div>
           );
         })}
@@ -169,6 +175,7 @@ export function StreamWorkspace({
   onClearSessionFocus,
   onOpenFilters,
   onOpenEvent,
+  onOpenSessionDetail,
   onLoadMore,
   hasMore,
   loading,
@@ -440,25 +447,37 @@ export function StreamWorkspace({
               {(sessions || []).map((session) => {
                 const active = session.sessionId === selectedSessionId;
                 return (
-                  <button
+                  <div
                     key={session.sessionId}
-                    type="button"
                     className={`session-rail__item${active ? " is-active" : ""}`}
-                    onClick={() => onSelectSession(session.sessionId)}
                   >
-                    <span className={`session-rail__mark session-rail__mark--${session.sourceType === "codex" ? "codex" : "claude"}`}>
-                      {session.sourceType === "codex" ? "CX" : "CC"}
-                    </span>
-                    <span className="session-rail__main">
-                      <span className="session-rail__title">{session.title || "未命名会话"}</span>
-                      <span className="session-rail__meta">
-                        {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)} · {formatNumber(session.count || 0)} 事件
-                        {session.groupedCount > 1 ? ` · ${formatNumber(session.groupedCount)} 会话` : ""}
+                    <button
+                      type="button"
+                      className="session-rail__focus"
+                      onClick={() => onSelectSession(session.sessionId)}
+                    >
+                      <span className={`session-rail__mark session-rail__mark--${session.sourceType === "codex" ? "codex" : "claude"}`}>
+                        {session.sourceType === "codex" ? "CX" : "CC"}
                       </span>
-                      <span className="session-rail__path">{clipText(session.cwd, 44)}</span>
-                    </span>
-                    <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
-                  </button>
+                      <span className="session-rail__main">
+                        <span className="session-rail__title">{session.title || "未命名会话"}</span>
+                        <span className="session-rail__meta">
+                          {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)} · {formatNumber(session.count || 0)} 事件
+                          {session.groupedCount > 1 ? ` · ${formatNumber(session.groupedCount)} 会话` : ""}
+                        </span>
+                        <span className="session-rail__path">{clipText(session.cwd, 44)}</span>
+                      </span>
+                      <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="session-rail__detail"
+                      aria-label={`查看会话详情 ${session.title || session.sessionId}`}
+                      onClick={() => onOpenSessionDetail?.(session)}
+                    >
+                      详情
+                    </button>
+                  </div>
                 );
               })}
             </Stack>
@@ -496,7 +515,7 @@ export function StreamWorkspace({
               ))}
             </Group>
           </Group>
-          <VirtualEventList events={events} onOpenEvent={onOpenEvent} />
+          <VirtualEventList events={events} onOpenEvent={onOpenEvent} onOpenSessionDetail={onOpenSessionDetail} />
           <Group justify="space-between" mt="md">
             <Text className="feed-footer">
               <IconChartBar size={14} stroke={1.8} />

@@ -10,6 +10,22 @@
   "use strict";
 
   const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
+  const traceModelApi = (() => {
+    try {
+      if (typeof require === "function") return require("./trace-model");
+    } catch {
+      // Browser builds can use the global fallback below.
+    }
+    return typeof globalThis !== "undefined" ? globalThis.ObserverTraceModel : null;
+  })();
+  const tokenPricingApi = (() => {
+    try {
+      if (typeof require === "function") return require("./token-pricing");
+    } catch {
+      // Browser builds can use the global fallback below.
+    }
+    return typeof globalThis !== "undefined" ? globalThis.ObserverTokenPricing : null;
+  })();
 
   function clip(text, max = 140) {
     const s = (text || "").trim().replace(/\s+/g, " ");
@@ -589,6 +605,12 @@
   function buildObservabilitySummary(events, options = {}) {
     const eventList = Array.isArray(events) ? events : [];
     const sessions = buildSessionGroups(eventList);
+    const traceSummary = traceModelApi?.summarizeTraceModel
+      ? traceModelApi.summarizeTraceModel(traceModelApi.buildTraceModel(eventList))
+      : { traces: sessions.length, spans: eventList.length, llmSpans: 0, toolSpans: 0, tokenSpans: 0, thinkingSpans: 0, maxDepth: 0 };
+    const costSummary = tokenPricingApi?.estimateCostSummary
+      ? tokenPricingApi.estimateCostSummary(eventList)
+      : { estimatedUsd: 0, knownTokenTotal: 0, currency: "USD", source: "unavailable", unknownModels: [], byModel: [] };
     const sessionById = new Map(sessions.map((session) => [session.sessionId, session]));
     const platformTokens = new Map();
     const modelTokens = new Map();
@@ -729,6 +751,7 @@
       tokens: {
         ...totals,
         effectiveTotal,
+        cost: costSummary,
         windows: buildTokenUsageWindows(eventList, options),
         byPlatform: tokenPlatformShare,
         byModel: tokenModelChart,
@@ -768,6 +791,7 @@
         workspaceTokens: workspaceChart,
         alertTypes: alertTypeChart,
       },
+      traces: traceSummary,
     };
   }
 

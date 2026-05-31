@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { apiClient } from "../api/client";
-import { downloadJsonl, formatNumber } from "../lib/formatters";
+import { downloadBlob, downloadJsonl, formatNumber } from "../lib/formatters";
 
 async function fetchAllSessionEvents(sessionId) {
   const events = [];
@@ -142,6 +142,28 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
     }
   }, [notify, selectedSessionIds]);
 
+  const exportSession = useCallback(async (session) => {
+    if (!session?.sessionId) return;
+    try {
+      const exported = await apiClient.exportSession(session.sessionId, {
+        format: "markdown",
+        sanitize: true,
+      });
+      downloadBlob(exported.filename, exported.blob);
+      notify({
+        title: "脱敏导出完成",
+        message: session.title || session.sessionTitle || session.fallbackTitle || session.sessionId,
+        color: "blue",
+      });
+    } catch (error) {
+      notify({
+        title: "脱敏导出失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    }
+  }, [notify]);
+
   return {
     selectedSessionIds,
     renameTarget,
@@ -159,5 +181,6 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
     clearSessionSelection,
     batchDelete,
     batchExport,
+    exportSession,
   };
 }

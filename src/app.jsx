@@ -103,6 +103,54 @@ function hasShortcutModifier(event) {
   return event.metaKey || event.ctrlKey || event.altKey || event.shiftKey;
 }
 
+function getNavigationSessionId(target) {
+  if (!target) return "";
+  if (typeof target === "string") return target;
+  return target.sessionId || target.id || "";
+}
+
+function buildSessionDetailSeed(target) {
+  if (!target || typeof target === "string") return null;
+  const sessionId = getNavigationSessionId(target);
+  if (!sessionId) return null;
+  return {
+    ...target,
+    sessionId,
+    title: target.title || target.sessionTitle || target.fallbackTitle || target.summary || "未命名会话",
+    sessionTitle: target.sessionTitle || target.title || target.fallbackTitle || target.summary || "",
+    fallbackTitle: target.fallbackTitle || target.title || target.summary || "",
+    latest: target.latest || target.time || "",
+    count: Number(target.count || target.events || 0),
+    totalTokens: Number(target.totalTokens || target.tokens || target.tokenUsage?.total || 0),
+    sourceFiles: target.sourceFiles || (target.sourceFile ? [target.sourceFile] : []),
+    models: target.models || (target.model ? [target.model] : []),
+  };
+}
+
+function sessionMatchesId(session, sessionId) {
+  if (!session || !sessionId) return false;
+  return session.sessionId === sessionId || (session.sessionIds || []).includes(sessionId);
+}
+
+function findSessionInSections(sections, sessionId) {
+  if (!sessionId) return null;
+  for (const section of sections || []) {
+    const match = (section.sessions || []).find((session) => sessionMatchesId(session, sessionId));
+    if (match) return match;
+  }
+  return null;
+}
+
+function createSessionDetailPage() {
+  return {
+    total: 0,
+    offset: 0,
+    limit: 500,
+    hasMore: false,
+    nextOffset: 0,
+  };
+}
+
 export function App() {
   const initialUrlState = useRef(
     parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
@@ -132,7 +180,12 @@ export function App() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState(null);
+  const [sessionDetailSeed, setSessionDetailSeed] = useState(null);
+  const [sessionDetailEvents, setSessionDetailEvents] = useState([]);
+  const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
+  const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
+  const sessionDetailRequestId = useRef(0);
   const deferredQuery = useDeferredValue(streamFilters.query);
   const notify = useCallback((options) => notifications.show(options), []);
   const { streamPayload, loadingEvents, loadEvents } = useStreamData({
@@ -189,6 +242,7 @@ export function App() {
     clearSessionSelection,
     batchDelete,
     batchExport,
+    exportSession,
   } = useSessionActions({
     loadSessions,
     loadEvents,
@@ -229,6 +283,72 @@ export function App() {
   const sessionSections = buildSessionSections(sessionGroups, sessionFilters);
   const sessionWorkspaceIndex = buildSessionWorkspaceIndex(sessionSections);
   const sessionWorkspaceTree = buildSessionWorkspaceTree(sessionWorkspaceIndex);
+  const selectedDetailSession = findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed;
+
+  async function loadSessionDetailEvents(sessionId = selectedSessionId, options = {}) {
+    if (!sessionId) {
+      sessionDetailRequestId.current += 1;
+      setSessionDetailEvents([]);
+      setSessionDetailPage(createSessionDetailPage());
+      setSessionDetailLoading(false);
+      return;
+    }
+
+    const append = Boolean(options.append);
+    const limit = sessionDetailPage.limit || 500;
+    const offset = append ? sessionDetailPage.nextOffset : 0;
+    const requestId = ++sessionDetailRequestId.current;
+    setSessionDetailLoading(true);
+
+    if (dataSource !== "server") {
+      const allEvents = localEvents
+        .filter((event) => event.sessionId === sessionId)
+        .sort((left, right) => String(left.time).localeCompare(String(right.time)));
+      if (requestId !== sessionDetailRequestId.current) return;
+      setSessionDetailEvents(allEvents);
+      setSessionDetailPage({
+        total: allEvents.length,
+        offset: 0,
+        limit: allEvents.length,
+        hasMore: false,
+        nextOffset: allEvents.length,
+      });
+      setSessionDetailLoading(false);
+      return;
+    }
+
+    try {
+      const payload = await apiClient.fetchEvents({
+        sessionId,
+        order: "asc",
+        limit,
+        offset,
+        mode: "raw",
+        summary: 0,
+      });
+      if (requestId !== sessionDetailRequestId.current) return;
+      const nextEvents = payload.events || [];
+      const total = Number(payload.totalMatching) || nextEvents.length;
+      const nextOffset = offset + nextEvents.length;
+      setSessionDetailEvents((current) => (append ? [...current, ...nextEvents] : nextEvents));
+      setSessionDetailPage({
+        total,
+        offset,
+        limit,
+        hasMore: Boolean(payload.page?.hasMore) || nextOffset < total,
+        nextOffset,
+      });
+    } catch (error) {
+      if (requestId !== sessionDetailRequestId.current) return;
+      notify({
+        title: "会话详情加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      if (requestId === sessionDetailRequestId.current) setSessionDetailLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!pendingWorkspaceKey || tab !== "sessions" || sessionFilters.groupBy !== "cwd") return undefined;
@@ -241,6 +361,12 @@ export function App() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [pendingWorkspaceKey, sessionFilters.groupBy, sessionSections, tab]);
+
+  useEffect(() => {
+    if (tab !== "sessions" || !selectedSessionId) return undefined;
+    void loadSessionDetailEvents(selectedSessionId, { append: false });
+    return undefined;
+  }, [dataSource, selectedSessionId, tab]);
 
   useEffect(() => {
     document.documentElement.dataset.observerTheme = themeMode;
@@ -332,6 +458,9 @@ export function App() {
 
   function clearSessionFocus() {
     setSelectedSessionId("");
+    setSessionDetailSeed(null);
+    setSessionDetailEvents([]);
+    setSessionDetailPage(createSessionDetailPage());
   }
 
   async function handleImport(files) {
@@ -415,6 +544,29 @@ export function App() {
       ...current,
       groupBy: "cwd",
     }));
+  }
+
+  function openSessionDetail(target, options = {}) {
+    const sessionId = getNavigationSessionId(target);
+    if (!sessionId) return;
+    const seed = buildSessionDetailSeed(target);
+    setSessionDetailSeed(seed);
+    setSelectedSessionId(sessionId);
+    if (options.closeEventDrawer) setDetailEvent(null);
+    startTransition(() => {
+      setTab("sessions");
+    });
+  }
+
+  function focusStreamSession(target) {
+    const sessionId = getNavigationSessionId(target);
+    if (!sessionId) return;
+    const seed = buildSessionDetailSeed(target);
+    setSessionDetailSeed(seed);
+    setSelectedSessionId(sessionId);
+    startTransition(() => {
+      setTab("stream");
+    });
   }
 
   const canMutateSessions = dataSource === "server";
@@ -634,6 +786,7 @@ export function App() {
                     loading={loadingObservability}
                     onRefresh={loadObservability}
                     onOpenConversation={openConversation}
+                    onOpenSessionDetail={openSessionDetail}
                   />
                 </Suspense>
               ) : tab === "stream" ? (
@@ -727,6 +880,7 @@ export function App() {
                       onClearSessionFocus={clearSessionFocus}
                       onOpenFilters={() => setFiltersOpen(true)}
                       onOpenEvent={openEventDetail}
+                      onOpenSessionDetail={openSessionDetail}
                       onLoadMore={() => loadEvents({ append: true })}
                       hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
                       loading={loadingEvents}
@@ -818,6 +972,17 @@ export function App() {
                       <Button variant="light" radius="xl" color="orange" onClick={selectLowContentSessions}>
                         选中低内容
                       </Button>
+                      {selectedSessionId ? (
+                        <Button
+                          variant="light"
+                          radius="xl"
+                          color="gray"
+                          leftSection={<IconX size={14} />}
+                          onClick={clearSessionFocus}
+                        >
+                          取消聚焦会话 {selectedSessionId.slice(0, 8)}
+                        </Button>
+                      ) : null}
                       {selectedSessionIds.length > 0 ? (
                         <>
                           <Button variant="light" radius="xl" color="blue" onClick={batchExport}>
@@ -838,8 +1003,16 @@ export function App() {
                       workspaceIndex={sessionWorkspaceIndex}
                       workspaceTree={sessionWorkspaceTree}
                       selectedIds={selectedSessionIds}
+                      selectedSessionId={selectedSessionId}
+                      detailSession={selectedDetailSession}
+                      detailEvents={sessionDetailEvents}
+                      detailLoading={sessionDetailLoading}
+                      detailPage={sessionDetailPage}
                       onToggleSelect={toggleSessionSelection}
                       onOpenConversation={openConversation}
+                      onOpenSessionDetail={openSessionDetail}
+                      onFocusStreamSession={focusStreamSession}
+                      onClearSessionFocus={clearSessionFocus}
                       onFocusWorkspace={focusWorkspaceSessions}
                       onRename={(session) => {
                         if (canMutateSessions) openRename(session);
@@ -848,6 +1021,9 @@ export function App() {
                         if (canMutateSessions) openDelete(session);
                       }}
                       onCopySessionId={copySessionId}
+                      onExportSession={exportSession}
+                      onOpenEvent={openEventDetail}
+                      onLoadMoreSessionDetail={() => loadSessionDetailEvents(selectedSessionId, { append: true })}
                     />
                   </Suspense>
                 </>
@@ -946,6 +1122,7 @@ export function App() {
               opened={Boolean(detailEvent)}
               onClose={() => setDetailEvent(null)}
               onCopySessionId={copySessionId}
+              onOpenSessionDetail={(event) => openSessionDetail(event, { closeEventDrawer: true })}
               onCopy={(event) => {
                 navigator.clipboard.writeText(JSON.stringify(event, null, 2));
                 notifications.show({

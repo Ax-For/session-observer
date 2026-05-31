@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Badge, Button, Drawer, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
-import { IconCopy } from "@tabler/icons-react";
+import { IconCopy, IconRoute } from "@tabler/icons-react";
 import {
   callTypeLabel,
   formatFullDateTime,
@@ -10,7 +10,7 @@ import {
 import { readableEventSummary } from "../lib/event-display";
 import { JsonCodeBlock } from "./json-code-block";
 
-export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId }) {
+export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, onOpenSessionDetail }) {
   const [showRawJson, setShowRawJson] = useState(false);
 
   return (
@@ -78,6 +78,15 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId })
                 onClick={() => onCopySessionId?.(event.sessionId)}
               >
                 复制会话 ID
+              </Button>
+              <Button
+                variant="light"
+                radius="xl"
+                color="teal"
+                leftSection={<IconRoute size={16} />}
+                onClick={() => onOpenSessionDetail?.(event)}
+              >
+                打开会话详情
               </Button>
               <Button
                 variant="light"

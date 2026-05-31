@@ -107,6 +107,20 @@ const server = http.createServer((req, res) => {
       return sendJson(req, res, 200, routes.querySessions());
     }
 
+    if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/export") && req.method === "GET") {
+      const parts = u.pathname.split("/").filter(Boolean);
+      const sessionId = decodeURIComponent(parts[2] || "");
+      if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
+      const exported = routes.exportSession(sessionId, {
+        format: u.searchParams.get("format") || "markdown",
+        sanitize: u.searchParams.get("sanitize") !== "0",
+      });
+      if (!exported) return sendJson(req, res, 404, { error: "Session not found" });
+      sendDownload(res, 200, exported);
+      indexManager.trimHeapSoon();
+      return;
+    }
+
     if (u.pathname === "/api/observability" && req.method === "GET") {
       sendJson(req, res, 200, routes.queryObservability());
       indexManager.trimHeapSoon();
@@ -172,6 +186,18 @@ function sendJson(req, res, status, data) {
   res.writeHead(status, {
     "Content-Type": config.MIME[".json"],
     ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
+    "Cache-Control": "no-store",
+    "Content-Length": payload.length,
+  });
+  res.end(payload);
+}
+
+function sendDownload(res, status, exported) {
+  const payload = Buffer.from(exported.body || "");
+  const filename = String(exported.filename || "session-export.txt").replace(/["\\]/g, "");
+  res.writeHead(status, {
+    "Content-Type": exported.contentType || "application/octet-stream",
+    "Content-Disposition": `attachment; filename="${filename}"`,
     "Cache-Control": "no-store",
     "Content-Length": payload.length,
   });

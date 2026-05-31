@@ -6,6 +6,7 @@ import { SessionWorkspace } from "../session-workspace";
 describe("SessionWorkspace", () => {
   test("renders active sessions above the grouped session list", () => {
     const onOpenConversation = vi.fn();
+    const onOpenSessionDetail = vi.fn();
 
     render(
       <MantineProvider>
@@ -39,6 +40,7 @@ describe("SessionWorkspace", () => {
           selectedIds={[]}
           onToggleSelect={() => {}}
           onOpenConversation={onOpenConversation}
+          onOpenSessionDetail={onOpenSessionDetail}
           onFocusWorkspace={() => {}}
           onRename={() => {}}
           onDelete={() => {}}
@@ -50,13 +52,16 @@ describe("SessionWorkspace", () => {
     expect(screen.getByText("当前活跃")).toBeInTheDocument();
     expect(screen.getByText("最近 30 分钟仍在写入的会话")).toBeInTheDocument();
     expect(screen.getByText("还有 1 个活跃会话")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /打开活跃会话 当前项目 UI 调整/ }));
+    fireEvent.click(screen.getByRole("button", { name: /查看活跃会话详情 当前项目 UI 调整/ }));
+    expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
+    fireEvent.click(screen.getByRole("button", { name: /查看活跃会话对话 当前项目 UI 调整/ }));
     expect(onOpenConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
   });
 
   test("keeps a session id copy action on session cards", () => {
     const onCopySessionId = vi.fn();
     const onFocusWorkspace = vi.fn();
+    const onExportSession = vi.fn();
 
     render(
       <MantineProvider>
@@ -99,12 +104,17 @@ describe("SessionWorkspace", () => {
           onRename={() => {}}
           onDelete={() => {}}
           onCopySessionId={onCopySessionId}
+          onExportSession={onExportSession}
         />
       </MantineProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /复制会话 id · 019da544/i }));
     expect(onCopySessionId).toHaveBeenCalledWith("019da544-e133-7b71-9e63-79d2bbba8713");
+    fireEvent.click(screen.getByRole("button", { name: /导出脱敏会话 · 019da544/i }));
+    expect(onExportSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "019da544-e133-7b71-9e63-79d2bbba8713",
+    }));
     expect(screen.getByText("文件位置")).toBeInTheDocument();
     expect(screen.getAllByText(/session\.jsonl/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /定位工作目录 .*session-observer/i }));
@@ -158,5 +168,95 @@ describe("SessionWorkspace", () => {
     expect(screen.getByText("2 个原始会话 · 每个约 6 条事件")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 这个 npm script 怎么启动" }));
     expect(onToggleSelect).toHaveBeenCalledWith(["older", "newer"]);
+  });
+
+  test("renders a rich selected session detail panel", () => {
+    const onOpenEvent = vi.fn();
+    const onFocusStreamSession = vi.fn();
+    const onClearSessionFocus = vi.fn();
+
+    render(
+      <MantineProvider>
+        <SessionWorkspace
+          selectedSessionId="sess-1"
+          detailSession={{
+            sessionId: "sess-1",
+            sourceType: "codex",
+            title: "Session detail work",
+            latest: "2026-05-31T10:10:00.000Z",
+            count: 4,
+            totalTokens: 4200,
+            hasTokenData: true,
+            cwd: "/Users/me/code/session-observer",
+            sourceFiles: ["/Users/me/.codex/sessions/detail.jsonl"],
+            models: ["gpt-5.4"],
+          }}
+          detailEvents={[
+            {
+              time: "2026-05-31T10:00:00.000Z",
+              callType: "Prompt",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "用户输入 · 改造详情页",
+            },
+            {
+              time: "2026-05-31T10:02:00.000Z",
+              callType: "Tool_Call",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              toolName: "exec_command",
+              summary: "tool=exec_command args={\"cmd\":\"npm test\"}",
+            },
+            {
+              time: "2026-05-31T10:04:00.000Z",
+              callType: "Token_Usage",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "Token usage",
+              tokenUsage: {
+                input: 3000,
+                output: 500,
+                total: 3500,
+                cachedInput: 1200,
+                cacheCreationInput: 100,
+                reasoningOutput: 200,
+              },
+            },
+          ]}
+          detailPage={{ total: 3, hasMore: false, nextOffset: 3, limit: 500 }}
+          detailLoading={false}
+          sections={[]}
+          workspaceIndex={[]}
+          selectedIds={[]}
+          onToggleSelect={() => {}}
+          onOpenConversation={() => {}}
+          onOpenSessionDetail={() => {}}
+          onFocusStreamSession={onFocusStreamSession}
+          onClearSessionFocus={onClearSessionFocus}
+          onFocusWorkspace={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onCopySessionId={() => {}}
+          onOpenEvent={onOpenEvent}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("Session detail work")).toBeInTheDocument();
+    expect(screen.getByText("Token 构成")).toBeInTheDocument();
+    expect(screen.getByText("事件类型")).toBeInTheDocument();
+    expect(screen.getByText("工具调用")).toBeInTheDocument();
+    expect(screen.getByText("模型分布")).toBeInTheDocument();
+    expect(screen.getByText("最近事件")).toBeInTheDocument();
+    expect(screen.getByText("exec_command")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "在事件流聚焦当前会话" }));
+    expect(onFocusStreamSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));
+    expect(onClearSessionFocus).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: /Token usage/ }));
+    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });
 });

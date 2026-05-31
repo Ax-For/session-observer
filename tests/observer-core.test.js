@@ -399,6 +399,11 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.equal(summary.tokens.inputTotal, 1400);
   assert.equal(summary.tokens.cacheReadInput, 300);
   assert.equal(summary.tokens.cacheCreationInput, 0);
+  assert.equal(summary.tokens.cost.estimatedUsd > 0, true);
+  assert.equal(summary.tokens.cost.knownTokenTotal > 0, true);
+  assert.equal(Array.isArray(summary.tokens.cost.unknownModels), true);
+  assert.equal(summary.traces.traces, 2);
+  assert.equal(summary.traces.tokenSpans, 2);
   assert.deepEqual(summary.tokens.byPlatform, [
     { key: "codex", total: 1200 },
     { key: "claude", total: 500 },
