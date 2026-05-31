@@ -16,7 +16,7 @@ import {
   Tree,
   useTree,
 } from "@mantine/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   IconArrowRight,
   IconActivity,
@@ -45,6 +45,10 @@ import {
   shortSessionId,
 } from "../lib/formatters";
 import { readableEventSummary } from "../lib/event-display";
+
+const SESSION_VIRTUAL_THRESHOLD = 24;
+const SESSION_ROW_HEIGHT = 126;
+const SESSION_ROW_OVERSCAN = 4;
 
 function formatTokenText(value, hasTokenData = true) {
   return hasTokenData ? `${formatCompactNumber(value)} Tok` : "Token 未记录";
@@ -674,6 +678,219 @@ function WorkspaceTreeView({ data, onFocusWorkspace }) {
   );
 }
 
+function SessionRow({
+  session,
+  selectedSet,
+  selectedSessionId,
+  onToggleSelect,
+  onOpenConversation,
+  onOpenSessionDetail,
+  onRename,
+  onDelete,
+  onCopySessionId,
+  onExportSession,
+}) {
+  const sessionIds = getSessionIds(session);
+  const selectedCount = sessionIds.filter((id) => selectedSet.has(id)).length;
+  const checked = sessionIds.length > 0 && selectedCount === sessionIds.length;
+  const indeterminate = selectedCount > 0 && selectedCount < sessionIds.length;
+  const active = sessionMatchesId(session, selectedSessionId);
+
+  return (
+    <div className={`session-card session-row${active ? " is-active" : ""}`}>
+      <div className="session-row__select">
+        <Checkbox
+          checked={checked}
+          indeterminate={indeterminate}
+          onChange={() => onToggleSelect(sessionIds)}
+          aria-label={`选择 ${session.title}`}
+        />
+      </div>
+
+      <button
+        type="button"
+        className="session-row__main"
+        onClick={() => onOpenSessionDetail(session)}
+      >
+        <div className="session-row__title-line">
+          <ThemeIcon
+            radius="xl"
+            size={28}
+            variant="gradient"
+            gradient={session.sourceType === "codex"
+              ? { from: "blue", to: "cyan" }
+              : { from: "orange", to: "yellow" }}
+            aria-label={platformLabel(session.sourceType)}
+          >
+            <IconTerminal2 size={15} stroke={2.2} />
+          </ThemeIcon>
+          <Text fw={700} className="session-card__title">{session.title}</Text>
+        </div>
+        <div className="session-row__meta-line">
+          <Badge radius="xl" color={session.sourceType === "codex" ? "blue" : "orange"} variant="light" size="xs">
+            {platformLabel(session.sourceType)}
+          </Badge>
+          <span>{formatDateTime(session.latest)}</span>
+          <span>{groupedEventText(session)}</span>
+          <span>{formatTokenText(session.totalTokens, session.hasTokenData)}</span>
+        </div>
+        {session.sourceFiles?.[0] ? (
+          <div className="session-row__file-line">
+            <ThemeIcon radius="xl" size={20} variant="light" color="gray">
+              <IconFileText size={12} />
+            </ThemeIcon>
+            <span>{clipText(session.sourceFiles[0], 84)}</span>
+          </div>
+        ) : null}
+      </button>
+
+      <div className="session-row__models">
+        {(session.models || []).slice(0, 3).map((model) => (
+          <Badge key={model} radius="xl" variant="light" color="gray" className="soft-badge">
+            {model}
+          </Badge>
+        ))}
+      </div>
+
+      <Text className="session-row__id">{shortSessionId(session.sessionId)}</Text>
+
+      <Group gap={4} className="session-row__quick-actions" wrap="nowrap">
+        <Tooltip label="复制会话 ID" withArrow>
+          <ActionIcon
+            variant="light"
+            radius="xl"
+            color="gray"
+            aria-label={`复制会话 ID · ${shortSessionId(session.sessionId)}`}
+            onClick={() => onCopySessionId?.(session.sessionId)}
+          >
+            <IconCopy size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="查看对话" withArrow>
+          <ActionIcon
+            variant="light"
+            radius="xl"
+            color="blue"
+            aria-label={`查看对话 · ${shortSessionId(session.sessionId)}`}
+            onClick={() => onOpenConversation(session)}
+          >
+            <IconMessage2 size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="导出脱敏会话" withArrow>
+          <ActionIcon
+            variant="light"
+            radius="xl"
+            color="teal"
+            aria-label={`导出脱敏会话 · ${shortSessionId(session.sessionId)}`}
+            onClick={() => onExportSession?.(session)}
+          >
+            <IconDownload size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="重命名" withArrow>
+          <ActionIcon
+            variant="light"
+            radius="xl"
+            color="gray"
+            aria-label={`重命名 · ${shortSessionId(session.sessionId)}`}
+            onClick={() => onRename(session)}
+          >
+            <IconEdit size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="删除" withArrow>
+          <ActionIcon
+            variant="light"
+            radius="xl"
+            color="red"
+            aria-label={`删除 · ${shortSessionId(session.sessionId)}`}
+            onClick={() => onDelete(session)}
+          >
+            <IconTrash size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+
+      <Group gap="xs" className="session-row__actions" wrap="nowrap">
+        <Button
+          variant="subtle"
+          color="gray"
+          radius="xl"
+          size="xs"
+          onClick={() => onOpenSessionDetail(session)}
+        >
+          查看详情 · {shortSessionId(session.sessionId)}
+        </Button>
+      </Group>
+    </div>
+  );
+}
+
+function VirtualSessionList({ sessions, renderSession }) {
+  const viewportRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(620);
+  const shouldVirtualize = (sessions || []).length > SESSION_VIRTUAL_THRESHOLD;
+
+  useEffect(() => {
+    if (!shouldVirtualize) return undefined;
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+
+    const syncViewportHeight = () => setViewportHeight(viewport.clientHeight || 620);
+    syncViewportHeight();
+
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(syncViewportHeight);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [shouldVirtualize]);
+
+  if (!shouldVirtualize) {
+    return (
+      <div className="session-list">
+        {(sessions || []).map((session) => (
+          <div key={session.sessionId}>
+            {renderSession(session)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const sessionList = sessions || [];
+  const totalHeight = sessionList.length * SESSION_ROW_HEIGHT;
+  const startIndex = Math.max(0, Math.floor(scrollTop / SESSION_ROW_HEIGHT) - SESSION_ROW_OVERSCAN);
+  const visibleCount = Math.ceil(viewportHeight / SESSION_ROW_HEIGHT) + SESSION_ROW_OVERSCAN * 2;
+  const endIndex = Math.min(sessionList.length, startIndex + visibleCount);
+  const visibleSessions = sessionList.slice(startIndex, endIndex);
+
+  return (
+    <div
+      ref={viewportRef}
+      className="session-list session-list-virtual-scroll"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      style={{ "--session-row-height": `${SESSION_ROW_HEIGHT}px` }}
+    >
+      <div className="session-list-virtual-scroll__spacer" style={{ height: totalHeight }}>
+        {visibleSessions.map((session, index) => {
+          const absoluteIndex = startIndex + index;
+          return (
+            <div
+              key={session.sessionId}
+              className="session-list-virtual-scroll__item"
+              style={{ transform: `translateY(${absoluteIndex * SESSION_ROW_HEIGHT}px)` }}
+            >
+              {renderSession(session)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function SessionWorkspace({
   activeOverview,
   sections,
@@ -772,145 +989,23 @@ export function SessionWorkspace({
                 </div>
               </Group>
 
-              <div className="session-list">
-                {section.sessions.map((session) => {
-                  const sessionIds = getSessionIds(session);
-                  const selectedCount = sessionIds.filter((id) => selectedSet.has(id)).length;
-                  const checked = sessionIds.length > 0 && selectedCount === sessionIds.length;
-                  const indeterminate = selectedCount > 0 && selectedCount < sessionIds.length;
-                  const active = sessionMatchesId(session, selectedSessionId);
-
-                  return (
-                  <div key={session.sessionId} className={`session-card session-row${active ? " is-active" : ""}`}>
-                    <div className="session-row__select">
-                      <Checkbox
-                        checked={checked}
-                        indeterminate={indeterminate}
-                        onChange={() => onToggleSelect(sessionIds)}
-                        aria-label={`选择 ${session.title}`}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      className="session-row__main"
-                      onClick={() => openSessionDetail(session)}
-                    >
-                      <div className="session-row__title-line">
-                        <ThemeIcon
-                          radius="xl"
-                          size={28}
-                          variant="gradient"
-                          gradient={session.sourceType === "codex"
-                            ? { from: "blue", to: "cyan" }
-                            : { from: "orange", to: "yellow" }}
-                          aria-label={platformLabel(session.sourceType)}
-                        >
-                          <IconTerminal2 size={15} stroke={2.2} />
-                        </ThemeIcon>
-                        <Text fw={700} className="session-card__title">{session.title}</Text>
-                      </div>
-                      <div className="session-row__meta-line">
-                        <Badge radius="xl" color={session.sourceType === "codex" ? "blue" : "orange"} variant="light" size="xs">
-                          {platformLabel(session.sourceType)}
-                        </Badge>
-                        <span>{formatDateTime(session.latest)}</span>
-                        <span>{groupedEventText(session)}</span>
-                        <span>{formatTokenText(session.totalTokens, session.hasTokenData)}</span>
-                      </div>
-                      {session.sourceFiles?.[0] ? (
-                        <div className="session-row__file-line">
-                          <ThemeIcon radius="xl" size={20} variant="light" color="gray">
-                            <IconFileText size={12} />
-                          </ThemeIcon>
-                          <span>{clipText(session.sourceFiles[0], 84)}</span>
-                        </div>
-                      ) : null}
-                    </button>
-
-                    <div className="session-row__models">
-                      {(session.models || []).slice(0, 3).map((model) => (
-                        <Badge key={model} radius="xl" variant="light" color="gray" className="soft-badge">
-                          {model}
-                        </Badge>
-                      ))}
-                    </div>
-
-                    <Text className="session-row__id">{shortSessionId(session.sessionId)}</Text>
-
-                    <Group gap={4} className="session-row__quick-actions" wrap="nowrap">
-                      <Tooltip label="复制会话 ID" withArrow>
-                        <ActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="gray"
-                          aria-label={`复制会话 ID · ${shortSessionId(session.sessionId)}`}
-                          onClick={() => onCopySessionId?.(session.sessionId)}
-                        >
-                          <IconCopy size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="查看对话" withArrow>
-                        <ActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="blue"
-                          aria-label={`查看对话 · ${shortSessionId(session.sessionId)}`}
-                          onClick={() => onOpenConversation(session)}
-                        >
-                          <IconMessage2 size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="导出脱敏会话" withArrow>
-                        <ActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="teal"
-                          aria-label={`导出脱敏会话 · ${shortSessionId(session.sessionId)}`}
-                          onClick={() => onExportSession?.(session)}
-                        >
-                          <IconDownload size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="重命名" withArrow>
-                        <ActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="gray"
-                          aria-label={`重命名 · ${shortSessionId(session.sessionId)}`}
-                          onClick={() => onRename(session)}
-                        >
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="删除" withArrow>
-                        <ActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="red"
-                          aria-label={`删除 · ${shortSessionId(session.sessionId)}`}
-                          onClick={() => onDelete(session)}
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-
-                    <Group gap="xs" className="session-row__actions" wrap="nowrap">
-                      <Button
-                        variant="subtle"
-                        color="gray"
-                        radius="xl"
-                        size="xs"
-                        onClick={() => openSessionDetail(session)}
-                      >
-                        查看详情 · {shortSessionId(session.sessionId)}
-                      </Button>
-                    </Group>
-                  </div>
-                  );
-                })}
-              </div>
+              <VirtualSessionList
+                sessions={section.sessions}
+                renderSession={(session) => (
+                  <SessionRow
+                    session={session}
+                    selectedSet={selectedSet}
+                    selectedSessionId={selectedSessionId}
+                    onToggleSelect={onToggleSelect}
+                    onOpenConversation={onOpenConversation}
+                    onOpenSessionDetail={openSessionDetail}
+                    onRename={onRename}
+                    onDelete={onDelete}
+                    onCopySessionId={onCopySessionId}
+                    onExportSession={onExportSession}
+                  />
+                )}
+              />
             </Paper>
             );
           })}

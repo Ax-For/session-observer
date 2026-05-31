@@ -619,6 +619,7 @@
     const toolStats = new Map();
     const alertTypeCounts = new Map();
     const alertPlatformCounts = new Map();
+    const sessionAlertCounts = new Map();
     const totals = {
       input: 0,
       inputTotal: 0,
@@ -659,6 +660,7 @@
       if (alert) {
         alertEvents += 1;
         workspace.alerts += 1;
+        addMapValue(sessionAlertCounts, event?.sessionId, 1);
         addMapValue(alertTypeCounts, event?.callType, 1);
         addMapValue(alertPlatformCounts, event?.sourceType, 1);
         alertRecent.push({
@@ -717,7 +719,7 @@
         latest: session.latest || "",
         events: session.count || 0,
         tokens: tokenCountedTotal(session.aggregateToken, session.sourceType),
-        alerts: eventList.filter((event) => event.sessionId === session.sessionId && isAlertEvent(event)).length,
+        alerts: sessionAlertCounts.get(session.sessionId) || 0,
       }))
       .sort((left, right) => {
         if (right.tokens !== left.tokens) return right.tokens - left.tokens;

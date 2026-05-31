@@ -182,14 +182,29 @@ function sendJson(req, res, status, data) {
   const body = JSON.stringify(data);
   const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
   const shouldGzip = acceptsGzip && Buffer.byteLength(body) > 1024;
-  const payload = shouldGzip ? zlib.gzipSync(body) : Buffer.from(body);
-  res.writeHead(status, {
-    "Content-Type": config.MIME[".json"],
-    ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
-    "Cache-Control": "no-store",
-    "Content-Length": payload.length,
+
+  const writePayload = (payload, gzipped = false) => {
+    res.writeHead(status, {
+      "Content-Type": config.MIME[".json"],
+      ...(gzipped ? { "Content-Encoding": "gzip" } : {}),
+      "Cache-Control": "no-store",
+      "Content-Length": payload.length,
+    });
+    res.end(payload);
+  };
+
+  if (!shouldGzip) {
+    writePayload(Buffer.from(body));
+    return;
+  }
+
+  zlib.gzip(body, (error, payload) => {
+    if (error) {
+      writePayload(Buffer.from(body));
+      return;
+    }
+    writePayload(payload, true);
   });
-  res.end(payload);
 }
 
 function sendDownload(res, status, exported) {

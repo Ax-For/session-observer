@@ -4163,6 +4163,35 @@ button.mc-active-cost-row:focus-visible {
   gap: 8px;
 }
 
+.session-list-virtual-scroll {
+  position: relative;
+  display: block;
+  height: clamp(360px, 48vh, 720px);
+  overflow: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  contain: layout paint;
+}
+
+.session-list-virtual-scroll__spacer {
+  position: relative;
+  min-height: 100%;
+}
+
+.session-list-virtual-scroll__item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 4px;
+  min-height: var(--session-row-height);
+  padding-bottom: 8px;
+  will-change: transform;
+}
+
+.session-list-virtual-scroll .session-row {
+  min-height: calc(var(--session-row-height) - 8px);
+}
+
 .session-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);

@@ -10,12 +10,32 @@ const { createSessionExport } = require("./session-export");
 const { listSourceAdapters } = require("../shared/source-adapters");
 
 let _deps = null;
+let visibleEventsCache = { key: "", asc: [], desc: [] };
+let observabilitySummaryCache = { key: "", summary: null };
 
 /**
  * Initialize route handlers with dependencies.
  */
 function init(deps) {
   _deps = deps;
+  visibleEventsCache = { key: "", asc: [], desc: [] };
+  observabilitySummaryCache = { key: "", summary: null };
+}
+
+/**
+ * Return events already filtered for the current mode and ordered both ways.
+ */
+function getVisibleEventSet(ready, mode) {
+  const cacheKey = `${ready.currentAggregateKey || ""}|${mode || "observe"}`;
+  if (visibleEventsCache.key === cacheKey) return visibleEventsCache;
+
+  const asc = (ready.events || []).filter((event) => _deps.eventMatchesModeCore(event, mode));
+  visibleEventsCache = {
+    key: cacheKey,
+    asc,
+    desc: asc.slice().reverse(),
+  };
+  return visibleEventsCache;
 }
 
 /**
@@ -98,19 +118,15 @@ function queryEvents(filters) {
     return querySessionEventsDirect(filters, ready);
   }
 
-  const allEvents = ready.events;
-  const visibleEvents = allEvents.filter((event) => _deps.eventMatchesModeCore(event, filters.mode));
-  const matched = visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, filters));
+  const visibleEventSet = getVisibleEventSet(ready, filters.mode);
+  const visibleEvents = visibleEventSet.asc;
+  const orderedVisibleEvents = filters.order === "asc" ? visibleEventSet.asc : visibleEventSet.desc;
+  const matched = orderedVisibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, filters));
   const aggregateMatchedSessions = filters.includeSummary
     ? visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, {
       ...filters, query: "", type: "", quickFilter: "all", sessionId: "",
     }))
     : [];
-  matched.sort((a, b) => {
-    const am = _deps.toTimeMsCore(a.time) ?? 0;
-    const bm = _deps.toTimeMsCore(b.time) ?? 0;
-    return filters.order === "asc" ? am - bm : bm - am;
-  });
   const paged = matched.slice(filters.offset, filters.offset + filters.limit);
 
   return {
@@ -232,8 +248,15 @@ function queryObservability() {
   const ready = indexManager.ensureIndexReady(
     _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
   );
-  const visibleEvents = ready.events.filter((event) => _deps.eventMatchesModeCore(event, "observe"));
-  const summary = _deps.buildObservabilitySummaryCore(visibleEvents);
+  const visibleEvents = getVisibleEventSet(ready, "observe").asc;
+  const summaryKey = `${ready.currentAggregateKey || ""}|observe`;
+  if (observabilitySummaryCache.key !== summaryKey) {
+    observabilitySummaryCache = {
+      key: summaryKey,
+      summary: _deps.buildObservabilitySummaryCore(visibleEvents),
+    };
+  }
+  const summary = observabilitySummaryCache.summary;
 
   return {
     generatedAt: new Date().toISOString(),
@@ -274,7 +297,13 @@ function serveStatic(reqPath, res) {
     return res.end("Not Found");
   }
   const ext = pathModule.extname(abs);
-  res.writeHead(200, { "Content-Type": config.MIME[ext] || "application/octet-stream" });
+  const cacheHeader = filePath.startsWith("/assets/")
+    ? "public, max-age=31536000, immutable"
+    : "no-cache";
+  res.writeHead(200, {
+    "Content-Type": config.MIME[ext] || "application/octet-stream",
+    "Cache-Control": cacheHeader,
+  });
   fs.createReadStream(abs).pipe(res);
 }
 

@@ -170,6 +170,55 @@ describe("SessionWorkspace", () => {
     expect(onToggleSelect).toHaveBeenCalledWith(["older", "newer"]);
   });
 
+  test("virtualizes large session groups while preserving scroll access", () => {
+    const sessions = Array.from({ length: 80 }, (_, index) => ({
+      sessionId: `sess-${index}`,
+      sourceType: "codex",
+      title: `Session ${index}`,
+      latest: `2026-05-31T10:${String(index).padStart(2, "0")}:00.000Z`,
+      count: index + 1,
+      totalTokens: 1000 + index,
+      hasTokenData: true,
+      cwd: "/Users/me/code/session-observer",
+      sourceFiles: [],
+      models: ["gpt-5.4"],
+    }));
+
+    render(
+      <MantineProvider>
+        <SessionWorkspace
+          sections={[
+            {
+              key: "/Users/me/code/session-observer",
+              cwd: "/Users/me/code/session-observer",
+              label: "/Users/me/code/session-observer",
+              groupType: "cwd",
+              total: sessions.length,
+              sessions,
+            },
+          ]}
+          workspaceIndex={[]}
+          selectedIds={[]}
+          onToggleSelect={() => {}}
+          onOpenConversation={() => {}}
+          onFocusWorkspace={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onCopySessionId={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("Session 0")).toBeInTheDocument();
+    expect(screen.queryByText("Session 79")).not.toBeInTheDocument();
+
+    const virtualScroll = document.querySelector(".session-list-virtual-scroll");
+    expect(virtualScroll).toBeTruthy();
+    fireEvent.scroll(virtualScroll, { target: { scrollTop: 9800 } });
+
+    expect(screen.getByText("Session 79")).toBeInTheDocument();
+  });
+
   test("renders a rich selected session detail panel", () => {
     const onOpenEvent = vi.fn();
     const onFocusStreamSession = vi.fn();

@@ -1,4 +1,4 @@
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActionIcon,
   AppShell,
@@ -249,41 +249,76 @@ export function App() {
     notify,
   });
 
-  const localPayload = buildLocalStreamPayload({
-    events: localEvents,
-    filters: { ...streamFilters, query: deferredQuery },
-    selectedSessionId,
-    quickFilter,
-    tokenThreshold: Number(tokenThreshold) || 20000,
+  const localPayload = useMemo(() => {
+    if (dataSource === "server") return null;
+    return buildLocalStreamPayload({
+      events: localEvents,
+      filters: { ...streamFilters, query: deferredQuery },
+      selectedSessionId,
+      quickFilter,
+      tokenThreshold: Number(tokenThreshold) || 20000,
+      mode,
+    });
+  }, [
+    dataSource,
+    deferredQuery,
+    localEvents,
     mode,
-  });
+    quickFilter,
+    selectedSessionId,
+    streamFilters.end,
+    streamFilters.model,
+    streamFilters.order,
+    streamFilters.platform,
+    streamFilters.start,
+    streamFilters.type,
+    tokenThreshold,
+  ]);
   const currentStream = dataSource === "server" ? streamPayload : localPayload;
-  const streamSummary = buildDashboardSummary({
+  const streamSummary = useMemo(() => buildDashboardSummary({
     events: currentStream.events,
     sessions: currentStream.sessions,
     totalVisible: currentStream.totalVisible,
     totalMatching: currentStream.totalMatching,
     totalLoaded: currentStream.events.length,
     tokenWindows: currentStream.tokenWindows,
-  });
-  const streamScope = buildStreamScope({
+  }), [currentStream]);
+  const streamScope = useMemo(() => buildStreamScope({
     selectedSessionId,
     sessions: currentStream.sessions,
     quickFilter,
     platform: streamFilters.platform,
     query: deferredQuery,
     mode,
-  });
-  const streamSessions = buildStreamSessionRailItems(currentStream.sessions);
+  }), [currentStream.sessions, deferredQuery, mode, quickFilter, selectedSessionId, streamFilters.platform]);
+  const streamSessions = useMemo(
+    () => buildStreamSessionRailItems(currentStream.sessions),
+    [currentStream.sessions],
+  );
 
-  const sessionGroups = dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents);
-  const activeSessionOverview = buildActiveSessionOverview(sessionGroups, {
+  const sessionGroups = useMemo(
+    () => (dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents)),
+    [dataSource, localEvents, sessionsPayload.groups],
+  );
+  const activeSessionOverview = useMemo(() => buildActiveSessionOverview(sessionGroups, {
     filters: sessionFilters,
-  });
-  const sessionSections = buildSessionSections(sessionGroups, sessionFilters);
-  const sessionWorkspaceIndex = buildSessionWorkspaceIndex(sessionSections);
-  const sessionWorkspaceTree = buildSessionWorkspaceTree(sessionWorkspaceIndex);
-  const selectedDetailSession = findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed;
+  }), [sessionGroups, sessionFilters]);
+  const sessionSections = useMemo(
+    () => buildSessionSections(sessionGroups, sessionFilters),
+    [sessionGroups, sessionFilters],
+  );
+  const sessionWorkspaceIndex = useMemo(
+    () => buildSessionWorkspaceIndex(sessionSections),
+    [sessionSections],
+  );
+  const sessionWorkspaceTree = useMemo(
+    () => buildSessionWorkspaceTree(sessionWorkspaceIndex),
+    [sessionWorkspaceIndex],
+  );
+  const selectedDetailSession = useMemo(
+    () => findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed,
+    [selectedSessionId, sessionDetailSeed, sessionSections],
+  );
 
   async function loadSessionDetailEvents(sessionId = selectedSessionId, options = {}) {
     if (!sessionId) {
