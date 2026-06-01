@@ -77,6 +77,21 @@ function attachEventLocator(event, file, lineNumber, eventIndex) {
 /**
  * Build an indexed event with preview, search text, and truncation flags.
  */
+function compactTokenUsage(tokenUsage) {
+  if (!tokenUsage || typeof tokenUsage !== "object") return undefined;
+  const compact = {};
+  for (const key of ["input", "output", "total", "cachedInput", "cacheReadInput", "cacheCreationInput", "reasoningOutput"]) {
+    const value = Number(tokenUsage[key]);
+    if (Number.isFinite(value) && value !== 0) compact[key] = value;
+  }
+  return Object.keys(compact).length ? compact : undefined;
+}
+
+function setStringField(target, key, value) {
+  if (typeof value !== "string" || value === "") return;
+  target[key] = value;
+}
+
 function makeIndexedEvent(event) {
   const content = String(event.content || "");
   const contentPreview = content.length > config.EVENT_CONTENT_PREVIEW_LENGTH
@@ -85,18 +100,66 @@ function makeIndexedEvent(event) {
   const searchText = content.length > config.EVENT_SEARCH_TEXT_LENGTH
     ? content.slice(0, config.EVENT_SEARCH_TEXT_LENGTH)
     : content;
-  const indexed = {
-    ...event,
-    content: contentPreview,
-    contentPreview,
-    contentTruncated: content.length > config.EVENT_CONTENT_PREVIEW_LENGTH,
-    contentLength: content.length,
-  };
+  const indexed = {};
+  setStringField(indexed, "time", event.time);
+  setStringField(indexed, "sessionId", event.sessionId);
+  setStringField(indexed, "model", event.model);
+  setStringField(indexed, "turnId", event.turnId);
+  setStringField(indexed, "callId", event.callId);
+  setStringField(indexed, "toolName", event.toolName);
+  setStringField(indexed, "cwd", event.cwd);
+  setStringField(indexed, "sessionTitle", event.sessionTitle);
+  setStringField(indexed, "extra", event.extra);
+  setStringField(indexed, "sourceFile", event.sourceFile);
+  setStringField(indexed, "sourceType", event.sourceType);
+  setStringField(indexed, "callType", event.callType);
+  setStringField(indexed, "rawType", event.rawType);
+  setStringField(indexed, "rawSubType", event.rawSubType);
+  setStringField(indexed, "eventId", event.eventId);
+  setStringField(indexed, "content", contentPreview);
+
+  const sourceLine = Number(event.sourceLine);
+  if (Number.isFinite(sourceLine) && sourceLine > 0) indexed.sourceLine = sourceLine;
+  const lineEventIndex = Number(event.lineEventIndex);
+  if (Number.isFinite(lineEventIndex) && lineEventIndex > 0) indexed.lineEventIndex = lineEventIndex;
+
+  const summary = String(event.summary || "");
+  if (summary && summary !== contentPreview) indexed.summary = summary;
+  if (content.length > config.EVENT_CONTENT_PREVIEW_LENGTH) {
+    indexed.contentTruncated = true;
+    indexed.contentLength = content.length;
+  }
+  const compactUsage = compactTokenUsage(event.tokenUsage);
+  if (compactUsage) indexed.tokenUsage = compactUsage;
   if (config.EVENT_SEARCH_TEXT_LENGTH > config.EVENT_CONTENT_PREVIEW_LENGTH && searchText !== contentPreview) {
     indexed.searchText = searchText;
   }
-  delete indexed.raw;
   return internEventStrings(indexed);
+}
+
+function shouldRetainFileEventCache(events) {
+  const maxEvents = config.INDEX_FILE_EVENT_CACHE_MAX_EVENTS;
+  return maxEvents > 0 && Array.isArray(events) && events.length <= maxEvents;
+}
+
+function eventTimestampMs(event) {
+  const parsed = Date.parse(event?.time || "");
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function sortEventsChronologically(events) {
+  return (events || []).sort((left, right) => {
+    const timeDiff = eventTimestampMs(left) - eventTimestampMs(right);
+    if (timeDiff !== 0) return timeDiff;
+
+    const fileDiff = String(left?.sourceFile || "").localeCompare(String(right?.sourceFile || ""));
+    if (fileDiff !== 0) return fileDiff;
+
+    const lineDiff = (Number(left?.sourceLine) || 0) - (Number(right?.sourceLine) || 0);
+    if (lineDiff !== 0) return lineDiff;
+
+    return (Number(left?.lineEventIndex) || 0) - (Number(right?.lineEventIndex) || 0);
+  });
 }
 
 /**
@@ -113,12 +176,20 @@ function publicIndexState(currentAggregateKey) {
 }
 
 /**
+ * Trigger GC immediately if available.
+ */
+function trimHeapNow() {
+  if (typeof global.gc !== "function") return;
+  try { global.gc(); } catch { /* optional */ }
+}
+
+/**
  * Trigger GC if available.
  */
 function trimHeapSoon() {
   if (typeof global.gc !== "function") return;
   setTimeout(() => {
-    try { global.gc(); } catch { /* optional */ }
+    trimHeapNow();
   }, 0).unref();
 }
 
@@ -129,13 +200,21 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
   const stat = fs.statSync(file);
   const { parser } = fsScanner.resolveParserForFile(file, parsers);
   const cached = fileEventCache.get(file);
-  const canAppendIncrementally =
+  const hasCachedEvents = Array.isArray(cached?.events);
+  const cacheFileStateMatches =
     cached &&
     cached.stateSignature === stateSignature &&
-    stat.size >= cached.size &&
+    cached.size === stat.size &&
+    cached.mtimeMs === stat.mtimeMs;
+  const canAppendIncrementally =
+    cached &&
+    hasCachedEvents &&
+    cached.stateSignature === stateSignature &&
+    stat.size > cached.size &&
+    cached.endedWithNewline !== false &&
     cached.context;
 
-  if (cached && cached.stateSignature === stateSignature && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+  if (cacheFileStateMatches && hasCachedEvents) {
     return cached.events;
   }
 
@@ -145,29 +224,10 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
   const parsed = canAppendIncrementally ? cached.events.slice() : [];
   let tailBuffer = canAppendIncrementally ? cached.tailBuffer || "" : "";
   let lineNumber = canAppendIncrementally ? Number(cached.lineCount) || 0 : 0;
-  let text = "";
+  let endedWithNewline = canAppendIncrementally ? cached.endedWithNewline !== false : false;
 
-  if (canAppendIncrementally && stat.size > cached.size) {
-    const fd = fs.openSync(file, "r");
-    try {
-      const length = stat.size - cached.size;
-      const buf = Buffer.alloc(length);
-      fs.readSync(fd, buf, 0, length, cached.size);
-      text = buf.toString("utf8");
-    } finally {
-      fs.closeSync(fd);
-    }
-  } else if (!canAppendIncrementally) {
-    text = fs.readFileSync(file, "utf8");
-  }
-
-  const chunk = `${tailBuffer}${text}`;
-  const lines = chunk.split(/\r?\n/);
-  tailBuffer = lines.pop() || "";
-
-  const pushLine = (line) => {
-    if (!line) return;
-    lineNumber += 1;
+  const pushLine = (line, currentLineNumber) => {
+    if (!line) return true;
     try {
       const obj = JSON.parse(line);
       const evtOrArray = parser(obj, context);
@@ -181,32 +241,65 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
               : "missing-only";
           applyEventSessionMetaCore(evt, meta, { titleStrategy });
         }
-        parsed.push(makeIndexedEvent(attachEventLocator(evt, file, lineNumber, eventIndex)));
+        parsed.push(makeIndexedEvent(attachEventLocator(evt, file, currentLineNumber, eventIndex)));
       });
+      return true;
     } catch {
       // skip invalid lines
+      return false;
     }
   };
 
-  for (const line of lines) pushLine(line);
-  if (tailBuffer && stat.size > 0) {
-    const lastChar = text ? text[text.length - 1] : "";
-    const fileEndedWithNewline = lastChar === "\n";
-    if (fileEndedWithNewline) {
-      pushLine(tailBuffer);
+  const consumeTailIfComplete = () => {
+    if (!tailBuffer) return;
+    const finalLineNumber = lineNumber + 1;
+    if (pushLine(tailBuffer, finalLineNumber)) {
+      lineNumber = finalLineNumber;
       tailBuffer = "";
     }
+  };
+
+  if (canAppendIncrementally) {
+    const fd = fs.openSync(file, "r");
+    try {
+      const length = stat.size - cached.size;
+      const buf = Buffer.alloc(length);
+      fs.readSync(fd, buf, 0, length, cached.size);
+      const appendedText = buf.toString("utf8");
+      const chunk = `${tailBuffer}${appendedText}`;
+      const lines = chunk.split(/\r?\n/);
+      tailBuffer = lines.pop() || "";
+      for (const line of lines) {
+        lineNumber += 1;
+        pushLine(line, lineNumber);
+      }
+      endedWithNewline = appendedText.endsWith("\n");
+      consumeTailIfComplete();
+    } finally {
+      fs.closeSync(fd);
+    }
+  } else if (!canAppendIncrementally) {
+    const result = fsScanner.forEachCompleteJsonlLine(file, (line, currentLineNumber) => {
+      lineNumber = currentLineNumber;
+      pushLine(line, currentLineNumber);
+    });
+    lineNumber = result.lineCount;
+    tailBuffer = result.tailBuffer;
+    endedWithNewline = result.endedWithNewline;
+    consumeTailIfComplete();
   }
 
-  fileEventCache.set(file, {
+  const nextCache = {
     stateSignature,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     tailBuffer,
     lineCount: lineNumber,
+    endedWithNewline,
     context: { ...context },
-    events: parsed,
-  });
+  };
+  if (shouldRetainFileEventCache(parsed)) nextCache.events = parsed;
+  fileEventCache.set(file, nextCache);
   return parsed;
 }
 
@@ -219,19 +312,16 @@ function parseFullFileEvents(file, threadMeta, parsers, applyEventSessionMetaCor
   const context = { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
   const events = [];
   const targetLine = Number(options.targetLine) || 0;
-  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (!line) continue;
-    const lineNumber = index + 1;
+  fsScanner.forEachJsonlLine(file, (line, lineNumber) => {
+    if (!line) return undefined;
     try {
       const obj = JSON.parse(line);
       const evtOrArray = parser(obj, context);
       const parsedEvents = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
       if (targetLine && lineNumber !== targetLine) {
-        if (lineNumber >= targetLine) break;
-        continue;
+        if (lineNumber >= targetLine) return false;
+        return undefined;
       }
       parsedEvents.forEach((evt, eventIndex) => {
         const meta = threadMeta.get(evt.sessionId);
@@ -247,8 +337,9 @@ function parseFullFileEvents(file, threadMeta, parsers, applyEventSessionMetaCor
     } catch {
       // skip invalid lines
     }
-    if (targetLine && lineNumber >= targetLine) break;
-  }
+    if (targetLine && lineNumber >= targetLine) return false;
+    return undefined;
+  });
 
   return events;
 }
@@ -323,12 +414,14 @@ function computeAggregate(parsers, applyEventSessionMetaCore, dedupeEventsCore, 
     return { aggregateKey, events: aggregateCache.events };
   }
 
+  stringPool.clear();
   const all = [];
   for (const file of files) {
-    all.push(...parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore));
+    const events = parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore);
+    for (const event of events) all.push(event);
   }
-  all.sort((a, b) => (a.time < b.time ? -1 : 1));
-  const deduped = dedupeEventsCore(all);
+  sortEventsChronologically(all);
+  const deduped = dedupeEventsCore(all, { inPlace: true });
   aggregateCache = { key: aggregateKey, events: deduped };
   return { aggregateKey, events: deduped };
 }
@@ -360,7 +453,7 @@ function refreshIndex(reason, parsers, applyEventSessionMetaCore, dedupeEventsCo
     indexState.lastBuiltAt = new Date().toISOString();
     indexState.lastError = "";
     indexState.dirty = false;
-    trimHeapSoon();
+    trimHeapNow();
     return indexState.events;
   } catch (err) {
     indexState.lastError = String(err);
@@ -435,8 +528,12 @@ function sourceFilesForSession(events, sessionId) {
 
 module.exports = {
   signatureHash,
+  makeIndexedEvent,
+  sortEventsChronologically,
   publicIndexState,
+  trimHeapNow,
   trimHeapSoon,
+  parseFileEvents,
   parseFullFileEvents,
   parseEventLineFromIndex,
   ensureIndexReady,

@@ -28,7 +28,9 @@
   })();
 
   function clip(text, max = 140) {
-    const s = (text || "").trim().replace(/\s+/g, " ");
+    const raw = String(text || "");
+    const sample = raw.length > max * 6 ? raw.slice(0, max * 6) : raw;
+    const s = sample.trim().replace(/\s+/g, " ");
     return s.length <= max ? s : `${s.slice(0, max)}...`;
   }
 
@@ -145,20 +147,25 @@
     return prev;
   }
 
-  function dedupeEvents(events) {
-    const out = [];
-    for (const event of events) {
-      const prev = out[out.length - 1];
+  function dedupeEvents(events, options = {}) {
+    const source = Array.isArray(events) ? events : [];
+    const inPlace = options.inPlace === true;
+    const out = inPlace ? source : [];
+    let writeIndex = 0;
+    for (const event of source) {
+      const prev = out[writeIndex - 1];
       if (isDuplicateAgentEvent(prev, event)) {
-        out[out.length - 1] = preferAgentEvent(prev, event);
+        out[writeIndex - 1] = preferAgentEvent(prev, event);
         continue;
       }
       if (isDuplicateEvent(prev, event)) {
-        out[out.length - 1] = preferEvent(prev, event);
+        out[writeIndex - 1] = preferEvent(prev, event);
         continue;
       }
-      out.push(event);
+      out[writeIndex] = event;
+      writeIndex += 1;
     }
+    if (inPlace) out.length = writeIndex;
     return out;
   }
 
@@ -217,7 +224,8 @@
 
   function deriveFallbackTitleFromEvent(event) {
     if (!event || (event.callType !== "Prompt" && event.callType !== "User")) return "";
-    let raw = (event.content || "").trim().replace(/\s+/g, " ");
+    const content = String(event.content || "");
+    let raw = (content.length > 512 ? content.slice(0, 512) : content).trim().replace(/\s+/g, " ");
     if (!raw) return "";
     raw = raw.replace(/<[^>]+>/g, "").trim();
     if (!raw) return "";
@@ -318,10 +326,18 @@
   }
 
   function collectMeta(events) {
+    const models = new Set();
+    const types = new Set();
+    const platforms = new Set();
+    for (const event of events || []) {
+      models.add(event?.model);
+      types.add(event?.callType);
+      platforms.add(event?.sourceType);
+    }
     return {
-      models: [...new Set(events.map((event) => event.model))].sort(),
-      types: [...new Set(events.map((event) => event.callType))].sort(),
-      platforms: [...new Set(events.map((event) => event.sourceType))].sort(),
+      models: [...models].sort(),
+      types: [...types].sort(),
+      platforms: [...platforms].sort(),
     };
   }
 
@@ -379,6 +395,17 @@
         if (right.total !== left.total) return right.total - left.total;
         return String(left.key).localeCompare(String(right.key), "zh-CN");
       });
+  }
+
+  function pushRecentByTime(items, item, limit) {
+    const itemTime = String(item?.time || "");
+    let insertAt = items.findIndex((existing) => String(existing?.time || "").localeCompare(itemTime) < 0);
+    if (insertAt === -1) {
+      if (items.length >= limit) return;
+      insertAt = items.length;
+    }
+    items.splice(insertAt, 0, item);
+    if (items.length > limit) items.length = limit;
   }
 
   function buildTokenUsageWindows(events, options = {}) {
@@ -605,13 +632,17 @@
   function buildObservabilitySummary(events, options = {}) {
     const eventList = Array.isArray(events) ? events : [];
     const sessions = buildSessionGroups(eventList);
-    const traceSummary = traceModelApi?.summarizeTraceModel
-      ? traceModelApi.summarizeTraceModel(traceModelApi.buildTraceModel(eventList))
-      : { traces: sessions.length, spans: eventList.length, llmSpans: 0, toolSpans: 0, tokenSpans: 0, thinkingSpans: 0, maxDepth: 0 };
+    let traceSummary = { traces: sessions.length, spans: eventList.length, llmSpans: 0, toolSpans: 0, tokenSpans: 0, thinkingSpans: 0, maxDepth: 0 };
+    if (traceModelApi?.summarizeEvents) {
+      traceSummary = traceModelApi.summarizeEvents(eventList);
+    } else if (traceModelApi?.summarizeTraceModel) {
+      traceSummary = traceModelApi.summarizeTraceModel(traceModelApi.buildTraceModel(eventList));
+    }
     const costSummary = tokenPricingApi?.estimateCostSummary
       ? tokenPricingApi.estimateCostSummary(eventList)
       : { estimatedUsd: 0, knownTokenTotal: 0, currency: "USD", source: "unavailable", unknownModels: [], byModel: [] };
-    const sessionById = new Map(sessions.map((session) => [session.sessionId, session]));
+    const sessionById = new Map();
+    for (const session of sessions) sessionById.set(session.sessionId, session);
     const platformTokens = new Map();
     const modelTokens = new Map();
     const workspaceTokens = new Map();
@@ -663,7 +694,7 @@
         addMapValue(sessionAlertCounts, event?.sessionId, 1);
         addMapValue(alertTypeCounts, event?.callType, 1);
         addMapValue(alertPlatformCounts, event?.sourceType, 1);
-        alertRecent.push({
+        pushRecentByTime(alertRecent, {
           time,
           sessionId: event?.sessionId || "",
           sessionTitle: sessionDisplayTitle(sessionById.get(event?.sessionId)),
@@ -674,7 +705,7 @@
           cwd,
           summary: clip(event?.summary || event?.content || event?.contentPreview || "", 180),
           extra: event?.extra || "",
-        });
+        }, 30);
       }
 
       if (event?.callType === "Tool_Call" || event?.callType === "Tool_Result") {
@@ -738,6 +769,20 @@
       })
       .slice(0, 10);
     const alertTypeChart = sortedValueEntries(alertTypeCounts, "count");
+    let totalToolCalls = 0;
+    let totalToolResults = 0;
+    const topTools = [...toolStats.values()];
+    for (const item of topTools) {
+      totalToolCalls += item.calls;
+      totalToolResults += item.results;
+    }
+    topTools.sort((left, right) => {
+      const rightTotal = right.calls + right.results;
+      const leftTotal = left.calls + left.results;
+      if (rightTotal !== leftTotal) return rightTotal - leftTotal;
+      if (right.alerts !== left.alerts) return right.alerts - left.alerts;
+      return String(left.key).localeCompare(String(right.key), "zh-CN");
+    });
 
     return {
       health: {
@@ -764,22 +809,12 @@
         total: alertEvents,
         byType: sortedValueEntries(alertTypeCounts, "count"),
         byPlatform: sortedValueEntries(alertPlatformCounts, "count"),
-        recent: alertRecent
-          .sort((left, right) => String(right.time).localeCompare(String(left.time)))
-          .slice(0, 30),
+        recent: alertRecent,
       },
       tools: {
-        totalCalls: [...toolStats.values()].reduce((sum, item) => sum + item.calls, 0),
-        totalResults: [...toolStats.values()].reduce((sum, item) => sum + item.results, 0),
-        topTools: [...toolStats.values()]
-          .sort((left, right) => {
-            const rightTotal = right.calls + right.results;
-            const leftTotal = left.calls + left.results;
-            if (rightTotal !== leftTotal) return rightTotal - leftTotal;
-            if (right.alerts !== left.alerts) return right.alerts - left.alerts;
-            return String(left.key).localeCompare(String(right.key), "zh-CN");
-          })
-          .slice(0, 20),
+        totalCalls: totalToolCalls,
+        totalResults: totalToolResults,
+        topTools: topTools.slice(0, 20),
       },
       workspaces: {
         total: workspaceStats.size,

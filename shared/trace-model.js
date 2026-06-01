@@ -57,11 +57,6 @@
   }
 
   function buildTraceModel(events) {
-    const sortedEvents = [...(events || [])].sort((left, right) => {
-      const leftMs = toMs(left?.time) ?? 0;
-      const rightMs = toMs(right?.time) ?? 0;
-      return leftMs - rightMs;
-    });
     const traceMap = new Map();
     const spanMap = new Map();
 
@@ -75,10 +70,12 @@
         endMs: null,
         durationMs: 0,
       });
+      const trace = traceMap.get(span.traceId);
+      if (trace) trace.spanIds.push(span.spanId);
       return spanMap.get(span.spanId);
     }
 
-    for (const event of sortedEvents) {
+    for (const event of events || []) {
       const sessionId = stablePart(event?.sessionId, "unknown");
       if (sessionId === "unknown") continue;
 
@@ -148,9 +145,6 @@
       const { startMs, endMs, ...publicSpan } = span;
       return publicSpan;
     });
-    for (const trace of traceMap.values()) {
-      trace.spanIds = spans.filter((span) => span.traceId === trace.traceId).map((span) => span.spanId);
-    }
 
     return {
       traces: [...traceMap.values()].sort((left, right) => String(right.traceId).localeCompare(String(left.traceId))),
@@ -160,19 +154,70 @@
 
   function summarizeTraceModel(model) {
     const spans = model?.spans || [];
-    return {
+    const summary = {
       traces: (model?.traces || []).length,
       spans: spans.length,
-      llmSpans: spans.filter((span) => span.kind === "llm").length,
-      toolSpans: spans.filter((span) => span.kind === "tool").length,
-      tokenSpans: spans.filter((span) => span.kind === "token").length,
-      thinkingSpans: spans.filter((span) => span.kind === "thinking").length,
-      maxDepth: spans.reduce((max, span) => Math.max(max, Number(span.depth || 0)), 0),
+      llmSpans: 0,
+      toolSpans: 0,
+      tokenSpans: 0,
+      thinkingSpans: 0,
+      maxDepth: 0,
+    };
+    for (const span of spans) {
+      if (span.kind === "llm") summary.llmSpans += 1;
+      if (span.kind === "tool") summary.toolSpans += 1;
+      if (span.kind === "token") summary.tokenSpans += 1;
+      if (span.kind === "thinking") summary.thinkingSpans += 1;
+      summary.maxDepth = Math.max(summary.maxDepth, Number(span.depth || 0));
+    }
+    return summary;
+  }
+
+  function summarizeEvents(events) {
+    const traceIds = new Set();
+    const turnIds = new Set();
+    const summary = {
+      traces: 0,
+      spans: 0,
+      llmSpans: 0,
+      toolSpans: 0,
+      tokenSpans: 0,
+      thinkingSpans: 0,
+      maxDepth: 0,
+    };
+
+    for (const event of events || []) {
+      const sessionId = stablePart(event?.sessionId, "unknown");
+      if (sessionId === "unknown") continue;
+      const turnId = stablePart(event?.turnId, "turnless");
+      traceIds.add(sessionId);
+      turnIds.add(`${sessionId}:${turnId}`);
+
+      const kind = eventSpanKind(event);
+      if (kind === "llm") summary.llmSpans += 1;
+      if (kind === "tool") summary.toolSpans += 1;
+      if (kind === "token") summary.tokenSpans += 1;
+      if (kind === "thinking") summary.thinkingSpans += 1;
+      summary.spans += 1;
+    }
+
+    summary.traces = traceIds.size;
+    summary.spans += traceIds.size + turnIds.size;
+    summary.maxDepth = summary.spans ? 3 : 0;
+    return {
+      traces: summary.traces,
+      spans: summary.spans,
+      llmSpans: summary.llmSpans,
+      toolSpans: summary.toolSpans,
+      tokenSpans: summary.tokenSpans,
+      thinkingSpans: summary.thinkingSpans,
+      maxDepth: summary.maxDepth,
     };
   }
 
   return {
     buildTraceModel,
+    summarizeEvents,
     summarizeTraceModel,
   };
 });

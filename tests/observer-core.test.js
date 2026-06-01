@@ -148,6 +148,41 @@ test("dedupeEvents prefers non-sidechain events when duplicated", () => {
   assert.equal(deduped[0].extra, "tool_result");
 });
 
+test("dedupeEvents can compact the input array in place to avoid a duplicate event buffer", () => {
+  const events = [
+    {
+      time: "2026-04-19T10:10:00.000Z",
+      sessionId: "sess-1",
+      turnId: "turn-1",
+      callType: "Tool_Result",
+      content: "command completed",
+      extra: "sidechain/tool_result",
+    },
+    {
+      time: "2026-04-19T10:10:01.000Z",
+      sessionId: "sess-1",
+      turnId: "turn-1",
+      callType: "Tool_Result",
+      content: "command completed",
+      extra: "tool_result",
+    },
+    {
+      time: "2026-04-19T10:11:00.000Z",
+      sessionId: "sess-1",
+      turnId: "turn-2",
+      callType: "Agent",
+      content: "next",
+    },
+  ];
+
+  const deduped = dedupeEvents(events, { inPlace: true });
+
+  assert.equal(deduped, events);
+  assert.equal(events.length, 2);
+  assert.equal(events[0].extra, "tool_result");
+  assert.equal(events[1].content, "next");
+});
+
 test("buildSessionGroups aggregates token usage and derives a cleaned fallback title", () => {
   const groups = buildSessionGroups([
     {

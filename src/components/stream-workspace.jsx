@@ -446,6 +446,12 @@ export function StreamWorkspace({
             <Stack gap={4}>
               {(sessions || []).map((session) => {
                 const active = session.sessionId === selectedSessionId;
+                const sessionMetrics = [
+                  `${formatCompactNumber(session.totalTokens)} Tok`,
+                  formatDateTime(session.latest),
+                  `${formatNumber(session.count || 0)} 事件`,
+                ];
+                if (session.groupedCount > 1) sessionMetrics.push(`${formatNumber(session.groupedCount)} 会话`);
                 return (
                   <div
                     key={session.sessionId}
@@ -460,14 +466,20 @@ export function StreamWorkspace({
                         {session.sourceType === "codex" ? "CX" : "CC"}
                       </span>
                       <span className="session-rail__main">
-                        <span className="session-rail__title">{session.title || "未命名会话"}</span>
-                        <span className="session-rail__meta">
-                          {formatCompactNumber(session.totalTokens)} Tok · {formatDateTime(session.latest)} · {formatNumber(session.count || 0)} 事件
-                          {session.groupedCount > 1 ? ` · ${formatNumber(session.groupedCount)} 会话` : ""}
+                        <span className="session-rail__title-row">
+                          <span className="session-rail__title" title={session.title || "未命名会话"}>{session.title || "未命名会话"}</span>
+                          <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
                         </span>
-                        <span className="session-rail__path">{clipText(session.cwd, 44)}</span>
+                        <span className="session-rail__metrics" aria-label="会话指标">
+                          {sessionMetrics.map((metric, metricIndex) => (
+                            <span key={`${metric}-${metricIndex}`} className="session-rail__metric-pair">
+                              {metricIndex > 0 ? <span className="session-rail__separator" aria-hidden="true">·</span> : null}
+                              <span className="session-rail__metric">{metric}</span>
+                            </span>
+                          ))}
+                        </span>
+                        <span className="session-rail__path" title={session.cwd || ""}>{clipText(session.cwd, 72)}</span>
                       </span>
-                      <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
                     </button>
                     <button
                       type="button"
@@ -475,7 +487,7 @@ export function StreamWorkspace({
                       aria-label={`查看会话详情 ${session.title || session.sessionId}`}
                       onClick={() => onOpenSessionDetail?.(session)}
                     >
-                      详情
+                      <IconArrowRight size={15} stroke={2.2} aria-hidden="true" />
                     </button>
                   </div>
                 );

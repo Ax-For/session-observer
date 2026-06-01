@@ -10,7 +10,7 @@ const { createSessionExport } = require("./session-export");
 const { listSourceAdapters } = require("../shared/source-adapters");
 
 let _deps = null;
-let visibleEventsCache = { key: "", asc: [], desc: [] };
+let visibleEventsCache = { key: "", asc: [] };
 let observabilitySummaryCache = { key: "", summary: null };
 
 /**
@@ -18,12 +18,12 @@ let observabilitySummaryCache = { key: "", summary: null };
  */
 function init(deps) {
   _deps = deps;
-  visibleEventsCache = { key: "", asc: [], desc: [] };
+  visibleEventsCache = { key: "", asc: [] };
   observabilitySummaryCache = { key: "", summary: null };
 }
 
 /**
- * Return events already filtered for the current mode and ordered both ways.
+ * Return events already filtered for the current mode, stored only once.
  */
 function getVisibleEventSet(ready, mode) {
   const cacheKey = `${ready.currentAggregateKey || ""}|${mode || "observe"}`;
@@ -33,9 +33,60 @@ function getVisibleEventSet(ready, mode) {
   visibleEventsCache = {
     key: cacheKey,
     asc,
-    desc: asc.slice().reverse(),
   };
   return visibleEventsCache;
+}
+
+function collectMatchedEvents(visibleEvents, filters) {
+  const matched = [];
+  if (filters.order === "asc") {
+    for (const event of visibleEvents) {
+      if (_deps.eventMatchesFiltersCore(event, filters)) matched.push(event);
+    }
+    return matched;
+  }
+
+  for (let index = visibleEvents.length - 1; index >= 0; index -= 1) {
+    const event = visibleEvents[index];
+    if (_deps.eventMatchesFiltersCore(event, filters)) matched.push(event);
+  }
+  return matched;
+}
+
+function filtersMatchAllVisible(filters) {
+  return !filters.platform &&
+    !filters.model &&
+    !filters.type &&
+    !filters.sessionId &&
+    !filters.query &&
+    (filters.quickFilter || "all") === "all" &&
+    filters.startMs == null &&
+    filters.endMs == null;
+}
+
+function aggregateSessionFiltersMatch(filters) {
+  return !filters.query &&
+    !filters.type &&
+    !filters.sessionId &&
+    (filters.quickFilter || "all") === "all";
+}
+
+function sliceVisibleEvents(visibleEvents, filters) {
+  const offset = Math.max(0, Number(filters.offset) || 0);
+  const limit = Math.max(0, Number(filters.limit) || config.DEFAULT_PAGE_SIZE);
+  if (filters.order === "asc") {
+    return visibleEvents.slice(offset, offset + limit);
+  }
+
+  const endExclusive = Math.max(0, visibleEvents.length - offset);
+  const start = Math.max(0, endExclusive - limit);
+  return visibleEvents.slice(start, endExclusive).reverse();
+}
+
+function collectAggregateSessionEvents(visibleEvents, filters) {
+  return visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, {
+    ...filters, query: "", type: "", quickFilter: "all", sessionId: "",
+  }));
 }
 
 /**
@@ -120,14 +171,22 @@ function queryEvents(filters) {
 
   const visibleEventSet = getVisibleEventSet(ready, filters.mode);
   const visibleEvents = visibleEventSet.asc;
-  const orderedVisibleEvents = filters.order === "asc" ? visibleEventSet.asc : visibleEventSet.desc;
-  const matched = orderedVisibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, filters));
-  const aggregateMatchedSessions = filters.includeSummary
-    ? visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, {
-      ...filters, query: "", type: "", quickFilter: "all", sessionId: "",
-    }))
-    : [];
-  const paged = matched.slice(filters.offset, filters.offset + filters.limit);
+  const matchAllVisible = filtersMatchAllVisible(filters);
+  const matched = matchAllVisible ? visibleEvents : collectMatchedEvents(visibleEvents, filters);
+  const totalMatching = matchAllVisible ? visibleEvents.length : matched.length;
+  const paged = matchAllVisible
+    ? sliceVisibleEvents(visibleEvents, filters)
+    : matched.slice(filters.offset, filters.offset + filters.limit);
+  let sessions = [];
+  if (filters.includeSummary) {
+    sessions = _deps.buildSessionGroupsCore(matched);
+    if (!aggregateSessionFiltersMatch(filters)) {
+      sessions = _deps.mergeSessionTokenAggregates(
+        sessions,
+        _deps.buildSessionGroupsCore(collectAggregateSessionEvents(visibleEvents, filters)),
+      );
+    }
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -137,19 +196,14 @@ function queryEvents(filters) {
     codexVersion: require("./versions").codexVersion,
     index: indexManager.publicIndexState(ready.currentAggregateKey),
     totalVisible: visibleEvents.length,
-    totalMatching: matched.length,
-    sessions: filters.includeSummary
-      ? _deps.mergeSessionTokenAggregates(
-        _deps.buildSessionGroupsCore(matched),
-        _deps.buildSessionGroupsCore(aggregateMatchedSessions),
-      )
-      : [],
+    totalMatching,
+    sessions,
     tokenWindows: filters.includeSummary ? _deps.buildTokenUsageWindowsCore(matched) : null,
     meta: filters.includeSummary ? _deps.collectMetaCore(visibleEvents) : { models: [], types: [], platforms: [] },
     page: {
       offset: filters.offset,
       limit: filters.limit,
-      hasMore: filters.offset + paged.length < matched.length,
+      hasMore: filters.offset + paged.length < totalMatching,
     },
     events: paged,
   };
@@ -257,6 +311,7 @@ function queryObservability() {
     };
   }
   const summary = observabilitySummaryCache.summary;
+  indexManager.trimHeapNow?.();
 
   return {
     generatedAt: new Date().toISOString(),

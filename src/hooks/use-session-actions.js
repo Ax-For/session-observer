@@ -14,6 +14,7 @@ async function fetchAllSessionEvents(sessionId) {
       limit: 1000,
       offset,
       mode: "raw",
+      summary: 0,
     });
     events.push(...payload.events);
     hasMore = Boolean(payload.page?.hasMore);

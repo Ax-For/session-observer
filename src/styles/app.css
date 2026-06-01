@@ -2858,7 +2858,7 @@ button.mc-active-cost-row:focus-visible {
 
 .stream-layout {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-columns: minmax(400px, 0.35fr) minmax(0, 1fr);
   gap: var(--space-lg);
   align-items: stretch;
 }
@@ -2908,22 +2908,23 @@ button.mc-active-cost-row:focus-visible {
 }
 
 .session-rail__item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  border-radius: 16px;
+  position: relative;
+  display: block;
+  padding: 8px;
+  border-radius: 18px;
 }
 
 .session-rail__focus {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
+  width: 100%;
   min-width: 0;
-  padding: 0;
+  min-height: 86px;
+  padding: 6px;
   border: 0;
+  border-radius: 14px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -2939,9 +2940,15 @@ button.mc-active-cost-row:focus-visible {
 }
 
 .session-rail__detail {
-  align-self: center;
-  min-height: 30px;
-  padding: 0 10px;
+  position: absolute;
+  top: 18px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-soft) 62%, transparent);
@@ -2955,8 +2962,7 @@ button.mc-active-cost-row:focus-visible {
 }
 
 .session-rail__item:hover .session-rail__detail,
-.session-rail__item:focus-within .session-rail__detail,
-.session-rail__item.is-active .session-rail__detail {
+.session-rail__item:focus-within .session-rail__detail {
   opacity: 1;
   transform: translateX(0);
 }
@@ -2977,12 +2983,12 @@ button.mc-active-cost-row:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 800;
 }
 
@@ -2998,7 +3004,22 @@ button.mc-active-cost-row:focus-visible {
 
 .session-rail__main {
   display: grid;
+  gap: 5px;
   min-width: 0;
+}
+
+.session-rail__title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  min-width: 0;
+  transition: padding-right 140ms ease;
+}
+
+.session-rail__item:hover .session-rail__title-row,
+.session-rail__item:focus-within .session-rail__title-row {
+  padding-right: 34px;
 }
 
 .session-rail__title,
@@ -3009,7 +3030,47 @@ button.mc-active-cost-row:focus-visible {
 .session-rail__title {
   overflow: hidden;
   font-weight: 800;
-  line-height: 1.35;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-rail__metrics {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-rail__metric-pair {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.session-rail__metric-pair:first-child {
+  flex-shrink: 0;
+}
+
+.session-rail__separator {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.session-rail__metric {
+  display: inline-block;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3037,15 +3098,21 @@ button.mc-active-cost-row:focus-visible {
 
 .session-rail__path {
   overflow: hidden;
+  max-width: 100%;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .session-rail__id {
-  align-self: start;
+  overflow: hidden;
+  max-width: 74px;
   color: var(--text-faint);
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .event-row {

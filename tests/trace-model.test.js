@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildTraceModel,
+  summarizeEvents,
   summarizeTraceModel,
 } = require("../shared/trace-model");
 
@@ -73,4 +74,19 @@ test("summarizeTraceModel reports depth, tool, and token coverage", () => {
   assert.equal(summary.toolSpans, 1);
   assert.equal(summary.tokenSpans, 1);
   assert.equal(summary.maxDepth, 3);
+});
+
+test("summarizeEvents reports trace counts without building public span arrays", () => {
+  const events = [
+    { eventId: "a", sessionId: "s", turnId: "t", callType: "Prompt", time: "2026-05-30T10:00:00Z" },
+    { eventId: "b", sessionId: "s", turnId: "t", callType: "Tool_Call", toolName: "Bash", time: "2026-05-30T10:00:01Z" },
+    { eventId: "c", sessionId: "s", turnId: "t", callType: "Token_Usage", tokenUsage: { total: 15 }, time: "2026-05-30T10:00:02Z" },
+    { eventId: "d", sessionId: "s2", turnId: "", callType: "Thinking", time: "2026-05-30T10:00:03Z" },
+    { eventId: "ignored", sessionId: "unknown", callType: "Agent", time: "2026-05-30T10:00:04Z" },
+  ];
+
+  const expected = summarizeTraceModel(buildTraceModel(events));
+  const actual = summarizeEvents(events);
+
+  assert.deepEqual(actual, expected);
 });

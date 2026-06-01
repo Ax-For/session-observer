@@ -52,13 +52,20 @@ export function useStreamData({
         sessionId: selectedSessionId,
         limit: PAGE_LIMIT,
         offset: append ? Number(currentPayload.page?.offset || 0) + PAGE_LIMIT : 0,
+        summary: append ? 0 : 1,
       });
 
       if (requestId !== eventRequestId.current) return null;
       startTransition(() => {
         setStreamPayload((current) => {
           const nextPayload = append
-            ? { ...payload, events: [...current.events, ...payload.events] }
+            ? {
+                ...payload,
+                events: [...current.events, ...payload.events],
+                sessions: current.sessions,
+                tokenWindows: current.tokenWindows,
+                meta: current.meta,
+              }
             : payload;
           streamPayloadRef.current = nextPayload;
           return nextPayload;

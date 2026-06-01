@@ -296,6 +296,66 @@ describe("StreamWorkspace", () => {
     expect(onClearSessionFocus).toHaveBeenCalledTimes(1);
   });
 
+  test("renders compact session rail rows for long active session metadata", () => {
+    const longCwd = "/Users/me/code/session-observer/packages/web-frontend-with-a-very-long-path";
+    const { container } = render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{
+            title: "全部会话",
+            subtitle: "跨平台 · 全部事件 · observe",
+            tags: [],
+          }}
+          summary={{
+            totals: {
+              input: 0,
+              output: 0,
+              total: 0,
+              cachedInput: 0,
+              reasoningOutput: 0,
+            },
+            tokenWindows: {
+              day: { total: 0, platforms: [] },
+              week: { total: 0, platforms: [] },
+            },
+            counts: {
+              totalVisible: 10,
+              totalMatching: 10,
+              totalLoaded: 10,
+              sessions: 1,
+            },
+            topTypes: [],
+            topModels: [],
+            platforms: [],
+          }}
+          sessions={[
+            {
+              sessionId: "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad",
+              title: "对于当前项目我希望可以显示当前有哪些活跃会话并持续观察布局",
+              sourceType: "codex",
+              latest: "2026-06-01T13:58:02.406Z",
+              count: 4273,
+              totalTokens: 166_600_000,
+              cwd: longCwd,
+            },
+          ]}
+          events={[]}
+          selectedSessionId=""
+          onSelectSession={() => {}}
+          onClearSessionFocus={() => {}}
+          generatedAt="2026-06-01T13:58:02.406Z"
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(container.querySelector(".session-rail__title-row")).toBeInTheDocument();
+    expect(container.querySelectorAll(".session-rail__metric")).toHaveLength(3);
+    expect(container.querySelector(".session-rail__path")).toHaveAttribute("title", longCwd);
+    expect(screen.getByText("019e5fc9")).toBeInTheDocument();
+  });
+
   test("windows the event list instead of rendering every loaded event", () => {
     const events = Array.from({ length: 180 }, (_, index) => ({
       time: `2026-04-19T14:${String(index % 60).padStart(2, "0")}:10.720Z`,

@@ -25,6 +25,17 @@ const EVENT_SEARCH_TEXT_LENGTH = EVENT_CONTENT_PREVIEW_LENGTH;
 const INDEX_REFRESH_DEBOUNCE_MS = 400;
 const INDEX_WARMUP_INTERVAL_MS = 3000;
 
+function toNonNegativeInt(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+const INDEX_FILE_EVENT_CACHE_MAX_EVENTS = toNonNegativeInt(
+  process.env.INDEX_FILE_EVENT_CACHE_MAX_EVENTS,
+  0,
+);
+
 /**
  * Resolve the static file root, triggering a frontend build if needed.
  */
@@ -74,5 +85,6 @@ module.exports = {
   EVENT_SEARCH_TEXT_LENGTH,
   INDEX_REFRESH_DEBOUNCE_MS,
   INDEX_WARMUP_INTERVAL_MS,
+  INDEX_FILE_EVENT_CACHE_MAX_EVENTS,
   MIME,
 };

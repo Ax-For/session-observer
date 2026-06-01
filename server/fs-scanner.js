@@ -117,6 +117,52 @@ function forEachJsonlLine(file, onLine) {
 }
 
 /**
+ * Iterate only complete JSONL lines. A trailing partial line is returned instead
+ * of parsed, which avoids dropping data while a log file is still being written.
+ */
+function forEachCompleteJsonlLine(file, onLine) {
+  const result = { lineCount: 0, tailBuffer: "", endedWithNewline: false };
+  if (!fs.existsSync(file)) return result;
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let parts = [];
+  let lineNumber = 1;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead <= 0) break;
+
+      let segmentStart = 0;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] !== 10) continue;
+
+        parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
+        onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
+        result.lineCount = lineNumber;
+        result.endedWithNewline = true;
+        parts = [];
+        lineNumber += 1;
+        segmentStart = index + 1;
+      }
+
+      if (segmentStart < bytesRead) {
+        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
+        result.endedWithNewline = false;
+      }
+    }
+
+    if (parts.length) {
+      result.tailBuffer = Buffer.concat(parts).toString("utf8").replace(/\r$/, "");
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return result;
+}
+
+/**
  * Get a stat-based signature for a file path to detect changes.
  */
 function getPathSignature(target) {
@@ -139,6 +185,7 @@ module.exports = {
   listJsonlFiles,
   readJsonlLine,
   forEachJsonlLine,
+  forEachCompleteJsonlLine,
   getPathSignature,
   resolveParserForFile,
 };
