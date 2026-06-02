@@ -1151,6 +1151,7 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  margin-top: 12px;
 }
 
 .mc-runtime-grid > div {
@@ -1174,6 +1175,80 @@ textarea {
   color: var(--text);
   line-height: 1.5;
   word-break: break-word;
+}
+
+.mc-memory-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(135deg, rgba(47, 132, 255, 0.12), transparent 45%),
+    var(--panel-soft);
+}
+
+.mc-memory-panel__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mc-memory-panel__rss {
+  margin-top: 4px;
+  color: var(--text);
+  font-family: "Sora", "Manrope", sans-serif;
+  font-size: clamp(1.6rem, 2.4vw, 2.35rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mc-memory-panel__progress {
+  background: color-mix(in srgb, var(--line) 52%, transparent);
+}
+
+.mc-memory-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mc-memory-chip {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mc-memory-chip span,
+.mc-memory-chip em {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mc-memory-chip strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text);
+  font-family: "Sora", "Manrope", sans-serif;
+  font-size: 1.05rem;
+  line-height: 1.15;
+}
+
+.mc-memory-chip em {
+  margin-top: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 /* Ranked Rows */

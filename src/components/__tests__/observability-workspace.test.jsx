@@ -11,7 +11,13 @@ const payload = {
   },
   runtime: {
     uptimeSeconds: 120,
-    memory: { rss: 42_000_000 },
+    memory: {
+      rss: 142_400_000,
+      heapTotal: 22_800_000,
+      heapUsed: 13_100_000,
+      external: 2_100_000,
+      arrayBuffers: 12_000,
+    },
     versions: { codex: "codex-cli 0.130.0", claude: "1.0.0" },
   },
   sources: {
@@ -226,6 +232,14 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("预计 2,400/h")).toBeInTheDocument();
     expect(screen.getByText("/Users/me/.codex/sessions")).toBeInTheDocument();
     expect(screen.getByText("运行健康")).toBeInTheDocument();
+    expect(screen.getByText("内存占用")).toBeInTheDocument();
+    expect(screen.getByText("RSS")).toBeInTheDocument();
+    expect(screen.getByText("135.8 MB")).toBeInTheDocument();
+    expect(screen.getByText("Heap Used")).toBeInTheDocument();
+    expect(screen.getByText("12.5 MB")).toBeInTheDocument();
+    expect(screen.getByText("Heap Total")).toBeInTheDocument();
+    expect(screen.getByText("21.7 MB")).toBeInTheDocument();
+    expect(screen.getByText("External")).toBeInTheDocument();
     expect(screen.getByText("Codex codex-cli 0.130.0 / Claude 1.0.0")).toBeInTheDocument();
     expect(screen.getByText("工作区集中度")).toBeInTheDocument();
     expect(screen.getAllByText("Shell").length).toBeGreaterThan(0);

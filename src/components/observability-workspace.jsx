@@ -1060,6 +1060,49 @@ function ActivityShapePanel({ health, charts, tokens }) {
   return <MetricTiles rows={rows} className="mc-metric-tiles--activity" />;
 }
 
+function MemoryUsagePanel({ runtime }) {
+  const memory = runtime?.memory || {};
+  const heapUsed = finiteToken(memory.heapUsed);
+  const heapTotal = finiteToken(memory.heapTotal);
+  const heapShare = percentValue(heapUsed, heapTotal);
+  const rows = [
+    { label: "Heap Used", value: memory.heapUsed, detail: "活跃 JS 堆" },
+    { label: "Heap Total", value: memory.heapTotal, detail: "V8 已保留堆" },
+    { label: "External", value: memory.external, detail: "原生与 Buffer" },
+    { label: "Array Buffers", value: memory.arrayBuffers, detail: "二进制缓冲" },
+  ];
+
+  return (
+    <div className="mc-memory-panel">
+      <div className="mc-memory-panel__hero">
+        <div>
+          <Text className="mc-runtime__label">RSS</Text>
+          <Text className="mc-memory-panel__rss">{formatBytes(memory.rss)}</Text>
+        </div>
+        <Badge radius="xl" variant="light" color={heapShare > 70 ? "orange" : "blue"}>
+          Heap {percentLabel(heapShare)}
+        </Badge>
+      </div>
+      <Progress
+        value={heapShare}
+        radius="xl"
+        size="sm"
+        color={heapShare > 70 ? "orange" : "blue"}
+        className="mc-memory-panel__progress"
+      />
+      <div className="mc-memory-panel__grid">
+        {rows.map((row) => (
+          <div key={row.label} className="mc-memory-chip">
+            <span>{row.label}</span>
+            <strong>{formatBytes(row.value)}</strong>
+            <em>{row.detail}</em>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Pulse badge — animated indicator for live/active state.
  */
@@ -1357,6 +1400,8 @@ export function ObservabilityWorkspace({
 
               <Paper className="mc-panel mc-overview-card mc-overview-card--runtime" radius="xl" p="lg">
                 <PanelHeader eyebrow="Runtime" title="运行健康" icon={IconGauge} tone="success" />
+                <Text className="mc-panel__lead">内存占用</Text>
+                <MemoryUsagePanel runtime={runtime} />
                 <div className="mc-runtime-grid">
                   <div>
                     <Text className="mc-runtime__label">索引更新</Text>
@@ -1365,10 +1410,6 @@ export function ObservabilityWorkspace({
                   <div>
                     <Text className="mc-runtime__label">服务运行</Text>
                     <Text className="mc-runtime__value">{runtime?.uptimeSeconds ? `${formatNumber(runtime.uptimeSeconds)} 秒` : "浏览器导入"}</Text>
-                  </div>
-                  <div>
-                    <Text className="mc-runtime__label">Node RSS</Text>
-                    <Text className="mc-runtime__value">{runtime?.memory?.rss ? formatBytes(runtime.memory.rss) : "-"}</Text>
                   </div>
                   <div>
                     <Text className="mc-runtime__label">CLI 版本</Text>
