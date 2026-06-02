@@ -186,6 +186,32 @@ textarea {
   padding: 12px 18px !important;
 }
 
+.index-window-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-subtle) 72%, transparent);
+  white-space: nowrap;
+}
+
+.index-window-control__label {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.index-window-control__metric {
+  min-width: 104px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .control-shelf {
   padding: 14px 18px !important;
 }

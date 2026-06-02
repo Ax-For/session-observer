@@ -81,11 +81,50 @@ const boundRefreshIndex = (reason) => indexManager.refreshIndex(
 );
 const boundScheduleIndexRefresh = (reason) => indexManager.scheduleIndexRefresh(reason, boundRefreshIndex);
 
+function readJsonBody(req, res, onPayload) {
+  let body = "";
+  req.on("data", (chunk) => { body += chunk; });
+  req.on("end", () => {
+    try {
+      onPayload(body ? JSON.parse(body) : {});
+    } catch {
+      sendJson(req, res, 400, { error: "Invalid JSON body" });
+    }
+  });
+}
+
 // Create HTTP server
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://${req.headers.host}`);
 
   try {
+    if (u.pathname === "/api/index-window" && req.method === "GET") {
+      return sendJson(req, res, 200, {
+        generatedAt: new Date().toISOString(),
+        indexWindow: indexManager.getIndexWindowState(),
+      });
+    }
+
+    if (u.pathname === "/api/index-window" && (req.method === "PUT" || req.method === "POST")) {
+      readJsonBody(req, res, (payload) => {
+        try {
+          const result = indexManager.setIndexWindowDays(payload?.days);
+          routes.invalidateCaches();
+          boundRefreshIndex("index-window");
+          routes.invalidateCaches();
+          indexManager.trimHeapNow();
+          sendJson(req, res, 200, {
+            generatedAt: new Date().toISOString(),
+            ...result,
+          });
+        } catch (err) {
+          console.error("[server] Failed to switch index window:", err);
+          sendJson(req, res, 500, { error: "Index window switch failed" });
+        }
+      });
+      return;
+    }
+
     if (u.pathname === "/api/events/detail" && req.method === "GET") {
       const eventId = u.searchParams.get("eventId") || "";
       if (!eventId) return sendJson(req, res, 400, { error: "eventId required" });

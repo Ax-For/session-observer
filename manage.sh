@@ -6,7 +6,8 @@ RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/server.pid"
 LOG_FILE="${RUNTIME_DIR}/server.log"
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-10}"
-OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-384}"
+OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-160}"
+OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-8}"
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8787}"
@@ -33,8 +34,16 @@ Environment variables:
   CLAUDE_PROJECTS_DIR  Default: \$HOME/.claude/projects
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS
                        Default: 0, retain per-file parsed event arrays only when needed
+  INDEX_MAX_EVENTS
+                       Default: 20000, retain only the latest indexed events; set 0 for unlimited
+  INDEX_DEFAULT_WINDOW_DAYS
+                       Default: 7, load the recent index window by default
+  INDEX_MAX_WINDOW_DAYS
+                       Default: 30, maximum switchable index window from the UI/API
   OBSERVER_NODE_MAX_OLD_SPACE_MB
-                       Default: 384, cap V8 old-space to limit RSS growth
+                       Default: 160, cap V8 old-space to limit RSS growth
+  OBSERVER_NODE_SEMI_SPACE_MB
+                       Default: 8, cap V8 young generation semi-space
 EOF
 }
 
@@ -147,12 +156,12 @@ wait_for_server() {
 
 start_detached_server() {
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "${ROOT_DIR}" "${LOG_FILE}" "${HOST}" "${PORT}" "${SESSIONS_DIR}" "${CLAUDE_DIR}" "${OBSERVER_NODE_MAX_OLD_SPACE_MB}" <<'PY'
+    python3 - "${ROOT_DIR}" "${LOG_FILE}" "${HOST}" "${PORT}" "${SESSIONS_DIR}" "${CLAUDE_DIR}" "${OBSERVER_NODE_MAX_OLD_SPACE_MB}" "${OBSERVER_NODE_SEMI_SPACE_MB}" <<'PY'
 import os
 import subprocess
 import sys
 
-root_dir, log_file, host, port, sessions_dir, claude_dir, max_old_space_mb = sys.argv[1:]
+root_dir, log_file, host, port, sessions_dir, claude_dir, max_old_space_mb, semi_space_mb = sys.argv[1:]
 env = os.environ.copy()
 env.update({
     "HOST": host,
@@ -163,7 +172,14 @@ env.update({
 
 with open(log_file, "ab", buffering=0) as log_file_handle, open(os.devnull, "rb") as devnull:
     proc = subprocess.Popen(
-        ["node", f"--max-old-space-size={max_old_space_mb}", "--expose-gc", "server.js"],
+        [
+            "node",
+            f"--max-old-space-size={max_old_space_mb}",
+            f"--max-semi-space-size={semi_space_mb}",
+            "--optimize-for-size",
+            "--expose-gc",
+            "server.js",
+        ],
         cwd=root_dir,
         env=env,
         stdin=devnull,
@@ -180,7 +196,12 @@ PY
   (
     cd "${ROOT_DIR}"
     HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" \
-      nohup node --max-old-space-size="${OBSERVER_NODE_MAX_OLD_SPACE_MB}" --expose-gc server.js </dev/null >> "${LOG_FILE}" 2>&1 &
+      nohup node \
+        --max-old-space-size="${OBSERVER_NODE_MAX_OLD_SPACE_MB}" \
+        --max-semi-space-size="${OBSERVER_NODE_SEMI_SPACE_MB}" \
+        --optimize-for-size \
+        --expose-gc \
+        server.js </dev/null >> "${LOG_FILE}" 2>&1 &
     echo $!
   )
 }
@@ -291,7 +312,12 @@ run_foreground() {
   ensure_frontend_build
   cd "${ROOT_DIR}"
   HOST="${HOST}" PORT="${PORT}" CODEX_SESSIONS_DIR="${SESSIONS_DIR}" CLAUDE_PROJECTS_DIR="${CLAUDE_DIR}" \
-    node --max-old-space-size="${OBSERVER_NODE_MAX_OLD_SPACE_MB}" --expose-gc server.js
+    node \
+      --max-old-space-size="${OBSERVER_NODE_MAX_OLD_SPACE_MB}" \
+      --max-semi-space-size="${OBSERVER_NODE_SEMI_SPACE_MB}" \
+      --optimize-for-size \
+      --expose-gc \
+      server.js
 }
 
 cmd="${1:-}"

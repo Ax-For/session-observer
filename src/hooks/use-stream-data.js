@@ -11,6 +11,7 @@ const EMPTY_STREAM_PAYLOAD = {
   totalVisible: 0,
   totalMatching: 0,
   page: { offset: 0, limit: PAGE_LIMIT, hasMore: false },
+  index: null,
   generatedAt: "",
   codexVersion: null,
   claudeVersion: null,
@@ -31,13 +32,14 @@ export function useStreamData({
   const [streamPayload, setStreamPayload] = useState(EMPTY_STREAM_PAYLOAD);
   const [loadingEvents, setLoadingEvents] = useState(false);
 
-  const loadEvents = useCallback(async ({ append = false } = {}) => {
+  const loadEvents = useCallback(async ({ append = false, sessionIdOverride } = {}) => {
     if (dataSource !== "server") return null;
 
     const requestId = ++eventRequestId.current;
     setLoadingEvents(true);
     try {
       const currentPayload = streamPayloadRef.current;
+      const effectiveSessionId = sessionIdOverride ?? selectedSessionId;
       const payload = await apiClient.fetchEvents({
         mode,
         quickFilter,
@@ -49,7 +51,7 @@ export function useStreamData({
         start: streamFilters.start,
         end: streamFilters.end,
         order: streamFilters.order,
-        sessionId: selectedSessionId,
+        sessionId: effectiveSessionId,
         limit: PAGE_LIMIT,
         offset: append ? Number(currentPayload.page?.offset || 0) + PAGE_LIMIT : 0,
         summary: append ? 0 : 1,

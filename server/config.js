@@ -35,6 +35,18 @@ const INDEX_FILE_EVENT_CACHE_MAX_EVENTS = toNonNegativeInt(
   process.env.INDEX_FILE_EVENT_CACHE_MAX_EVENTS,
   0,
 );
+const INDEX_MAX_EVENTS = toNonNegativeInt(
+  process.env.INDEX_MAX_EVENTS,
+  20000,
+);
+const INDEX_DEFAULT_WINDOW_DAYS = Math.max(1, toNonNegativeInt(
+  process.env.INDEX_DEFAULT_WINDOW_DAYS,
+  7,
+));
+const INDEX_MAX_WINDOW_DAYS = Math.max(INDEX_DEFAULT_WINDOW_DAYS, toNonNegativeInt(
+  process.env.INDEX_MAX_WINDOW_DAYS,
+  30,
+));
 
 /**
  * Resolve the static file root, triggering a frontend build if needed.
@@ -86,5 +98,8 @@ module.exports = {
   INDEX_REFRESH_DEBOUNCE_MS,
   INDEX_WARMUP_INTERVAL_MS,
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS,
+  INDEX_MAX_EVENTS,
+  INDEX_DEFAULT_WINDOW_DAYS,
+  INDEX_MAX_WINDOW_DAYS,
   MIME,
 };

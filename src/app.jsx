@@ -151,6 +151,13 @@ function createSessionDetailPage() {
   };
 }
 
+const DEFAULT_INDEX_WINDOW = {
+  days: 7,
+  defaultDays: 7,
+  maxDays: 30,
+  startTime: "",
+};
+
 export function App() {
   const initialUrlState = useRef(
     parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
@@ -185,6 +192,8 @@ export function App() {
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
+  const [indexWindow, setIndexWindow] = useState(DEFAULT_INDEX_WINDOW);
+  const [indexWindowLoading, setIndexWindowLoading] = useState(false);
   const sessionDetailRequestId = useRef(0);
   const deferredQuery = useDeferredValue(streamFilters.query);
   const notify = useCallback((options) => notifications.show(options), []);
@@ -275,6 +284,18 @@ export function App() {
     tokenThreshold,
   ]);
   const currentStream = dataSource === "server" ? streamPayload : localPayload;
+  const liveIndexState = currentStream?.index || observabilityPayload?.index || {};
+  const indexWindowOptions = useMemo(() => {
+    const defaultDays = Number(indexWindow.defaultDays) || DEFAULT_INDEX_WINDOW.defaultDays;
+    const maxDays = Number(indexWindow.maxDays) || DEFAULT_INDEX_WINDOW.maxDays;
+    return [...new Map([
+      [defaultDays, `近 ${defaultDays} 天`],
+      [maxDays, `近 ${maxDays} 天`],
+    ]).entries()].map(([value, label]) => ({
+      value: String(value),
+      label,
+    }));
+  }, [indexWindow.defaultDays, indexWindow.maxDays]);
   const streamSummary = useMemo(() => buildDashboardSummary({
     events: currentStream.events,
     sessions: currentStream.sessions,
@@ -319,6 +340,22 @@ export function App() {
     () => findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed,
     [selectedSessionId, sessionDetailSeed, sessionSections],
   );
+
+  const loadIndexWindow = useCallback(async () => {
+    if (dataSource !== "server") return null;
+    try {
+      const payload = await apiClient.fetchIndexWindow();
+      setIndexWindow(payload.indexWindow || DEFAULT_INDEX_WINDOW);
+      return payload;
+    } catch (error) {
+      notify({
+        title: "索引范围加载失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+      return null;
+    }
+  }, [dataSource, notify]);
 
   async function loadSessionDetailEvents(sessionId = selectedSessionId, options = {}) {
     if (!sessionId) {
@@ -424,6 +461,10 @@ export function App() {
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    void loadIndexWindow();
+  }, [loadIndexWindow]);
 
   useEffect(() => {
     if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
@@ -558,6 +599,48 @@ export function App() {
       return;
     }
     loadEvents();
+  }
+
+  async function handleIndexWindowChange(value) {
+    const days = Number(value);
+    if (!Number.isFinite(days) || dataSource !== "server" || days === Number(indexWindow.days)) return;
+
+    setIndexWindowLoading(true);
+    closeConversation();
+    setDetailEvent(null);
+    setSelectedSessionId("");
+    setSessionDetailSeed(null);
+    setSessionDetailEvents([]);
+    setSessionDetailPage(createSessionDetailPage());
+    sessionDetailRequestId.current += 1;
+
+    try {
+      const payload = await apiClient.setIndexWindow(days);
+      setIndexWindow(payload.indexWindow || {
+        ...indexWindow,
+        days,
+      });
+      await Promise.all([
+        loadEvents({ sessionIdOverride: "" }),
+        loadSessions(),
+        loadObservability(),
+      ]);
+      notifications.show({
+        title: `已切换到近 ${days} 天索引`,
+        message: days <= (indexWindow.defaultDays || DEFAULT_INDEX_WINDOW.defaultDays)
+          ? "已释放超出当前窗口的索引缓存。"
+          : "已加载更长时间窗口的数据。",
+        color: "blue",
+      });
+    } catch (error) {
+      notify({
+        title: "索引范围切换失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      setIndexWindowLoading(false);
+    }
   }
 
   function selectLowContentSessions() {
@@ -768,47 +851,67 @@ export function App() {
                       { label: "会话", value: "sessions" },
                     ]}
                   />
-                  {tab === "stream" ? (
-                    <Group gap="sm" wrap="wrap">
+                  <Group gap="sm" wrap="wrap" justify="flex-end">
+                    <div className="index-window-control">
+                      <Text component="span" className="index-window-control__label">索引范围</Text>
                       <SegmentedControl
                         radius="xl"
-                        value={mode}
-                        onChange={setMode}
-                        data={[
-                          { label: "观测", value: "observe" },
-                          { label: "原始", value: "raw" },
-                        ]}
+                        size="sm"
+                        value={String(indexWindow.days || DEFAULT_INDEX_WINDOW.days)}
+                        onChange={handleIndexWindowChange}
+                        data={indexWindowOptions}
+                        disabled={dataSource !== "server" || indexWindowLoading}
                       />
-                      <SegmentedControl
-                        radius="xl"
-                        value={quickFilter}
-                        onChange={setQuickFilter}
-                        data={[
-                          { label: "全部", value: "all" },
-                          { label: "异常", value: "alert" },
-                          { label: "高 Token", value: "high_token" },
-                        ]}
-                      />
-                      <Button variant="subtle" radius="xl" color="gray" onClick={() => setFiltersOpen(true)}>
-                        高级筛选
-                      </Button>
-                    </Group>
-                  ) : tab === "sessions" ? (
-                    <Group gap="xs">
-                      <Badge radius="xl" variant="light" color="gray">
-                        {loadingSessions ? "刷新中" : `共 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))} 个会话`}
+                      <Badge radius="xl" variant="light" color={indexWindowLoading ? "orange" : "gray"} className="index-window-control__metric">
+                        {dataSource !== "server"
+                          ? "本地导入"
+                          : indexWindowLoading
+                            ? "重建中"
+                            : `${formatNumber(liveIndexState.retainedEvents || 0)} / ${formatNumber(liveIndexState.totalEvents || 0)}`}
                       </Badge>
-                    </Group>
-                  ) : (
-                    <Group gap="xs">
-                      <Badge radius="xl" variant="light" color="gray">
-                        {loadingObservability ? "刷新中" : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
-                      </Badge>
-                      <Badge radius="xl" variant="light" color="gray">
-                        Token {formatHumanNumber(observabilityPayload.summary?.tokens?.effectiveTotal || 0)}
-                      </Badge>
-                    </Group>
-                  )}
+                    </div>
+                    {tab === "stream" ? (
+                      <Group gap="sm" wrap="wrap">
+                        <SegmentedControl
+                          radius="xl"
+                          value={mode}
+                          onChange={setMode}
+                          data={[
+                            { label: "观测", value: "observe" },
+                            { label: "原始", value: "raw" },
+                          ]}
+                        />
+                        <SegmentedControl
+                          radius="xl"
+                          value={quickFilter}
+                          onChange={setQuickFilter}
+                          data={[
+                            { label: "全部", value: "all" },
+                            { label: "异常", value: "alert" },
+                            { label: "高 Token", value: "high_token" },
+                          ]}
+                        />
+                        <Button variant="subtle" radius="xl" color="gray" onClick={() => setFiltersOpen(true)}>
+                          高级筛选
+                        </Button>
+                      </Group>
+                    ) : tab === "sessions" ? (
+                      <Group gap="xs">
+                        <Badge radius="xl" variant="light" color="gray">
+                          {loadingSessions ? "刷新中" : `共 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))} 个会话`}
+                        </Badge>
+                      </Group>
+                    ) : (
+                      <Group gap="xs">
+                        <Badge radius="xl" variant="light" color="gray">
+                          {loadingObservability ? "刷新中" : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
+                        </Badge>
+                        <Badge radius="xl" variant="light" color="gray">
+                          Token {formatHumanNumber(observabilityPayload.summary?.tokens?.effectiveTotal || 0)}
+                        </Badge>
+                      </Group>
+                    )}
+                  </Group>
                 </Group>
               </Paper>
 

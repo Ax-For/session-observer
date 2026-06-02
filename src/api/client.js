@@ -92,6 +92,18 @@ export const apiClient = {
     return request("/api/observability");
   },
 
+  fetchIndexWindow() {
+    return request("/api/index-window");
+  },
+
+  setIndexWindow(days) {
+    return request("/api/index-window", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days }),
+    });
+  },
+
   renameSession(sessionId, newName) {
     return request("/api/sessions/rename", {
       method: "POST",

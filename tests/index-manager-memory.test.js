@@ -7,6 +7,8 @@ const path = require("node:path");
 
 const {
   fileEventCache,
+  filterFileRecordsForIndexWindow,
+  limitIndexedEvents,
   makeIndexedEvent,
   parseFileEvents,
   sortEventsChronologically,
@@ -136,4 +138,76 @@ test("sortEventsChronologically keeps missing timestamps before dated events and
     "latest",
     "same-time-next-line",
   ]);
+});
+
+test("limitIndexedEvents keeps only the latest chronological event window", () => {
+  const events = [
+    { eventId: "old" },
+    { eventId: "middle" },
+    { eventId: "new" },
+  ];
+
+  const limited = limitIndexedEvents(events, 2);
+
+  assert.equal(limited.events, events);
+  assert.deepEqual(events.map((event) => event.eventId), ["middle", "new"]);
+  assert.equal(limited.totalEvents, 3);
+  assert.equal(limited.retainedEvents, 2);
+  assert.equal(limited.omittedEventCount, 1);
+});
+
+test("limitIndexedEvents can keep the full index when the limit is disabled", () => {
+  const events = [{ eventId: "old" }, { eventId: "new" }];
+  const limited = limitIndexedEvents(events, 0);
+
+  assert.equal(limited.events, events);
+  assert.equal(limited.totalEvents, 2);
+  assert.equal(limited.retainedEvents, 2);
+  assert.equal(limited.omittedEventCount, 0);
+});
+
+test("filterFileRecordsForIndexWindow skips files outside the active time window", () => {
+  const records = [
+    { file: "old.jsonl", signature: "old", mtimeMs: Date.parse("2026-05-20T00:00:00.000Z") },
+    { file: "recent.jsonl", signature: "recent", mtimeMs: Date.parse("2026-06-01T00:00:00.000Z") },
+  ];
+
+  const filtered = filterFileRecordsForIndexWindow(records, Date.parse("2026-05-27T00:00:00.000Z"));
+
+  assert.deepEqual(filtered.files, ["recent.jsonl"]);
+  assert.equal(filtered.skippedFiles, 1);
+  assert.equal(filtered.scannedFiles, 1);
+});
+
+test("parseFileEvents skips old events inside a recent file when a cutoff is provided", () => {
+  fileEventCache.clear();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-window-"));
+  const file = path.join(dir, "events.jsonl");
+  fs.writeFileSync(file, [
+    JSON.stringify({ timestamp: "2026-05-20T10:00:00.000Z", content: "old" }),
+    JSON.stringify({ timestamp: "2026-06-01T10:00:00.000Z", content: "recent" }),
+    "",
+  ].join("\n"));
+
+  const parsers = {
+    parseCodexLineToEvent: (obj, context) => ({
+      time: obj.timestamp,
+      sessionId: "sess-window",
+      model: "gpt-5.5",
+      cwd: "/tmp/project",
+      sourceFile: context.sourceFile,
+      sourceType: "codex",
+      callType: "Agent",
+      content: obj.content,
+      summary: obj.content,
+    }),
+  };
+
+  const events = parseFileEvents(file, "state-window", new Map(), parsers, (event) => event, {
+    cutoffMs: Date.parse("2026-05-27T00:00:00.000Z"),
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].content, "recent");
+  assert.equal(events[0].sourceLine, 2);
 });

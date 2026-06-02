@@ -12,14 +12,87 @@ const fileEventCache = new Map();
 const stringPool = new Map();
 let aggregateCache = { key: "", events: [] };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+function windowAnchorMs(nowMs = Date.now()) {
+  return Math.floor(nowMs / HOUR_MS) * HOUR_MS;
+}
+
+function normalizeIndexWindowDays(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return config.INDEX_DEFAULT_WINDOW_DAYS;
+  return Math.min(config.INDEX_MAX_WINDOW_DAYS, Math.max(1, Math.floor(parsed)));
+}
+
+function createIndexWindow(days = config.INDEX_DEFAULT_WINDOW_DAYS, nowMs = Date.now()) {
+  const normalizedDays = normalizeIndexWindowDays(days);
+  const anchorMs = windowAnchorMs(nowMs);
+  const startMs = anchorMs - (normalizedDays * DAY_MS);
+  return {
+    days: normalizedDays,
+    defaultDays: config.INDEX_DEFAULT_WINDOW_DAYS,
+    maxDays: config.INDEX_MAX_WINDOW_DAYS,
+    anchorMs,
+    startMs,
+    startTime: new Date(startMs).toISOString(),
+    updatedAt: new Date(nowMs).toISOString(),
+  };
+}
+
+let indexWindow = createIndexWindow();
+
 const indexState = {
   events: [],
+  totalEvents: 0,
+  retainedEvents: 0,
+  omittedEventCount: 0,
+  scannedFiles: 0,
+  skippedFiles: 0,
   aggregateKey: "",
   dirty: true,
   refreshTimer: null,
   lastBuiltAt: "",
   lastError: "",
 };
+
+function resetIndexState() {
+  aggregateCache = { key: "", events: [] };
+  indexState.events = [];
+  indexState.totalEvents = 0;
+  indexState.retainedEvents = 0;
+  indexState.omittedEventCount = 0;
+  indexState.scannedFiles = 0;
+  indexState.skippedFiles = 0;
+  indexState.aggregateKey = "";
+  indexState.dirty = true;
+  fileEventCache.clear();
+  stringPool.clear();
+  trimHeapNow({ aggressive: true });
+}
+
+function getIndexWindowState() {
+  return { ...indexWindow };
+}
+
+function setIndexWindowDays(days, nowMs = Date.now()) {
+  const next = createIndexWindow(days, nowMs);
+  const changed = next.days !== indexWindow.days || next.anchorMs !== indexWindow.anchorMs;
+  indexWindow = next;
+  resetIndexState();
+  return {
+    changed,
+    indexWindow: getIndexWindowState(),
+  };
+}
+
+function refreshIndexWindowClock(nowMs = Date.now()) {
+  const anchorMs = windowAnchorMs(nowMs);
+  if (anchorMs === indexWindow.anchorMs) return false;
+  indexWindow = createIndexWindow(indexWindow.days, nowMs);
+  resetIndexState();
+  return true;
+}
 
 /**
  * Compute a short SHA-1 hash of a value for comparison.
@@ -147,6 +220,31 @@ function eventTimestampMs(event) {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
+function eventWithinIndexWindow(event, cutoffMs) {
+  if (!Number.isFinite(cutoffMs)) return true;
+  return eventTimestampMs(event) >= cutoffMs;
+}
+
+function filterFileRecordsForIndexWindow(records, cutoffMs = indexWindow.startMs) {
+  const sourceRecords = Array.isArray(records) ? records : [];
+  if (!Number.isFinite(cutoffMs)) {
+    return {
+      records: sourceRecords,
+      files: sourceRecords.map((record) => record.file),
+      scannedFiles: sourceRecords.length,
+      skippedFiles: 0,
+    };
+  }
+
+  const filtered = sourceRecords.filter((record) => Number(record.mtimeMs) >= cutoffMs);
+  return {
+    records: filtered,
+    files: filtered.map((record) => record.file),
+    scannedFiles: filtered.length,
+    skippedFiles: sourceRecords.length - filtered.length,
+  };
+}
+
 function sortEventsChronologically(events) {
   return (events || []).sort((left, right) => {
     const timeDiff = eventTimestampMs(left) - eventTimestampMs(right);
@@ -162,6 +260,28 @@ function sortEventsChronologically(events) {
   });
 }
 
+function limitIndexedEvents(events, maxEvents = config.INDEX_MAX_EVENTS) {
+  const totalEvents = Array.isArray(events) ? events.length : 0;
+  const limit = Number(maxEvents) || 0;
+  if (!Array.isArray(events) || limit <= 0 || totalEvents <= limit) {
+    return {
+      events: events || [],
+      totalEvents,
+      retainedEvents: totalEvents,
+      omittedEventCount: 0,
+    };
+  }
+
+  const omittedEventCount = totalEvents - limit;
+  events.splice(0, omittedEventCount);
+  return {
+    events,
+    totalEvents,
+    retainedEvents: events.length,
+    omittedEventCount,
+  };
+}
+
 /**
  * Return public index state for API responses.
  */
@@ -172,15 +292,36 @@ function publicIndexState(currentAggregateKey) {
     lastError: indexState.lastError,
     aggregateHash: signatureHash(indexState.aggregateKey),
     currentAggregateHash: signatureHash(currentAggregateKey),
+    totalEvents: indexState.totalEvents,
+    retainedEvents: indexState.retainedEvents,
+    omittedEventCount: indexState.omittedEventCount,
+    maxEvents: config.INDEX_MAX_EVENTS,
+    scannedFiles: indexState.scannedFiles,
+    skippedFiles: indexState.skippedFiles,
+    windowDays: indexWindow.days,
+    windowStartTime: indexWindow.startTime,
+    defaultWindowDays: indexWindow.defaultDays,
+    maxWindowDays: indexWindow.maxDays,
   };
 }
 
 /**
  * Trigger GC immediately if available.
  */
-function trimHeapNow() {
+function runGcCycle() {
+  try {
+    global.gc({ type: "major", execution: "sync" });
+  } catch {
+    global.gc();
+  }
+}
+
+function trimHeapNow(options = {}) {
   if (typeof global.gc !== "function") return;
-  try { global.gc(); } catch { /* optional */ }
+  const cycles = options.aggressive ? 3 : 1;
+  for (let index = 0; index < cycles; index += 1) {
+    try { runGcCycle(); } catch { /* optional */ }
+  }
 }
 
 /**
@@ -196,20 +337,24 @@ function trimHeapSoon() {
 /**
  * Parse events from a single file, supporting incremental updates.
  */
-function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore) {
+function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore, options = {}) {
   const stat = fs.statSync(file);
   const { parser } = fsScanner.resolveParserForFile(file, parsers);
+  const cutoffMs = Number(options.cutoffMs);
+  const cutoffKey = Number.isFinite(cutoffMs) ? cutoffMs : 0;
   const cached = fileEventCache.get(file);
   const hasCachedEvents = Array.isArray(cached?.events);
   const cacheFileStateMatches =
     cached &&
     cached.stateSignature === stateSignature &&
+    cached.cutoffKey === cutoffKey &&
     cached.size === stat.size &&
     cached.mtimeMs === stat.mtimeMs;
   const canAppendIncrementally =
     cached &&
     hasCachedEvents &&
     cached.stateSignature === stateSignature &&
+    cached.cutoffKey === cutoffKey &&
     stat.size > cached.size &&
     cached.endedWithNewline !== false &&
     cached.context;
@@ -241,7 +386,9 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
               : "missing-only";
           applyEventSessionMetaCore(evt, meta, { titleStrategy });
         }
-        parsed.push(makeIndexedEvent(attachEventLocator(evt, file, currentLineNumber, eventIndex)));
+        if (eventWithinIndexWindow(evt, cutoffMs)) {
+          parsed.push(makeIndexedEvent(attachEventLocator(evt, file, currentLineNumber, eventIndex)));
+        }
       });
       return true;
     } catch {
@@ -291,6 +438,7 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
 
   const nextCache = {
     stateSignature,
+    cutoffKey,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     tailBuffer,
@@ -383,20 +531,29 @@ function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSe
  * Compute the aggregate signature of all JSONL files and state DB.
  */
 function computeAggregateSignature() {
+  refreshIndexWindowClock();
   const { listJsonlFiles, getPathSignature } = fsScanner;
   const codexFiles = listJsonlFiles(config.SESSIONS_DIR);
   const claudeFiles = listJsonlFiles(config.CLAUDE_PROJECTS_DIR);
   const files = [...codexFiles, ...claudeFiles];
-  const stateSignature = getPathSignature(config.STATE_DB);
-  const codexIndexSignature = getPathSignature(config.CODEX_SESSION_INDEX);
-  const parts = files.map((file) => {
+  const stateSignature = `${getPathSignature(config.STATE_DB)}|${getPathSignature(config.CODEX_SESSION_INDEX)}`;
+  const records = files.map((file) => {
     const stat = fs.statSync(file);
-    return `${file}:${stat.size}:${stat.mtimeMs}`;
+    return {
+      file,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      signature: `${file}:${stat.size}:${stat.mtimeMs}`,
+    };
   });
+  const filtered = filterFileRecordsForIndexWindow(records, indexWindow.startMs);
+  const parts = filtered.records.map((record) => record.signature);
   return {
-    files,
+    files: filtered.files,
     stateSignature,
-    aggregateKey: `${stateSignature}|${codexIndexSignature}|${parts.join("|")}`,
+    scannedFiles: filtered.scannedFiles,
+    skippedFiles: filtered.skippedFiles,
+    aggregateKey: `window:${indexWindow.days}:${indexWindow.startMs}|${stateSignature}|${parts.join("|")}`,
   };
 }
 
@@ -405,25 +562,39 @@ function computeAggregateSignature() {
  */
 function computeAggregate(parsers, applyEventSessionMetaCore, dedupeEventsCore, mergeSessionMetaRecordsCore) {
   const threadMeta = sessionMeta.loadMergedThreadMetadata(mergeSessionMetaRecordsCore);
-  const { files, stateSignature, aggregateKey } = computeAggregateSignature();
+  const { files, stateSignature, aggregateKey, scannedFiles, skippedFiles } = computeAggregateSignature();
   const liveFiles = new Set(files);
   for (const cachedFile of fileEventCache.keys()) {
     if (!liveFiles.has(cachedFile)) fileEventCache.delete(cachedFile);
   }
   if (aggregateCache.key === aggregateKey) {
-    return { aggregateKey, events: aggregateCache.events };
+    return aggregateCache;
   }
 
   stringPool.clear();
   const all = [];
   for (const file of files) {
-    const events = parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore);
+    const events = parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSessionMetaCore, {
+      cutoffMs: indexWindow.startMs,
+    });
     for (const event of events) all.push(event);
   }
   sortEventsChronologically(all);
   const deduped = dedupeEventsCore(all, { inPlace: true });
-  aggregateCache = { key: aggregateKey, events: deduped };
-  return { aggregateKey, events: deduped };
+  const limited = limitIndexedEvents(deduped);
+  aggregateCache = {
+    key: aggregateKey,
+    aggregateKey,
+    events: limited.events,
+    totalEvents: limited.totalEvents,
+    retainedEvents: limited.retainedEvents,
+    omittedEventCount: limited.omittedEventCount,
+    scannedFiles,
+    skippedFiles,
+    windowDays: indexWindow.days,
+    windowStartTime: indexWindow.startTime,
+  };
+  return aggregateCache;
 }
 
 /**
@@ -449,6 +620,11 @@ function refreshIndex(reason, parsers, applyEventSessionMetaCore, dedupeEventsCo
   try {
     const built = computeAggregate(parsers, applyEventSessionMetaCore, dedupeEventsCore, mergeSessionMetaRecordsCore);
     indexState.events = built.events;
+    indexState.totalEvents = built.totalEvents;
+    indexState.retainedEvents = built.retainedEvents;
+    indexState.omittedEventCount = built.omittedEventCount;
+    indexState.scannedFiles = built.scannedFiles;
+    indexState.skippedFiles = built.skippedFiles;
     indexState.aggregateKey = built.aggregateKey;
     indexState.lastBuiltAt = new Date().toISOString();
     indexState.lastError = "";
@@ -528,7 +704,11 @@ function sourceFilesForSession(events, sessionId) {
 
 module.exports = {
   signatureHash,
+  getIndexWindowState,
+  setIndexWindowDays,
   makeIndexedEvent,
+  limitIndexedEvents,
+  filterFileRecordsForIndexWindow,
   sortEventsChronologically,
   publicIndexState,
   trimHeapNow,

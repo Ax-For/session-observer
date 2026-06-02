@@ -22,6 +22,11 @@ function init(deps) {
   observabilitySummaryCache = { key: "", summary: null };
 }
 
+function invalidateCaches() {
+  visibleEventsCache = { key: "", asc: [] };
+  observabilitySummaryCache = { key: "", summary: null };
+}
+
 /**
  * Return events already filtered for the current mode, stored only once.
  */
@@ -364,6 +369,7 @@ function serveStatic(reqPath, res) {
 
 module.exports = {
   init,
+  invalidateCaches,
   parseRequestFilters,
   queryEvents,
   getEventDetail,
