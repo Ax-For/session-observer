@@ -31,6 +31,20 @@
   --space-xl: 32px;
   --space-2xl: 40px;
   --topbar-height: 104px;
+  --app-outer-gutter: clamp(20px, 3.2vw, 88px);
+  --app-shell-max-width: 1880px;
+  --app-shell-width: min(calc(100vw - (var(--app-outer-gutter) * 2)), var(--app-shell-max-width));
+  --workspace-grid-gap: clamp(16px, 1vw, 24px);
+  --stream-rail-column: clamp(360px, 22vw, 520px);
+  --session-side-column: clamp(420px, 24vw, 560px);
+  --app-viewport-height: 100vh;
+  --workspace-shell-offset: calc(var(--topbar-height) + 176px);
+  --workspace-panel-min-height: 620px;
+  --workspace-panel-height: max(var(--workspace-panel-min-height), calc(var(--app-viewport-height) - var(--workspace-shell-offset)));
+  --stream-rail-height: max(420px, calc(var(--app-viewport-height) - 430px));
+  --stream-feed-height: max(460px, calc(var(--app-viewport-height) - 360px));
+  --session-list-height: max(360px, calc(var(--app-viewport-height) - var(--topbar-height) - 340px));
+  --drawer-content-height: max(520px, calc(var(--app-viewport-height) - 240px));
   --bg-glow-primary: rgba(93, 168, 255, 0.16);
   --bg-glow-secondary: rgba(147, 130, 255, 0.1);
   --json-key: #8dc3ff;
@@ -82,6 +96,12 @@ body,
   min-height: 100%;
 }
 
+@supports (height: 100dvh) {
+  :root {
+    --app-viewport-height: 100dvh;
+  }
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -101,7 +121,7 @@ textarea {
 }
 
 .observer-root {
-  min-height: 100vh;
+  min-height: var(--app-viewport-height);
 }
 
 .mantine-AppShell-main,
@@ -120,7 +140,8 @@ textarea {
 }
 
 .shell-header__inner {
-  max-width: 1600px;
+  width: var(--app-shell-width);
+  max-width: none;
   margin: 0 auto;
   padding: 18px 22px;
 }
@@ -150,7 +171,8 @@ textarea {
 }
 
 .app-main {
-  max-width: 1600px;
+  width: min(100%, var(--app-shell-width));
+  max-width: none;
   margin: 0 auto;
   padding-top: calc(var(--topbar-height) - 70px);
   padding-bottom: 28px;
@@ -2959,8 +2981,8 @@ button.mc-active-cost-row:focus-visible {
 
 .stream-layout {
   display: grid;
-  grid-template-columns: minmax(400px, 0.35fr) minmax(0, 1fr);
-  gap: var(--space-lg);
+  grid-template-columns: minmax(380px, var(--stream-rail-column)) minmax(0, 1fr);
+  gap: var(--workspace-grid-gap);
   align-items: stretch;
 }
 
@@ -2971,12 +2993,12 @@ button.mc-active-cost-row:focus-visible {
 
 .session-rail__scroll,
 .feed-panel__scroll {
-  height: calc(100vh - 430px);
+  height: var(--stream-rail-height);
   min-height: 420px;
 }
 
 .feed-virtual-scroll {
-  height: calc(100vh - 360px);
+  height: var(--stream-feed-height);
   min-height: 460px;
   overflow-y: auto;
   padding-right: 8px;
@@ -3500,6 +3522,7 @@ button.mc-active-cost-row:focus-visible {
 .control-field--wide {
   min-width: min(100%, 320px);
   flex: 1 1 280px;
+  max-width: min(100%, 760px);
 }
 
 .control-field--small {
@@ -3523,10 +3546,10 @@ button.mc-active-cost-row:focus-visible {
 
 .session-workspace-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 430px);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, var(--session-side-column));
+  gap: var(--workspace-grid-gap);
   align-items: stretch;
-  height: clamp(620px, calc(100vh - var(--topbar-height) - 176px), 900px);
+  height: var(--workspace-panel-height);
   min-height: 0;
   overflow: hidden;
 }
@@ -3589,7 +3612,7 @@ button.mc-active-cost-row:focus-visible {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   height: 100%;
-  max-height: calc(100vh - var(--topbar-height) - 36px);
+  max-height: none;
   min-width: 0;
   overflow: hidden;
 }
@@ -4334,7 +4357,7 @@ button.mc-active-cost-row:focus-visible {
 .session-list-virtual-scroll {
   position: relative;
   display: block;
-  height: clamp(360px, 48vh, 720px);
+  height: var(--session-list-height);
   overflow: auto;
   padding-right: 4px;
   scrollbar-gutter: stable;
@@ -4519,11 +4542,11 @@ button.mc-active-cost-row:focus-visible {
 }
 
 .drawer-json-shell {
-  max-height: calc(100vh - 240px);
+  max-height: var(--drawer-content-height);
 }
 
 .conversation-scroll-shell {
-  height: calc(100vh - 240px);
+  height: var(--drawer-content-height);
   min-height: 0;
 }
 
@@ -5171,6 +5194,14 @@ button.mc-active-cost-row:focus-visible {
 
   .session-workspace-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+
+  .session-workspace-side {
+    position: static;
+    height: auto;
+    overflow: visible;
   }
 
   .session-workspace-index {
