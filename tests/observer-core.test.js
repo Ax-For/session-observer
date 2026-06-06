@@ -38,6 +38,36 @@ test("parseCodexLineToEvent normalizes user messages into Prompt events", () => 
   assert.equal(event.content, "Summarize the latest errors");
 });
 
+test("parseCodexLineToEvent keeps full content by default but compacts large output for summary contexts", () => {
+  const obj = {
+    timestamp: "2026-04-19T10:01:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "function_call_output",
+      call_id: "call-1",
+      output: "x".repeat(5000),
+    },
+  };
+  const baseContext = {
+    model: "gpt-5.4",
+    sessionId: "sess-codex",
+    cwd: "/tmp/workspace",
+    sessionTitle: "Codex Session",
+    sourceFile: "codex.jsonl",
+  };
+
+  const fullEvent = parseCodexLineToEvent(obj, { ...baseContext });
+  const compactEvent = parseCodexLineToEvent(obj, {
+    ...baseContext,
+    compactContent: true,
+    contentLimit: 120,
+  });
+
+  assert.equal(fullEvent.content.length, 5000);
+  assert.equal(compactEvent.content.length, 123);
+  assert.equal(compactEvent.content.endsWith("..."), true);
+});
+
 test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from assistant output", () => {
   const context = {
     model: "unknown",

@@ -97,25 +97,28 @@ function parseRequestFilters(searchParams) {
  * Query session events directly (for focused session view).
  */
 function querySessionEventsDirect(filters, records) {
-  const { indexManager } = _deps;
   const threadMeta = loadThreadMeta();
-  getSummaryForRecords(records, threadMeta);
+  const summary = getSummaryForRecords(records, threadMeta);
   const resolvedSessionId = _deps.summaryStore.resolveSessionIdentifier(filters.sessionId, { files: records });
   const files = _deps.summaryStore.getSourceFilesForSession(resolvedSessionId, { files: records });
-  const allEvents = [];
-  for (const file of files) {
-    allEvents.push(...indexManager.parseFullFileEvents(file, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore)
-      .filter((event) => event.sessionId === resolvedSessionId));
-  }
-
-  const visibleEvents = allEvents.filter((event) => _deps.eventMatchesModeCore(event, filters.mode));
-  const matched = visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, filters));
-  matched.sort((a, b) => {
-    const am = _deps.toTimeMsCore(a.time) ?? 0;
-    const bm = _deps.toTimeMsCore(b.time) ?? 0;
-    return filters.order === "asc" ? am - bm : bm - am;
+  const sessionFilters = {
+    ...filters,
+    sessionId: resolvedSessionId,
+    includeSummary: false,
+  };
+  const recent = recentEventsReader.queryRecentEvents({
+    files,
+    parsers: _deps.parsers,
+    threadMeta,
+    filters: sessionFilters,
+    limit: filters.limit,
+    offset: filters.offset,
+    applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
+    eventMatchesModeCore: _deps.eventMatchesModeCore,
+    eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
+    sessionHints: summary.sessions.groups,
+    compactContent: true,
   });
-  const paged = matched.slice(filters.offset, filters.offset + filters.limit);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -123,18 +126,14 @@ function querySessionEventsDirect(filters, records) {
     mode: filters.mode,
     claudeVersion: require("./versions").claudeVersion,
     codexVersion: require("./versions").codexVersion,
-    index: publicSourceState(records, _deps.summaryStore.getLastSummary(), { focusedSession: true }),
-    totalVisible: visibleEvents.length,
-    totalMatching: matched.length,
+    index: publicSourceState(records, summary, { ...recent.scan, focusedSession: true }),
+    totalVisible: recent.totalVisible,
+    totalMatching: recent.totalMatching,
     sessions: [],
     tokenWindows: null,
     meta: { models: [], types: [], platforms: [] },
-    page: {
-      offset: filters.offset,
-      limit: filters.limit,
-      hasMore: filters.offset + paged.length < matched.length,
-    },
-    events: paged,
+    page: recent.page,
+    events: recent.events,
   };
 }
 
@@ -162,6 +161,7 @@ function queryEvents(filters) {
     applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
     eventMatchesModeCore: _deps.eventMatchesModeCore,
     eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
+    sessionHints: filters.includeSummary ? summary.sessions.groups : _deps.summaryStore.getLastSummary()?.sessions?.groups,
   });
 
   if (filters.includeSummary) {

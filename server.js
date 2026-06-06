@@ -36,6 +36,7 @@ const parsers = {
 const summaryStore = createSummaryStore({
   parsers,
   applyEventSessionMetaCore,
+  cacheFile: config.SUMMARY_CACHE_FILE,
 });
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
@@ -227,8 +228,9 @@ function isJsonHeapPressured() {
   return heapTotal >= JSON_HEAP_PRESSURE_BYTES || heapUsed >= JSON_HEAP_PRESSURE_BYTES * 0.75;
 }
 
-function trimHeapBeforeJson() {
-  if (typeof global.gc !== "function" || !isJsonHeapPressured()) return;
+function trimHeapBeforeJson(options = {}) {
+  if (typeof global.gc !== "function") return;
+  if (!options.force && !isJsonHeapPressured()) return;
   try {
     global.gc();
   } catch {
@@ -238,30 +240,31 @@ function trimHeapBeforeJson() {
 
 function sendJson(req, res, status, data) {
   const zlib = require("zlib");
-  trimHeapBeforeJson();
+  trimHeapBeforeJson({ force: true });
   const body = JSON.stringify(data);
-  const bodyBuffer = Buffer.from(body);
   const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
-  const shouldGzip = acceptsGzip && bodyBuffer.length > 1024 && !isJsonHeapPressured();
+  const bodyLength = Buffer.byteLength(body);
+  const shouldGzip = acceptsGzip && bodyLength > 1024 && !isJsonHeapPressured();
 
   const writePayload = (payload, gzipped = false) => {
+    const length = typeof payload === "string" ? Buffer.byteLength(payload) : payload.length;
     res.writeHead(status, {
       "Content-Type": config.MIME[".json"],
       ...(gzipped ? { "Content-Encoding": "gzip" } : {}),
       "Cache-Control": "no-store",
-      "Content-Length": payload.length,
+      "Content-Length": length,
     });
     res.end(payload);
   };
 
   if (!shouldGzip) {
-    writePayload(bodyBuffer);
+    writePayload(body);
     return;
   }
 
-  zlib.gzip(bodyBuffer, (error, payload) => {
+  zlib.gzip(body, (error, payload) => {
     if (error) {
-      writePayload(bodyBuffer);
+      writePayload(body);
       return;
     }
     writePayload(payload, true);

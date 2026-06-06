@@ -11,6 +11,8 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 8787;
 const ROOT = path.resolve(__dirname, "..");
 const DIST_ROOT = path.join(ROOT, "dist");
 const DIST_INDEX = path.join(DIST_ROOT, "index.html");
+const RUNTIME_DIR = process.env.OBSERVER_RUNTIME_DIR || path.join(ROOT, ".runtime");
+const SUMMARY_CACHE_FILE = process.env.OBSERVER_SUMMARY_CACHE_FILE || path.join(RUNTIME_DIR, "summary-cache.json");
 
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
@@ -83,6 +85,8 @@ module.exports = {
   HOST,
   PORT,
   ROOT,
+  RUNTIME_DIR,
+  SUMMARY_CACHE_FILE,
   STATIC_ROOT,
   DIST_ROOT,
   DIST_INDEX,

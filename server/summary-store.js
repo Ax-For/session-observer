@@ -6,10 +6,13 @@
  * sessions, buckets, and counters, but never retains raw event arrays.
  */
 const fs = require("fs");
+const path = require("path");
 const ObserverCore = require("../shared/observer-core");
 const tokenPricing = require("../shared/token-pricing");
 const fsScanner = require("./fs-scanner");
+const { compactLargeJsonlLine } = require("./jsonl-compact");
 
+const SUMMARY_CACHE_VERSION = 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -484,14 +487,91 @@ function callParser(parser, obj, context) {
   return Array.isArray(parsed) ? parsed.filter(Boolean) : [parsed].filter(Boolean);
 }
 
+function encodeCacheValue(value) {
+  if (value instanceof Map) {
+    return {
+      __kind: "Map",
+      entries: [...value.entries()].map(([key, entry]) => [key, encodeCacheValue(entry)]),
+    };
+  }
+  if (value instanceof Set) {
+    return {
+      __kind: "Set",
+      values: [...value.values()].map((entry) => encodeCacheValue(entry)),
+    };
+  }
+  if (Array.isArray(value)) return value.map((entry) => encodeCacheValue(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, encodeCacheValue(entry)]),
+  );
+}
+
+function decodeCacheValue(value) {
+  if (!value || typeof value !== "object") return value;
+  if (value.__kind === "Map" && Array.isArray(value.entries)) {
+    return new Map(value.entries.map(([key, entry]) => [key, decodeCacheValue(entry)]));
+  }
+  if (value.__kind === "Set" && Array.isArray(value.values)) {
+    return new Set(value.values.map((entry) => decodeCacheValue(entry)));
+  }
+  if (Array.isArray(value)) return value.map((entry) => decodeCacheValue(entry));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, decodeCacheValue(entry)]),
+  );
+}
+
+function serializeCacheEntry(entry) {
+  return {
+    signature: entry.signature,
+    size: entry.size,
+    mtimeMs: entry.mtimeMs,
+    lineCount: entry.lineCount,
+    tailBuffer: entry.tailBuffer,
+    endedWithNewline: entry.endedWithNewline,
+    context: entry.context,
+    summary: encodeCacheValue(entry.summary),
+  };
+}
+
+function deserializeCacheEntry(file, entry) {
+  if (!entry?.signature || !entry.summary) return null;
+  return {
+    signature: entry.signature,
+    size: Number(entry.size) || 0,
+    mtimeMs: Number(entry.mtimeMs) || 0,
+    lineCount: Number(entry.lineCount) || 0,
+    tailBuffer: entry.tailBuffer || "",
+    endedWithNewline: entry.endedWithNewline !== false,
+    context: {
+      ...createParserContext(file),
+      ...(entry.context || {}),
+      sourceFile: file,
+      compactContent: true,
+    },
+    summary: decodeCacheValue(entry.summary),
+  };
+}
+
 function createParserContext(file) {
-  return { model: "unknown", sessionId: "unknown", sourceFile: file, cwd: "", sessionTitle: "" };
+  return {
+    model: "unknown",
+    sessionId: "unknown",
+    sourceFile: file,
+    cwd: "",
+    sessionTitle: "",
+    compactContent: true,
+    contentLimit: 800,
+  };
 }
 
 function ingestJsonlLine(summary, line, context, deps) {
   if (!line) return;
   try {
-    const obj = JSON.parse(line);
+    const sourceLine = context?.compactContent
+      ? compactLargeJsonlLine(line, { maxValueLength: context.contentLimit || 800 })
+      : line;
+    const obj = JSON.parse(sourceLine);
     const events = callParser(deps.parser, obj, context);
     for (const event of events) {
       if (!event.sourceFile) event.sourceFile = deps.file;
@@ -889,11 +969,49 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
 function createSummaryStore(options = {}) {
   const fileCache = new Map();
   let lastSummary = null;
+  let persistentCacheLoaded = false;
+  let persistentCacheDirty = false;
+  const cacheFile = options.cacheFile || "";
   const deps = {
     parsers: options.parsers || {},
     threadMeta: options.threadMeta || new Map(),
   };
   const now = typeof options.now === "function" ? options.now : () => Date.now();
+
+  function loadPersistentCache() {
+    if (persistentCacheLoaded || !cacheFile) return;
+    persistentCacheLoaded = true;
+    if (!fs.existsSync(cacheFile)) return;
+    try {
+      const payload = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+      if (payload?.version !== SUMMARY_CACHE_VERSION || !payload.files || typeof payload.files !== "object") return;
+      for (const [file, entry] of Object.entries(payload.files)) {
+        const restored = deserializeCacheEntry(file, entry);
+        if (restored) fileCache.set(file, restored);
+      }
+    } catch {
+      // Ignore corrupt runtime cache; it will be rebuilt from source logs.
+    }
+  }
+
+  function savePersistentCache() {
+    if (!cacheFile || !persistentCacheDirty) return;
+    persistentCacheDirty = false;
+    try {
+      fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+      const files = {};
+      for (const [file, entry] of fileCache) files[file] = serializeCacheEntry(entry);
+      const tmpFile = `${cacheFile}.tmp`;
+      fs.writeFileSync(tmpFile, JSON.stringify({
+        version: SUMMARY_CACHE_VERSION,
+        savedAt: new Date(Number(now())).toISOString(),
+        files,
+      }));
+      fs.renameSync(tmpFile, cacheFile);
+    } catch {
+      persistentCacheDirty = true;
+    }
+  }
 
   function invalidate() {
     lastSummary = null;
@@ -902,9 +1020,19 @@ function createSummaryStore(options = {}) {
   function clear() {
     fileCache.clear();
     lastSummary = null;
+    persistentCacheLoaded = true;
+    persistentCacheDirty = false;
+    if (cacheFile) {
+      try {
+        fs.unlinkSync(cacheFile);
+      } catch {
+        // Runtime cache may not exist.
+      }
+    }
   }
 
   function getSummary(input = {}) {
+    loadPersistentCache();
     const records = normalizeFiles(input.files);
     const runDeps = {
       ...deps,
@@ -912,7 +1040,10 @@ function createSummaryStore(options = {}) {
     };
     const liveFiles = new Set(records.map((record) => record.file));
     for (const cachedFile of fileCache.keys()) {
-      if (!liveFiles.has(cachedFile)) fileCache.delete(cachedFile);
+      if (!liveFiles.has(cachedFile)) {
+        fileCache.delete(cachedFile);
+        persistentCacheDirty = true;
+      }
     }
 
     let scannedFiles = 0;
@@ -942,6 +1073,7 @@ function createSummaryStore(options = {}) {
         tailBuffer: parsed.tailBuffer,
         endedWithNewline: parsed.endedWithNewline,
       });
+      persistentCacheDirty = true;
       mergeSummary(aggregate, parsed.summary);
     }
 
@@ -956,6 +1088,7 @@ function createSummaryStore(options = {}) {
       nowMs: Number(now()),
       threadMeta: runDeps.threadMeta,
     });
+    savePersistentCache();
     return lastSummary;
   }
 

@@ -113,3 +113,95 @@ test("queryRecentEvents can search raw session content on demand", () => {
   assert.equal(result.events[0].id, "b");
   assert.equal(result.events[0].content, "needle from prompt");
 });
+
+test("queryRecentEvents stops inside a large newest file once the first page is satisfied", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "large-current.jsonl");
+  const rows = Array.from({ length: 100 }, (_, index) => ({
+    id: `event-${index + 1}`,
+    time: new Date(Date.parse("2026-06-01T00:00:00.000Z") + index * 1000).toISOString(),
+    sessionId: "current",
+    cwd: "/repo",
+    content: `event ${index + 1}`,
+  }));
+  writeJsonl(file, rows, Date.parse("2026-06-01T00:02:00.000Z"));
+
+  let parsed = 0;
+  const countingParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      parsed += 1;
+      return parser.parseLine(json, context);
+    },
+  };
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [countingParser],
+    filters: { order: "desc" },
+    limit: 5,
+    offset: 0,
+  });
+
+  assert.deepEqual(result.events.map((event) => event.id), ["event-100", "event-99", "event-98", "event-97", "event-96"]);
+  assert.ok(parsed < 20, `expected early stop, parsed ${parsed} rows`);
+  assert.equal(result.page.hasMore, true);
+  assert.equal(result.scan.stoppedEarly, true);
+});
+
+test("queryRecentEvents seeds reverse scans with session metadata hints", () => {
+  const dir = makeTempDir();
+  const sessionId = "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad";
+  const file = path.join(dir, `rollout-2026-05-25T23-37-53-${sessionId}.jsonl`);
+  writeJsonl(file, [
+    {
+      id: "old",
+      time: "2026-06-01T00:00:00.000Z",
+      content: "older",
+    },
+    {
+      id: "latest",
+      time: "2026-06-01T00:01:00.000Z",
+      content: "latest",
+    },
+  ], Date.parse("2026-06-01T00:01:00.000Z"));
+
+  const contextParser = {
+    sourceType: "codex",
+    parseLine: (json, context) => ({
+      id: json.id,
+      time: json.time,
+      sessionId: context.sessionId,
+      cwd: context.cwd,
+      model: context.model,
+      callType: "Agent",
+      summary: json.content,
+      content: json.content,
+      sourceFile: context.sourceFile,
+      sourceType: "codex",
+    }),
+  };
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [contextParser],
+    filters: { order: "desc" },
+    limit: 1,
+    offset: 0,
+    sessionHints: [
+      {
+        sessionId,
+        cwd: "/repo/session-observer",
+        models: ["gpt-5.5"],
+        sessionTitle: "UI review",
+        sourceFiles: [file],
+      },
+    ],
+  });
+
+  assert.equal(result.events[0].id, "latest");
+  assert.equal(result.events[0].sessionId, sessionId);
+  assert.equal(result.events[0].cwd, "/repo/session-observer");
+  assert.equal(result.events[0].model, "gpt-5.5");
+  assert.equal(result.events[0].sessionTitle, "UI review");
+});

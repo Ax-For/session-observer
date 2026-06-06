@@ -47,7 +47,7 @@ import {
 import { readableEventSummary } from "../lib/event-display";
 
 const SESSION_VIRTUAL_THRESHOLD = 24;
-const SESSION_ROW_HEIGHT = 126;
+const SESSION_ROW_HEIGHT = 112;
 const SESSION_ROW_OVERSCAN = 4;
 
 function formatTokenText(value, hasTokenData = true) {
@@ -714,15 +714,13 @@ function SessionRow({
       >
         <div className="session-row__title-line">
           <ThemeIcon
-            radius="xl"
-            size={28}
-            variant="gradient"
-            gradient={session.sourceType === "codex"
-              ? { from: "blue", to: "cyan" }
-              : { from: "orange", to: "yellow" }}
+            radius="md"
+            size={24}
+            variant="light"
+            color={session.sourceType === "codex" ? "blue" : "orange"}
             aria-label={platformLabel(session.sourceType)}
           >
-            <IconTerminal2 size={15} stroke={2.2} />
+            <IconTerminal2 size={13} stroke={2.1} />
           </ThemeIcon>
           <Text fw={700} className="session-card__title">{session.title}</Text>
         </div>

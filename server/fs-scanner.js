@@ -162,6 +162,98 @@ function forEachCompleteJsonlLine(file, onLine) {
   return result;
 }
 
+function countCompleteJsonlLines(file) {
+  if (!fs.existsSync(file)) return { lineCount: 0, endedWithNewline: false };
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let lineCount = 0;
+  let endedWithNewline = false;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead <= 0) break;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] === 10) lineCount += 1;
+      }
+      endedWithNewline = buffer[bytesRead - 1] === 10;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return { lineCount, endedWithNewline };
+}
+
+/**
+ * Iterate complete JSONL lines from the end of a file. A trailing partial line
+ * is skipped, matching forEachCompleteJsonlLine's behavior for active files.
+ */
+function forEachCompleteJsonlLineReverse(file, onLine) {
+  const count = countCompleteJsonlLines(file);
+  const result = {
+    lineCount: count.lineCount,
+    endedWithNewline: count.endedWithNewline,
+    stoppedEarly: false,
+  };
+  if (!fs.existsSync(file) || count.lineCount <= 0) return result;
+
+  const fd = fs.openSync(file, "r");
+  const bufferSize = 64 * 1024;
+  const buffer = Buffer.alloc(bufferSize);
+  let position = fs.statSync(file).size;
+  let tail = Buffer.alloc(0);
+  let lineNumber = count.lineCount;
+  let skippedTrailingPartial = count.endedWithNewline;
+
+  try {
+    while (position > 0) {
+      const bytesToRead = Math.min(bufferSize, position);
+      position -= bytesToRead;
+      const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, position);
+      if (bytesRead <= 0) break;
+
+      const chunk = Buffer.from(buffer.subarray(0, bytesRead));
+      const combined = tail.length ? Buffer.concat([chunk, tail]) : chunk;
+      let segmentEnd = combined.length;
+
+      for (let index = combined.length - 1; index >= 0; index -= 1) {
+        if (combined[index] !== 10) continue;
+        const segment = combined.subarray(index + 1, segmentEnd);
+        segmentEnd = index;
+
+        if (!segment.length) {
+          skippedTrailingPartial = true;
+          continue;
+        }
+
+        if (!skippedTrailingPartial) {
+          skippedTrailingPartial = true;
+          continue;
+        }
+
+        const keepGoing = onLine(segment.toString("utf8").replace(/\r$/, ""), lineNumber);
+        lineNumber -= 1;
+        if (keepGoing === false) {
+          result.stoppedEarly = true;
+          return result;
+        }
+      }
+
+      tail = Buffer.from(combined.subarray(0, segmentEnd));
+    }
+
+    if (tail.length && lineNumber > 0) {
+      const keepGoing = onLine(tail.toString("utf8").replace(/\r$/, ""), lineNumber);
+      if (keepGoing === false) result.stoppedEarly = true;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return result;
+}
+
 /**
  * Get a stat-based signature for a file path to detect changes.
  */
@@ -186,6 +278,7 @@ module.exports = {
   readJsonlLine,
   forEachJsonlLine,
   forEachCompleteJsonlLine,
+  forEachCompleteJsonlLineReverse,
   getPathSignature,
   resolveParserForFile,
 };

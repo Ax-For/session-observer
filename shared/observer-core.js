@@ -89,6 +89,49 @@
     return clip(raw || "", 220);
   }
 
+  function parserContentLimit(context, fallback = 1000) {
+    const value = Number(context?.contentLimit ?? context?.contentPreviewLength);
+    if (!Number.isFinite(value) || value <= 0) return fallback;
+    return Math.min(16000, Math.max(120, Math.floor(value)));
+  }
+
+  function compactTextForContext(text, context, fallbackLimit = 1000) {
+    const raw = String(text || "");
+    if (!context?.compactContent) return raw;
+    const limit = parserContentLimit(context, fallbackLimit);
+    return raw.length > limit ? `${raw.slice(0, limit)}...` : raw;
+  }
+
+  function compactObjectSummary(value, max = 220) {
+    if (value == null) return "";
+    if (typeof value === "string") return clip(value, max);
+    if (typeof value !== "object") return clip(String(value), max);
+    if (Array.isArray(value)) return `[${value.length} items]`;
+    const parts = [];
+    for (const [key, entry] of Object.entries(value).slice(0, 12)) {
+      if (typeof entry === "string") parts.push(`${key}: ${clip(entry, 80)}`);
+      else if (entry == null) parts.push(`${key}: null`);
+      else if (Array.isArray(entry)) parts.push(`${key}: [${entry.length} items]`);
+      else if (typeof entry === "object") parts.push(`${key}: {${Object.keys(entry).slice(0, 6).join(", ")}}`);
+      else parts.push(`${key}: ${String(entry)}`);
+    }
+    return clip(`{${parts.join(", ")}}`, max);
+  }
+
+  function summarizeRawObjectForContext(obj, context) {
+    if (!context?.compactContent) return summarizeRawObject(obj);
+    const payload = obj?.payload;
+    if (typeof payload?.message === "string" && payload.message.trim()) return clip(payload.message, 220);
+    if (typeof payload?.name === "string" && payload.name.trim()) return clip(payload.name, 220);
+    if (typeof payload?.status === "string" && payload.status.trim()) return clip(payload.status, 220);
+    if (typeof payload?.phase === "string" && payload.phase.trim()) return clip(payload.phase, 220);
+    return compactObjectSummary(payload ?? obj, 220);
+  }
+
+  function rawForContext(obj, context) {
+    return context?.compactContent ? undefined : obj;
+  }
+
   function normalizeEventText(text) {
     return String(text || "").trim().replace(/\s+/g, " ");
   }
@@ -966,9 +1009,9 @@
         callType: "Raw",
         rawType: obj.type || "",
         rawSubType: obj.payload?.type || "",
-        content: summarizeRawObject(obj),
-        summary: summarizeRawObject(obj),
-        raw: obj,
+        content: summarizeRawObjectForContext(obj, context),
+        summary: summarizeRawObjectForContext(obj, context),
+        raw: rawForContext(obj, context),
       };
     }
 
@@ -998,16 +1041,16 @@
         callType: "Raw",
         rawType: obj.type || "",
         rawSubType: obj.payload?.type || "",
-        content: summarizeRawObject(obj),
-        summary: summarizeRawObject(obj),
-        raw: obj,
+        content: summarizeRawObjectForContext(obj, context),
+        summary: summarizeRawObjectForContext(obj, context),
+        raw: rawForContext(obj, context),
       };
     }
 
     if (obj.type === "response_item" && obj.payload?.type === "message") {
       const role = obj.payload.role;
       if (role === "user" || role === "assistant") {
-        const content = parseContentFromMessage(obj.payload.content);
+        const content = compactTextForContext(parseContentFromMessage(obj.payload.content), context);
         return {
           time: ts,
           sessionId,
@@ -1041,7 +1084,7 @@
         sourceFile,
         sourceType: "codex",
         callType: "Agent",
-        content: obj.payload?.message || "",
+        content: compactTextForContext(obj.payload?.message || "", context),
         summary: clip(obj.payload?.message || ""),
       };
     }
@@ -1085,7 +1128,7 @@
 
     if (obj.type === "response_item" && obj.payload?.type === "function_call") {
       const name = obj.payload?.name || "unknown_tool";
-      const args = obj.payload?.arguments || "";
+      const args = compactTextForContext(obj.payload?.arguments || "", context);
       return {
         time: ts,
         sessionId,
@@ -1105,7 +1148,7 @@
     }
 
     if (obj.type === "response_item" && obj.payload?.type === "function_call_output") {
-      const output = obj.payload?.output || "";
+      const output = compactTextForContext(obj.payload?.output || "", context);
       return {
         time: ts,
         sessionId,
@@ -1139,9 +1182,9 @@
       callType: "Raw",
       rawType: obj.type || "",
       rawSubType: obj.payload?.type || "",
-      content: summarizeRawObject(obj),
-      summary: summarizeRawObject(obj),
-      raw: obj,
+      content: summarizeRawObjectForContext(obj, context),
+      summary: summarizeRawObjectForContext(obj, context),
+      raw: rawForContext(obj, context),
     };
   }
 
@@ -1175,9 +1218,9 @@
         callType: "Raw",
         rawType: obj.type,
         rawSubType: "",
-        content: title || summarizeRawObject(obj),
-        summary: clip(title || summarizeRawObject(obj), 220),
-        raw: obj,
+        content: title || summarizeRawObjectForContext(obj, context),
+        summary: clip(title || summarizeRawObjectForContext(obj, context), 220),
+        raw: rawForContext(obj, context),
       };
     }
 
@@ -1268,7 +1311,7 @@
           callType: "Raw",
           rawType: "user-meta",
           rawSubType: "",
-          content: cleaned || "Meta command",
+        content: compactTextForContext(cleaned || "Meta command", context),
           summary: clip(cleaned || "Meta command"),
         };
       }
@@ -1300,7 +1343,7 @@
         };
       }
 
-      const content = typeof obj.message?.content === "string" ? obj.message.content : "";
+      const content = compactTextForContext(typeof obj.message?.content === "string" ? obj.message.content : "", context);
       const agentPrefix = obj.agentId ? `[subagent:${obj.agentId}] ` : "";
       return {
         time: ts,
@@ -1381,7 +1424,8 @@
         const events = [];
         for (const toolCall of toolCalls) {
           const argsStr = typeof toolCall.input === "string" ? toolCall.input : JSON.stringify(toolCall.input || "");
-          const clipLimit = (toolCall.name === "Edit" || toolCall.name === "Write" || toolCall.name === "ApplyPatch") ? 16000 : 200;
+          const fullClipLimit = (toolCall.name === "Edit" || toolCall.name === "Write" || toolCall.name === "ApplyPatch") ? 16000 : 200;
+          const clipLimit = context?.compactContent ? parserContentLimit(context, 1000) : fullClipLimit;
           events.push({
             time: ts,
             sessionId,
@@ -1415,7 +1459,7 @@
             sourceFile,
             sourceType: "claude",
             callType: "Agent",
-            content: `${agentPrefix}${text}`,
+            content: `${agentPrefix}${compactTextForContext(text, context)}`,
             summary: clip(`${agentPrefix}${text}`),
           });
         }
@@ -1460,7 +1504,7 @@
           sourceFile,
           sourceType: "claude",
           callType: "Agent",
-          content: `${agentPrefix}${text}`,
+          content: `${agentPrefix}${compactTextForContext(text, context)}`,
           summary: clip(`${agentPrefix}${text}`),
         };
         if (tokenEvent) return [baseEvent, tokenEvent];
@@ -1502,8 +1546,8 @@
       callType: "Raw",
       rawType: obj.type || "",
       rawSubType: "",
-      content: summarizeRawObject(obj),
-      summary: summarizeRawObject(obj),
+      content: summarizeRawObjectForContext(obj, context),
+      summary: summarizeRawObjectForContext(obj, context),
     };
   }
 

@@ -34,7 +34,7 @@ import {
   readableEventSummary,
 } from "../lib/event-display";
 
-const EVENT_ROW_HEIGHT = 152;
+const EVENT_ROW_HEIGHT = 124;
 const EVENT_OVERSCAN = 6;
 
 function formatHeroNumber(value) {

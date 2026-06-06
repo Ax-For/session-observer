@@ -224,3 +224,146 @@ test("summary store parses only appended lines for a growing current file", () =
   assert.equal(summary.cache.scannedFiles, 1);
   assert.equal(summary.cache.incrementalFiles, 1);
 });
+
+test("summary store asks parsers for compact content previews", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "large-output.jsonl");
+  const contexts = [];
+  const compactAwareParser = {
+    sourceType: "codex",
+    parseLine: (json, context) => {
+      contexts.push({ compactContent: context.compactContent, contentLimit: context.contentLimit });
+      const rawContent = String(json.content || "");
+      const content = context.compactContent && rawContent.length > context.contentLimit
+        ? `${rawContent.slice(0, context.contentLimit)}...`
+        : rawContent;
+      return {
+        time: json.time,
+        sessionId: json.sessionId,
+        cwd: json.cwd,
+        model: json.model,
+        callType: "Tool_Result",
+        summary: content,
+        content,
+        sourceFile: context.sourceFile,
+        sourceType: "codex",
+      };
+    },
+  };
+
+  writeJsonl(file, [
+    {
+      id: "large",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "large-session",
+      cwd: "/repo",
+      model: "gpt-5",
+      content: "x".repeat(5000),
+    },
+  ], Date.parse("2026-06-01T00:00:00.000Z"));
+
+  const store = createSummaryStore({ parsers: [compactAwareParser], now: () => Date.parse("2026-06-06T00:00:00.000Z") });
+  const summary = store.getSummary({ files: [file] });
+
+  assert.deepEqual(contexts, [{ compactContent: true, contentLimit: 800 }]);
+  assert.equal(summary.sessions.groups[0].fallbackTitle.length <= 36, true);
+  assert.equal(summary.memory.retainedRawEvents, 0);
+});
+
+test("summary store restores unchanged file summaries from persistent cache", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "cached.jsonl");
+  const cacheFile = path.join(dir, ".runtime", "summary-cache.json");
+  let parsedLines = 0;
+  const countingParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      parsedLines += 1;
+      return parser.parseLine(json, context);
+    },
+  };
+
+  writeJsonl(file, [
+    {
+      id: "cached",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "cached-session",
+      cwd: "/repo",
+      content: "cached",
+    },
+  ], Date.parse("2026-06-01T00:00:00.000Z"));
+
+  const firstStore = createSummaryStore({
+    parsers: [countingParser],
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  });
+  firstStore.getSummary({ files: [file] });
+  assert.equal(parsedLines, 1);
+  assert.equal(fs.existsSync(cacheFile), true);
+
+  const secondStore = createSummaryStore({
+    parsers: [countingParser],
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  });
+  const summary = secondStore.getSummary({ files: [file] });
+
+  assert.equal(parsedLines, 1);
+  assert.equal(summary.cache.reusedFiles, 1);
+  assert.equal(summary.cache.scannedFiles, 0);
+  assert.equal(summary.health.eventsTotal, 1);
+});
+
+test("summary store appends from persistent cache for a growing current file", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "growing.jsonl");
+  const cacheFile = path.join(dir, ".runtime", "summary-cache.json");
+  let parsedLines = 0;
+  const countingParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      parsedLines += 1;
+      return parser.parseLine(json, context);
+    },
+  };
+
+  writeJsonl(file, [
+    {
+      id: "first",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "growing-session",
+      cwd: "/repo",
+      content: "first",
+    },
+  ], Date.parse("2026-06-01T00:00:00.000Z"));
+
+  createSummaryStore({
+    parsers: [countingParser],
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  }).getSummary({ files: [file] });
+  assert.equal(parsedLines, 1);
+
+  fs.appendFileSync(file, `${JSON.stringify({
+    id: "second",
+    time: "2026-06-01T00:01:00.000Z",
+    sessionId: "growing-session",
+    cwd: "/repo",
+    content: "second",
+  })}\n`);
+  const date = new Date(Date.parse("2026-06-01T00:01:00.000Z"));
+  fs.utimesSync(file, date, date);
+
+  const nextStore = createSummaryStore({
+    parsers: [countingParser],
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  });
+  const summary = nextStore.getSummary({ files: [file] });
+
+  assert.equal(parsedLines, 2);
+  assert.equal(summary.cache.scannedFiles, 1);
+  assert.equal(summary.cache.incrementalFiles, 1);
+  assert.equal(summary.health.eventsTotal, 2);
+});

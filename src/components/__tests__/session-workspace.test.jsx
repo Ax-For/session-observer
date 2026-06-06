@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import { formatDateTime } from "../../lib/formatters";
 import { SessionWorkspace } from "../session-workspace";
@@ -171,7 +171,7 @@ describe("SessionWorkspace", () => {
     expect(onToggleSelect).toHaveBeenCalledWith(["older", "newer"]);
   });
 
-  test("virtualizes large session groups while preserving scroll access", () => {
+  test("virtualizes large session groups while preserving scroll access", async () => {
     const sessions = Array.from({ length: 80 }, (_, index) => ({
       sessionId: `sess-${index}`,
       sourceType: "codex",
@@ -215,9 +215,12 @@ describe("SessionWorkspace", () => {
 
     const virtualScroll = document.querySelector(".session-list-virtual-scroll");
     expect(virtualScroll).toBeTruthy();
-    fireEvent.scroll(virtualScroll, { target: { scrollTop: 9800 } });
+    Object.defineProperty(virtualScroll, "scrollTop", { value: 8200, configurable: true });
+    fireEvent.scroll(virtualScroll);
 
-    expect(screen.getByText("Session 79")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Session 79")).toBeInTheDocument();
+    });
   });
 
   test("renders a rich selected session detail panel", () => {

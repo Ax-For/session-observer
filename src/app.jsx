@@ -278,7 +278,20 @@ export function App() {
     tokenThreshold,
   ]);
   const currentStream = dataSource === "server" ? streamPayload : localPayload;
-  const liveIndexState = currentStream?.index || observabilityPayload?.index || {};
+  const currentStreamIndex = currentStream?.index || {};
+  const summaryCache = observabilityPayload.summary?.cache || {};
+  const liveIndexState = (
+    Number(currentStreamIndex.cachedFiles)
+    || Number(currentStreamIndex.totalFiles)
+    || Number(currentStreamIndex.scannedFiles)
+  )
+    ? currentStreamIndex
+    : (observabilityPayload?.index || {});
+  const cachedFileCountFromIndex = Number(liveIndexState.cachedFiles)
+    || Number(summaryCache.cachedFiles)
+    || Number(liveIndexState.totalFiles)
+    || Number(summaryCache.totalFiles)
+    || 0;
   const observabilitySessionGroups = useMemo(
     () => observabilityPayload.summary?.sessions?.byCwd
       || observabilityPayload.summary?.sessions?.groups
@@ -322,6 +335,18 @@ export function App() {
     () => buildSessionSections(sessionGroups, sessionFilters),
     [sessionGroups, sessionFilters],
   );
+  const sessionSourceFileCount = useMemo(() => {
+    const files = new Set();
+    for (const section of sessionSections || []) {
+      for (const session of section.sessions || []) {
+        for (const file of session.sourceFiles || []) {
+          if (file) files.add(file);
+        }
+      }
+    }
+    return files.size;
+  }, [sessionSections]);
+  const cachedFileCount = cachedFileCountFromIndex || sessionSourceFileCount;
   const sessionWorkspaceIndex = useMemo(
     () => buildSessionWorkspaceIndex(sessionSections),
     [sessionSections],
@@ -750,31 +775,45 @@ export function App() {
     <MantineProvider theme={theme} forceColorScheme={themeMode}>
       <Notifications position="top-right" />
       <div className={`observer-root theme-${themeMode} density-${density}`}>
-        <AppShell header={{ height: { base: 156, sm: 104 } }} padding="md">
+        <AppShell header={{ height: { base: 118, sm: 82 } }} padding="md">
           <AppShell.Header className="shell-header">
             <div className="shell-header__inner">
-              <Group justify="space-between" align="flex-start" wrap="nowrap">
-                <div>
-                  <Group gap="sm" mb={6}>
-                    <div className="brand-mark">SO</div>
-                    <div>
-                      <Title order={3}>Session Observer</Title>
-                      <Text className="header-status">{headerMetrics.status}</Text>
-                    </div>
-                  </Group>
-                  <Group gap="xs">
-                    <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "orange"}>
-                      {dataSource === "server" ? "Live" : "Import"}
-                    </Badge>
-                    <Badge radius="xl" variant="light" color="gray">
-                      匹配 {formatNumber(headerMetrics.matching)}
-                    </Badge>
-                    <Badge radius="xl" variant="light" color="gray">
-                      会话 {formatNumber(headerMetrics.sessions)}
-                    </Badge>
-                  </Group>
+              <div className="shell-header__grid">
+                <div className="shell-header__brand">
+                  <div className="brand-mark">SO</div>
+                  <div className="shell-header__brand-copy">
+                    <Title order={3}>Session Observer</Title>
+                    <Text className="header-status">{headerMetrics.status}</Text>
+                  </div>
                 </div>
-                <Group gap="xs" align="center" className="header-actions">
+
+                <SegmentedControl
+                  radius="xl"
+                  value={tab}
+                  onChange={setTab}
+                  className="shell-tabs"
+                  data={[
+                    { label: "总览", value: "overview" },
+                    { label: "Token", value: "tokens" },
+                    { label: "洞察", value: "insights" },
+                    { label: "事件流", value: "stream" },
+                    { label: "会话", value: "sessions" },
+                  ]}
+                />
+
+                <Group gap={6} className="shell-header__metrics" wrap="nowrap">
+                  <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "orange"}>
+                    {dataSource === "server" ? "Live" : "Import"}
+                  </Badge>
+                  <Badge radius="xl" variant="light" color="gray">
+                    匹配 {formatNumber(headerMetrics.matching)}
+                  </Badge>
+                  <Badge radius="xl" variant="light" color="gray">
+                    会话 {formatNumber(headerMetrics.sessions)}
+                  </Badge>
+                </Group>
+
+                <Group gap="xs" align="center" className="header-actions" wrap="nowrap">
                   <Switch
                     checked={autoRefresh}
                     onChange={(event) => setAutoRefresh(event.currentTarget.checked)}
@@ -810,27 +849,15 @@ export function App() {
                     </Button>
                   ) : null}
                 </Group>
-              </Group>
+              </div>
             </div>
           </AppShell.Header>
 
           <AppShell.Main>
             <Stack gap="lg" className="app-main">
-              <Paper className="toolbar-shell" radius="xl" p="md">
+              <Paper className="toolbar-shell toolbar-shell--context" radius="xl" p="md">
                 <Group justify="space-between" wrap="wrap" gap="sm">
-                  <SegmentedControl
-                    radius="xl"
-                    value={tab}
-                    onChange={setTab}
-                    data={[
-                      { label: "总览", value: "overview" },
-                      { label: "Token", value: "tokens" },
-                      { label: "洞察", value: "insights" },
-                      { label: "事件流", value: "stream" },
-                      { label: "会话", value: "sessions" },
-                    ]}
-                  />
-                  <Group gap="sm" wrap="wrap" justify="flex-end">
+                  <Group gap="sm" wrap="wrap" className="toolbar-shell__left">
                     <div className="index-window-control">
                       <Text component="span" className="index-window-control__label">数据策略</Text>
                       <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "gray"} className="index-window-control__metric">
@@ -838,7 +865,7 @@ export function App() {
                       </Badge>
                       <Badge radius="xl" variant="light" color="gray" className="index-window-control__metric">
                         {dataSource === "server"
-                          ? `${formatNumber(liveIndexState.cachedFiles || 0)} 文件缓存`
+                          ? `${formatNumber(cachedFileCount)} 文件缓存`
                           : `${formatNumber(localEvents.length)} 事件`}
                       </Badge>
                       <Badge radius="xl" variant="light" color="teal" className="index-window-control__metric">
@@ -847,6 +874,8 @@ export function App() {
                           : "浏览器内查看"}
                       </Badge>
                     </div>
+                  </Group>
+                  <Group gap="sm" wrap="wrap" justify="flex-end" className="toolbar-shell__right">
                     {tab === "stream" ? (
                       <Group gap="sm" wrap="wrap">
                         <SegmentedControl

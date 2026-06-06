@@ -10,6 +10,7 @@ const fs = require("fs");
 const ObserverCore = require("../shared/observer-core");
 const fsScanner = require("./fs-scanner");
 const { attachEventLocator, makeIndexedEvent } = require("./index-manager");
+const { compactLargeJsonlLine } = require("./jsonl-compact");
 
 const LOCATOR_CACHE_LIMIT = 10000;
 const locatorCache = new Map();
@@ -133,6 +134,39 @@ function shouldAllowEarlyStop(filters) {
   return !query && !filters?.sessionId && !filters?.startMs && !filters?.endMs && filters?.order !== "asc";
 }
 
+function sessionIdFromFile(file) {
+  const match = String(file || "").match(/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?:\.jsonl)?$/i);
+  return match ? match[1] : "";
+}
+
+function buildSessionHintIndexes(sessionHints = []) {
+  const bySessionId = new Map();
+  const byFile = new Map();
+  for (const session of sessionHints || []) {
+    if (!session?.sessionId) continue;
+    bySessionId.set(session.sessionId, session);
+    for (const file of session.sourceFiles || []) {
+      if (file) byFile.set(file, session);
+    }
+  }
+  return { bySessionId, byFile };
+}
+
+function createParserContext(record, sourceType, hintIndexes, options = {}) {
+  const fileSessionId = sessionIdFromFile(record.file);
+  const hint = hintIndexes.byFile.get(record.file) || hintIndexes.bySessionId.get(fileSessionId) || null;
+  return {
+    model: hint?.models?.[0] || "unknown",
+    sessionId: hint?.sessionId || fileSessionId || "unknown",
+    sourceFile: record.file,
+    sourceType,
+    cwd: hint?.cwd || "",
+    sessionTitle: hint?.sessionTitle || hint?.title || hint?.fallbackTitle || "",
+    compactContent: Boolean(options.compactContent),
+    contentLimit: Number(options.contentLimit) || 800,
+  };
+}
+
 function queryRecentEvents(options = {}) {
   const files = normalizeFiles(options.files);
   const filters = options.filters || {};
@@ -147,21 +181,35 @@ function queryRecentEvents(options = {}) {
   const candidates = [];
   let scannedFiles = 0;
   let stoppedEarly = false;
+  const reverseEarlyStop = shouldAllowEarlyStop(filters) && order === "desc";
+  const hintIndexes = buildSessionHintIndexes(options.sessionHints);
+  const query = String(filters?.query || filters?.q || "").trim();
+  const compactContent = options.compactContent !== false && !query;
 
   for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
     const record = files[fileIndex];
     const { parser, sourceType } = resolveParser(record.file, options.parsers);
     if (!parser) continue;
     scannedFiles += 1;
-    const context = { model: "unknown", sessionId: "unknown", sourceFile: record.file, cwd: "", sessionTitle: "" };
+    const context = createParserContext(record, sourceType, hintIndexes, {
+      compactContent,
+      contentLimit: options.contentLimit,
+    });
     const fileEvents = [];
 
-    fsScanner.forEachCompleteJsonlLine(record.file, (line, lineNumber) => {
+    const onLine = (line, lineNumber) => {
       if (!line || !rawLineMayMatch(line, filters)) return;
       try {
-        const obj = JSON.parse(line);
+        const sourceLine = context.compactContent
+          ? compactLargeJsonlLine(line, { maxValueLength: context.contentLimit || 800 })
+          : line;
+        const obj = JSON.parse(sourceLine);
         const parsedEvents = callParser(parser, obj, context);
         parsedEvents.forEach((event, eventIndex) => {
+          if ((!event.sessionId || event.sessionId === "unknown") && context.sessionId) event.sessionId = context.sessionId;
+          if ((!event.model || event.model === "unknown") && context.model) event.model = context.model;
+          if (!event.cwd && context.cwd) event.cwd = context.cwd;
+          if (!event.sessionTitle && context.sessionTitle) event.sessionTitle = context.sessionTitle;
           const meta = threadMeta.get(event.sessionId);
           applyThreadMeta(event, meta, sourceType, applyEventSessionMetaCore);
           const indexed = makeIndexedEvent(attachEventLocator(event, record.file, lineNumber, eventIndex));
@@ -174,10 +222,20 @@ function queryRecentEvents(options = {}) {
       } catch {
         // Skip invalid or partially written JSON lines.
       }
-    });
+      if (reverseEarlyStop && candidates.length + fileEvents.length >= pageEnd) return false;
+      return undefined;
+    };
+
+    const lineScan = reverseEarlyStop
+      ? fsScanner.forEachCompleteJsonlLineReverse(record.file, onLine)
+      : fsScanner.forEachCompleteJsonlLine(record.file, onLine);
 
     candidates.push(...fileEvents);
     sortEvents(candidates, order);
+    if (reverseEarlyStop && lineScan?.stoppedEarly) {
+      stoppedEarly = true;
+      break;
+    }
     if (shouldAllowEarlyStop(filters) && candidates.length >= pageEnd && fileIndex < files.length - 1) {
       stoppedEarly = true;
       break;
