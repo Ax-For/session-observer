@@ -703,6 +703,8 @@ function sourceFilesForSession(events, sessionId) {
 }
 
 module.exports = {
+  attachEventLocator,
+  eventLocatorId,
   signatureHash,
   getIndexWindowState,
   setIndexWindowDays,

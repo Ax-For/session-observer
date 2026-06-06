@@ -1,5 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const ObserverCore = require("../shared/observer-core");
+const { statFile } = require("../server/source-files");
 
 function freshRoutes() {
   const modulePath = require.resolve("../server/routes");
@@ -7,88 +13,137 @@ function freshRoutes() {
   return require("../server/routes");
 }
 
-test("queryObservability reuses the summary for an unchanged aggregate key", () => {
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-routes-"));
+}
+
+function writeJsonl(file, rows) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function minimalSummary(overrides = {}) {
+  return {
+    health: { eventsTotal: 0, sessionsTotal: 0, platformCount: 0, modelCount: 0, ...overrides.health },
+    tokens: {
+      windows: { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } },
+      ...overrides.tokens,
+    },
+    sessions: { groups: overrides.sessions || [], byCwd: {} },
+    meta: { models: [], types: [], platforms: [], ...overrides.meta },
+    cache: { scannedFiles: 0, reusedFiles: 0, cachedFiles: 0, ...overrides.cache },
+    charts: {},
+    tools: {},
+    workspaces: {},
+    traces: {},
+  };
+}
+
+test("queryObservability uses summary store without building the full index", () => {
   const routes = freshRoutes();
-  let aggregateKey = "aggregate-a";
-  let buildCalls = 0;
-  const events = [
-    { sessionId: "sess-1", callType: "Prompt", sourceType: "codex" },
-    { sessionId: "sess-1", callType: "Agent", sourceType: "codex" },
-  ];
+  let summaryCalls = 0;
+  let indexCalls = 0;
+  const records = [];
+  const summary = minimalSummary({ health: { eventsTotal: 12, sessionsTotal: 3 } });
 
   routes.init({
     parsers: {},
     applyEventSessionMetaCore: () => {},
-    dedupeEventsCore: () => {},
-    mergeSessionMetaRecordsCore: () => {},
-    eventMatchesModeCore: () => true,
-    buildObservabilitySummaryCore: (inputEvents) => {
-      buildCalls += 1;
-      return {
-        marker: buildCalls,
-        health: { eventsTotal: inputEvents.length },
-      };
-    },
+    mergeSessionMetaRecordsCore: (base, incoming) => ({ ...base, ...incoming }),
     indexManager: {
-      ensureIndexReady: () => ({ events, currentAggregateKey: aggregateKey }),
-      publicIndexState: () => ({ dirty: false }),
+      ensureIndexReady: () => {
+        indexCalls += 1;
+        return { events: [], currentAggregateKey: "legacy" };
+      },
+      signatureHash: (value) => String(value).slice(0, 12),
+      trimHeapNow: () => {},
     },
+    summaryStore: {
+      getSummary: () => {
+        summaryCalls += 1;
+        return summary;
+      },
+      invalidate: () => {},
+    },
+    sourceFileRecordsProvider: () => records,
   });
 
-  const first = routes.queryObservability();
-  const second = routes.queryObservability();
+  const payload = routes.queryObservability();
 
-  assert.equal(buildCalls, 1);
-  assert.equal(first.summary, second.summary);
-  assert.equal(second.summary.marker, 1);
-
-  aggregateKey = "aggregate-b";
-  const third = routes.queryObservability();
-
-  assert.equal(buildCalls, 2);
-  assert.equal(third.summary.marker, 2);
+  assert.equal(indexCalls, 0);
+  assert.equal(summaryCalls, 1);
+  assert.equal(payload.summary, summary);
+  assert.equal(payload.index.mode, "on-demand");
 });
 
-test("queryEvents builds session groups only once when aggregate filters match visible filters", () => {
+test("queryEvents reads a recent page on demand and uses summary store metadata", () => {
   const routes = freshRoutes();
-  const events = [
-    { eventId: "1", sessionId: "sess-1", sourceType: "codex", callType: "Prompt", time: "2026-06-01T10:00:00.000Z" },
-    { eventId: "2", sessionId: "sess-1", sourceType: "codex", callType: "Agent", time: "2026-06-01T10:01:00.000Z" },
-  ];
-  const grouped = [{ sessionId: "sess-1", count: 2, latest: "2026-06-01T10:01:00.000Z" }];
-  let buildSessionGroupCalls = 0;
-  let mergeCalls = 0;
-
-  routes.init({
-    parsers: {},
-    applyEventSessionMetaCore: () => {},
-    dedupeEventsCore: () => {},
-    mergeSessionMetaRecordsCore: () => {},
-    eventMatchesModeCore: () => true,
-    eventMatchesFiltersCore: () => true,
-    buildSessionGroupsCore: (inputEvents) => {
-      buildSessionGroupCalls += 1;
-      assert.equal(inputEvents.length, events.length);
-      return grouped;
+  const dir = makeTempDir();
+  const file = path.join(dir, "events.jsonl");
+  writeJsonl(file, [
+    {
+      timestamp: "2026-06-01T10:00:00.000Z",
+      type: "message",
+      sessionId: "sess-1",
+      content: "first",
     },
-    mergeSessionTokenAggregates: (sessions, aggregateSessions) => {
-      mergeCalls += 1;
-      return sessions.map((session) => ({ ...session, aggregateSessionCount: aggregateSessions.length }));
+    {
+      timestamp: "2026-06-01T10:01:00.000Z",
+      type: "message",
+      sessionId: "sess-1",
+      content: "second",
     },
-    buildTokenUsageWindowsCore: () => ({ day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } }),
-    collectMetaCore: () => ({ models: [], types: [], platforms: ["codex"] }),
-    toPositiveIntCore: (value, fallback) => Number(value) || fallback,
-    toTimeMsCore: (value) => Date.parse(value),
-    indexManager: {
-      ensureIndexReady: () => ({ events, currentAggregateKey: "aggregate-a" }),
-      publicIndexState: () => ({ dirty: false }),
-    },
+  ]);
+  const records = [statFile(file)];
+  let indexCalls = 0;
+  const grouped = [{ sessionId: "sess-1", count: 2, latest: "2026-06-01T10:01:00.000Z", sourceType: "codex" }];
+  const summary = minimalSummary({
+    health: { eventsTotal: 2, sessionsTotal: 1 },
+    sessions: grouped,
+    meta: { platforms: ["codex"], types: ["Agent"], models: [] },
   });
 
-  const filters = routes.parseRequestFilters(new URLSearchParams());
+  routes.init({
+    parsers: {
+      parseCodexLineToEvent: (obj, context) => ({
+        time: obj.timestamp,
+        sessionId: obj.sessionId,
+        model: context.model || "unknown",
+        sourceFile: context.sourceFile,
+        sourceType: "codex",
+        callType: "Agent",
+        content: obj.content,
+        summary: obj.content,
+      }),
+    },
+    applyEventSessionMetaCore: ObserverCore.applyEventSessionMeta,
+    mergeSessionMetaRecordsCore: ObserverCore.mergeSessionMetaRecords,
+    eventMatchesModeCore: ObserverCore.eventMatchesMode,
+    eventMatchesFiltersCore: ObserverCore.eventMatchesFilters,
+    toPositiveIntCore: ObserverCore.toPositiveInt,
+    toTimeMsCore: ObserverCore.toTimeMs,
+    applySessionTitleOverridesCore: (groups) => groups,
+    indexManager: {
+      ensureIndexReady: () => {
+        indexCalls += 1;
+        return { events: [], currentAggregateKey: "legacy" };
+      },
+      signatureHash: (value) => String(value).slice(0, 12),
+    },
+    summaryStore: {
+      getSummary: () => summary,
+      getLastSummary: () => summary,
+      invalidate: () => {},
+    },
+    sourceFileRecordsProvider: () => records,
+  });
+
+  const filters = routes.parseRequestFilters(new URLSearchParams("limit=1"));
   const payload = routes.queryEvents(filters);
 
-  assert.equal(buildSessionGroupCalls, 1);
-  assert.equal(mergeCalls, 0);
-  assert.equal(payload.sessions, grouped);
+  assert.equal(indexCalls, 0);
+  assert.deepEqual(payload.sessions, grouped);
+  assert.equal(payload.events.length, 1);
+  assert.equal(payload.events[0].content, "second");
+  assert.equal(payload.page.hasMore, true);
 });

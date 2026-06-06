@@ -6,7 +6,7 @@ RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/server.pid"
 LOG_FILE="${RUNTIME_DIR}/server.log"
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-10}"
-OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-160}"
+OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-192}"
 OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-8}"
 
 HOST="${HOST:-127.0.0.1}"
@@ -41,7 +41,7 @@ Environment variables:
   INDEX_MAX_WINDOW_DAYS
                        Default: 30, maximum switchable index window from the UI/API
   OBSERVER_NODE_MAX_OLD_SPACE_MB
-                       Default: 160, cap V8 old-space to limit RSS growth
+                       Default: 192, cap V8 old-space to limit RSS growth
   OBSERVER_NODE_SEMI_SPACE_MB
                        Default: 8, cap V8 young generation semi-space
 EOF

@@ -7,6 +7,7 @@ import ObserverCore from "../../shared/observer-core.js";
  * @property {string} fallbackTitle
  * @property {string} cwd
  * @property {string} sourceType
+ * @property {string} startedAt
  * @property {string} latest
  * @property {number} count
  * @property {Object} [aggregateToken]
@@ -74,6 +75,7 @@ function mergeSessionTokenAggregates(sessions, aggregateSessions) {
       fallbackTitle: session.fallbackTitle || aggregate.fallbackTitle,
       cwd: session.cwd || aggregate.cwd,
       sourceType: session.sourceType || aggregate.sourceType,
+      startedAt: [session.startedAt, aggregate.startedAt].filter(Boolean).sort()[0] || session.startedAt || aggregate.startedAt || "",
       models: mergeUniqueValues(session.models, aggregate.models),
       latestToken: aggregate.latestToken || session.latestToken,
       aggregateToken: aggregate.aggregateToken || session.aggregateToken,
@@ -257,6 +259,7 @@ export function buildStreamSessionRailItems(sessions) {
       count: toFiniteNumber(current.count) + toFiniteNumber(normalized.count),
       totalTokens: toFiniteNumber(current.totalTokens) + toFiniteNumber(normalized.totalTokens),
       hasTokenData: Boolean(current.hasTokenData || normalized.hasTokenData),
+      startedAt: [current.startedAt, normalized.startedAt].filter(Boolean).sort()[0] || "",
       sessionIds: mergeUniqueValues(current.sessionIds, normalized.sessionIds),
       models: mergeUniqueValues(current.models, normalized.models),
       sourceFiles: mergeUniqueValues(current.sourceFiles, normalized.sourceFiles),

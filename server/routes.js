@@ -4,94 +4,71 @@
  * Dependencies are injected at initialization time to avoid circular imports.
  */
 const config = require("./config");
+const fsScanner = require("./fs-scanner");
 const sessionOps = require("./session-ops");
 const sessionMeta = require("./session-meta");
 const { createSessionExport } = require("./session-export");
+const recentEventsReader = require("./recent-events-reader");
+const sourceFiles = require("./source-files");
 const { listSourceAdapters } = require("../shared/source-adapters");
 
 let _deps = null;
-let visibleEventsCache = { key: "", asc: [] };
-let observabilitySummaryCache = { key: "", summary: null };
 
 /**
  * Initialize route handlers with dependencies.
  */
 function init(deps) {
   _deps = deps;
-  visibleEventsCache = { key: "", asc: [] };
-  observabilitySummaryCache = { key: "", summary: null };
 }
 
 function invalidateCaches() {
-  visibleEventsCache = { key: "", asc: [] };
-  observabilitySummaryCache = { key: "", summary: null };
+  recentEventsReader.clearLocatorCache();
+  _deps?.summaryStore?.invalidate?.();
 }
 
-/**
- * Return events already filtered for the current mode, stored only once.
- */
-function getVisibleEventSet(ready, mode) {
-  const cacheKey = `${ready.currentAggregateKey || ""}|${mode || "observe"}`;
-  if (visibleEventsCache.key === cacheKey) return visibleEventsCache;
-
-  const asc = (ready.events || []).filter((event) => _deps.eventMatchesModeCore(event, mode));
-  visibleEventsCache = {
-    key: cacheKey,
-    asc,
+function publicSourceState(records, summary = null, extra = {}) {
+  const cache = summary?.cache || {};
+  const health = summary?.health || {};
+  return {
+    dirty: false,
+    lastBuiltAt: summary?.generatedAt || "",
+    lastError: "",
+    aggregateHash: _deps.indexManager.signatureHash(sourceFiles.aggregateRecordsKey(records)),
+    currentAggregateHash: _deps.indexManager.signatureHash(sourceFiles.aggregateRecordsKey(records, "current")),
+    totalEvents: health.eventsTotal || 0,
+    retainedEvents: 0,
+    omittedEventCount: 0,
+    maxEvents: null,
+    scannedFiles: cache.scannedFiles || 0,
+    skippedFiles: 0,
+    cachedFiles: cache.cachedFiles || 0,
+    reusedFiles: cache.reusedFiles || 0,
+    totalFiles: records.length,
+    mode: "on-demand",
+    ...extra,
   };
-  return visibleEventsCache;
 }
 
-function collectMatchedEvents(visibleEvents, filters) {
-  const matched = [];
-  if (filters.order === "asc") {
-    for (const event of visibleEvents) {
-      if (_deps.eventMatchesFiltersCore(event, filters)) matched.push(event);
-    }
-    return matched;
-  }
-
-  for (let index = visibleEvents.length - 1; index >= 0; index -= 1) {
-    const event = visibleEvents[index];
-    if (_deps.eventMatchesFiltersCore(event, filters)) matched.push(event);
-  }
-  return matched;
+function loadThreadMeta() {
+  return sessionMeta.loadMergedThreadMetadata(_deps.mergeSessionMetaRecordsCore);
 }
 
-function filtersMatchAllVisible(filters) {
-  return !filters.platform &&
-    !filters.model &&
-    !filters.type &&
-    !filters.sessionId &&
-    !filters.query &&
-    (filters.quickFilter || "all") === "all" &&
-    filters.startMs == null &&
-    filters.endMs == null;
+function sourceStateSignature() {
+  return `${fsScanner.getPathSignature(config.STATE_DB)}|${fsScanner.getPathSignature(config.CODEX_SESSION_INDEX)}`;
 }
 
-function aggregateSessionFiltersMatch(filters) {
-  return !filters.query &&
-    !filters.type &&
-    !filters.sessionId &&
-    (filters.quickFilter || "all") === "all";
+function getSummaryForRecords(records, threadMeta = loadThreadMeta()) {
+  return _deps.summaryStore.getSummary({
+    files: records,
+    stateSignature: sourceStateSignature(),
+    threadMeta,
+  });
 }
 
-function sliceVisibleEvents(visibleEvents, filters) {
-  const offset = Math.max(0, Number(filters.offset) || 0);
-  const limit = Math.max(0, Number(filters.limit) || config.DEFAULT_PAGE_SIZE);
-  if (filters.order === "asc") {
-    return visibleEvents.slice(offset, offset + limit);
-  }
-
-  const endExclusive = Math.max(0, visibleEvents.length - offset);
-  const start = Math.max(0, endExclusive - limit);
-  return visibleEvents.slice(start, endExclusive).reverse();
-}
-
-function collectAggregateSessionEvents(visibleEvents, filters) {
-  return visibleEvents.filter((event) => _deps.eventMatchesFiltersCore(event, {
-    ...filters, query: "", type: "", quickFilter: "all", sessionId: "",
-  }));
+function listSourceFileRecords() {
+  return _deps.sourceFileRecordsProvider
+    ? _deps.sourceFileRecordsProvider()
+    : sourceFiles.listSourceFileRecords();
 }
 
 /**
@@ -119,15 +96,16 @@ function parseRequestFilters(searchParams) {
 /**
  * Query session events directly (for focused session view).
  */
-function querySessionEventsDirect(filters, ready) {
+function querySessionEventsDirect(filters, records) {
   const { indexManager } = _deps;
-  const threadMeta = sessionMeta.loadMergedThreadMetadata(_deps.mergeSessionMetaRecordsCore);
-
-  const files = indexManager.sourceFilesForSession(ready.events, filters.sessionId);
+  const threadMeta = loadThreadMeta();
+  getSummaryForRecords(records, threadMeta);
+  const resolvedSessionId = _deps.summaryStore.resolveSessionIdentifier(filters.sessionId, { files: records });
+  const files = _deps.summaryStore.getSourceFilesForSession(resolvedSessionId, { files: records });
   const allEvents = [];
   for (const file of files) {
     allEvents.push(...indexManager.parseFullFileEvents(file, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore)
-      .filter((event) => event.sessionId === filters.sessionId));
+      .filter((event) => event.sessionId === resolvedSessionId));
   }
 
   const visibleEvents = allEvents.filter((event) => _deps.eventMatchesModeCore(event, filters.mode));
@@ -145,7 +123,7 @@ function querySessionEventsDirect(filters, ready) {
     mode: filters.mode,
     claudeVersion: require("./versions").claudeVersion,
     codexVersion: require("./versions").codexVersion,
-    index: indexManager.publicIndexState(ready.currentAggregateKey),
+    index: publicSourceState(records, _deps.summaryStore.getLastSummary(), { focusedSession: true }),
     totalVisible: visibleEvents.length,
     totalMatching: matched.length,
     sessions: [],
@@ -164,33 +142,30 @@ function querySessionEventsDirect(filters, ready) {
  * Query events with pagination.
  */
 function queryEvents(filters) {
-  const { indexManager } = _deps;
-  const ensureIndexReady = () => indexManager.ensureIndexReady(
-    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
-  );
-  const ready = ensureIndexReady();
+  const records = listSourceFileRecords();
 
   if (!filters.includeSummary && filters.sessionId) {
-    return querySessionEventsDirect(filters, ready);
+    return querySessionEventsDirect(filters, records);
   }
 
-  const visibleEventSet = getVisibleEventSet(ready, filters.mode);
-  const visibleEvents = visibleEventSet.asc;
-  const matchAllVisible = filtersMatchAllVisible(filters);
-  const matched = matchAllVisible ? visibleEvents : collectMatchedEvents(visibleEvents, filters);
-  const totalMatching = matchAllVisible ? visibleEvents.length : matched.length;
-  const paged = matchAllVisible
-    ? sliceVisibleEvents(visibleEvents, filters)
-    : matched.slice(filters.offset, filters.offset + filters.limit);
-  let sessions = [];
+  const summary = filters.includeSummary
+    ? getSummaryForRecords(records)
+    : _deps.summaryStore.getLastSummary();
+  const threadMeta = loadThreadMeta();
+  const recent = recentEventsReader.queryRecentEvents({
+    files: records,
+    parsers: _deps.parsers,
+    threadMeta,
+    filters,
+    limit: filters.limit,
+    offset: filters.offset,
+    applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
+    eventMatchesModeCore: _deps.eventMatchesModeCore,
+    eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
+  });
+
   if (filters.includeSummary) {
-    sessions = _deps.buildSessionGroupsCore(matched);
-    if (!aggregateSessionFiltersMatch(filters)) {
-      sessions = _deps.mergeSessionTokenAggregates(
-        sessions,
-        _deps.buildSessionGroupsCore(collectAggregateSessionEvents(visibleEvents, filters)),
-      );
-    }
+    _deps.applySessionTitleOverridesCore(summary.sessions.groups, sessionMeta.loadClaudeSessionIndex(), "claude");
   }
 
   return {
@@ -199,18 +174,14 @@ function queryEvents(filters) {
     mode: filters.mode,
     claudeVersion: require("./versions").claudeVersion,
     codexVersion: require("./versions").codexVersion,
-    index: indexManager.publicIndexState(ready.currentAggregateKey),
-    totalVisible: visibleEvents.length,
-    totalMatching,
-    sessions,
-    tokenWindows: filters.includeSummary ? _deps.buildTokenUsageWindowsCore(matched) : null,
-    meta: filters.includeSummary ? _deps.collectMetaCore(visibleEvents) : { models: [], types: [], platforms: [] },
-    page: {
-      offset: filters.offset,
-      limit: filters.limit,
-      hasMore: filters.offset + paged.length < totalMatching,
-    },
-    events: paged,
+    index: publicSourceState(records, summary, recent.scan),
+    totalVisible: recent.totalVisible,
+    totalMatching: recent.totalMatching,
+    sessions: filters.includeSummary ? summary.sessions.groups : [],
+    tokenWindows: filters.includeSummary ? summary.tokens.windows : null,
+    meta: filters.includeSummary ? summary.meta : { models: [], types: [], platforms: [] },
+    page: recent.page,
+    events: recent.events,
   };
 }
 
@@ -219,15 +190,21 @@ function queryEvents(filters) {
  */
 function getEventDetail(eventId) {
   const { indexManager } = _deps;
-  const ready = indexManager.ensureIndexReady(
-    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
-  );
-  const indexedEvent = ready.events.find((event) => event.eventId === eventId);
-  if (!indexedEvent?.sourceFile || !indexedEvent?.sourceLine) return null;
+  const threadMeta = loadThreadMeta();
+  const locator = recentEventsReader.lookupEventLocator(eventId);
+  if (locator?.sourceFile && locator?.sourceLine) {
+    const events = indexManager.parseEventLineFromIndex(locator, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
+    const found = events.find((event) => event.eventId === eventId);
+    if (found) return found;
+  }
 
-  const threadMeta = sessionMeta.loadMergedThreadMetadata(_deps.mergeSessionMetaRecordsCore);
-  const events = indexManager.parseEventLineFromIndex(indexedEvent, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
-  return events.find((event) => event.eventId === eventId) || null;
+  const records = listSourceFileRecords();
+  for (const record of records) {
+    const events = indexManager.parseFullFileEvents(record.file, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
+    const found = events.find((event) => event.eventId === eventId);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
@@ -246,12 +223,11 @@ function resolveSessionIdentifier(events, sessionId) {
 
 function exportSession(sessionId, options = {}) {
   const { indexManager } = _deps;
-  const ready = indexManager.ensureIndexReady(
-    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
-  );
-  const resolvedSessionId = resolveSessionIdentifier(ready.events, sessionId);
-  const threadMeta = sessionMeta.loadMergedThreadMetadata(_deps.mergeSessionMetaRecordsCore);
-  const files = indexManager.sourceFilesForSession(ready.events, resolvedSessionId);
+  const records = listSourceFileRecords();
+  const threadMeta = loadThreadMeta();
+  getSummaryForRecords(records, threadMeta);
+  const resolvedSessionId = _deps.summaryStore.resolveSessionIdentifier(sessionId, { files: records });
+  const files = _deps.summaryStore.getSourceFilesForSession(resolvedSessionId, { files: records });
   const events = [];
 
   for (const file of files) {
@@ -277,11 +253,9 @@ function exportSession(sessionId, options = {}) {
  * List sessions grouped by cwd.
  */
 function querySessions() {
-  const { indexManager } = _deps;
-  const ready = indexManager.ensureIndexReady(
-    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
-  );
-  const groups = _deps.buildSessionGroupsCore(ready.events);
+  const records = listSourceFileRecords();
+  const summary = getSummaryForRecords(records);
+  const groups = summary.sessions.groups;
 
   _deps.applySessionTitleOverridesCore(groups, sessionMeta.loadClaudeSessionIndex(), "claude");
 
@@ -303,25 +277,15 @@ function querySessions() {
  * Fetch observability summary.
  */
 function queryObservability() {
-  const { indexManager } = _deps;
-  const ready = indexManager.ensureIndexReady(
-    _deps.parsers, _deps.applyEventSessionMetaCore, _deps.dedupeEventsCore, _deps.mergeSessionMetaRecordsCore
-  );
-  const visibleEvents = getVisibleEventSet(ready, "observe").asc;
-  const summaryKey = `${ready.currentAggregateKey || ""}|observe`;
-  if (observabilitySummaryCache.key !== summaryKey) {
-    observabilitySummaryCache = {
-      key: summaryKey,
-      summary: _deps.buildObservabilitySummaryCore(visibleEvents),
-    };
-  }
-  const summary = observabilitySummaryCache.summary;
-  indexManager.trimHeapNow?.();
+  const records = listSourceFileRecords();
+  const summary = getSummaryForRecords(records);
+  const index = publicSourceState(records, summary);
+  _deps.indexManager.trimHeapNow?.();
 
   return {
     generatedAt: new Date().toISOString(),
     mode: "observe",
-    index: indexManager.publicIndexState(ready.currentAggregateKey),
+    index,
     runtime: {
       versions: {
         codex: require("./versions").codexVersion,

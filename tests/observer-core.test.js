@@ -229,6 +229,8 @@ test("buildSessionGroups aggregates token usage and derives a cleaned fallback t
   assert.equal(groups.length, 1);
   assert.equal(groups[0].fallbackTitle, "/help Inspect this session carefully");
   assert.equal(groups[0].count, 2);
+  assert.equal(groups[0].startedAt, "2026-04-19T10:12:00.000Z");
+  assert.equal(groups[0].latest, "2026-04-19T10:12:03.000Z");
   assert.deepEqual(groups[0].sourceFiles, ["claude.jsonl"]);
   assert.deepEqual(groups[0].aggregateToken, {
     input: 100,
@@ -480,6 +482,34 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.equal(summary.charts.daily.at(-1).label, "04/23");
   assert.equal(summary.charts.daily.at(-1).tokens, 1200);
   assert.equal(summary.charts.daily.find((bucket) => bucket.label === "04/22").tokens, 500);
+  assert.equal(summary.charts.dailySessions.length, 14);
+  assert.deepEqual(summary.charts.dailySessions.find((bucket) => bucket.label === "04/23"), {
+    time: "2026-04-23T00:00:00.000Z",
+    label: "04/23",
+    sessions: 1,
+    events: 4,
+    tokens: 1200,
+    topWorkspace: {
+      cwd: "/repo/a",
+      events: 4,
+      sessions: 1,
+      tokens: 1200,
+    },
+  });
+  assert.deepEqual(summary.charts.dailySessions.find((bucket) => bucket.label === "04/22"), {
+    time: "2026-04-22T00:00:00.000Z",
+    label: "04/22",
+    sessions: 1,
+    events: 2,
+    tokens: 500,
+    topWorkspace: {
+      cwd: "/repo/b",
+      events: 2,
+      sessions: 1,
+      tokens: 500,
+    },
+  });
+  assert.equal(summary.charts.dailySessions.find((bucket) => bucket.label === "04/21").topWorkspace, null);
   assert.deepEqual(summary.charts.platformShare, [
     { key: "codex", total: 1200 },
     { key: "claude", total: 500 },

@@ -77,6 +77,16 @@ function mockFetch() {
   });
 }
 
+function fetchedUrls() {
+  return fetch.mock.calls.map(([input]) => String(input));
+}
+
+function waitForStartupTimers() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 220);
+  });
+}
+
 describe("App URL state", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch());
@@ -142,6 +152,28 @@ describe("App URL state", () => {
     await waitFor(() => {
       expect(window.location.search).toContain("tab=tokens");
     });
+  });
+
+  test("loads only observability data when refreshing directly into overview", async () => {
+    window.history.replaceState(null, "", "/?tab=overview");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "运行总览" })).toBeInTheDocument();
+    await waitForStartupTimers();
+
+    expect(fetchedUrls()).toEqual(["/api/observability"]);
+  });
+
+  test("loads only session data when refreshing directly into sessions", async () => {
+    window.history.replaceState(null, "", "/?tab=sessions");
+
+    render(<App />);
+
+    expect(await screen.findByText("搜索会话")).toBeInTheDocument();
+    await waitForStartupTimers();
+
+    expect(fetchedUrls()).toEqual(["/api/sessions"]);
   });
 
   test("maps the retired alert queue URL to activity insights", async () => {

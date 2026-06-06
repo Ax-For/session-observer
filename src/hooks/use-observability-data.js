@@ -13,7 +13,7 @@ const EMPTY_OBSERVABILITY_PAYLOAD = {
   summary: buildObservabilitySummary([]),
 };
 
-export function useObservabilityData({ dataSource, localEvents, notify }) {
+export function useObservabilityData({ dataSource, localEvents, notify, enabled = true }) {
   const requestId = useRef(0);
   const [observabilityPayload, setObservabilityPayload] = useState(EMPTY_OBSERVABILITY_PAYLOAD);
   const [loadingObservability, setLoadingObservability] = useState(false);
@@ -57,11 +57,12 @@ export function useObservabilityData({ dataSource, localEvents, notify }) {
   }, [dataSource, localPayload, notify]);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     const timer = window.setTimeout(() => {
       loadObservability();
     }, 140);
     return () => window.clearTimeout(timer);
-  }, [loadObservability]);
+  }, [enabled, loadObservability]);
 
   return {
     observabilityPayload,

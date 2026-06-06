@@ -247,6 +247,7 @@
         aggregateToken: null,
         models: new Set(),
         count: 0,
+        startedAt: "",
         latest: "",
         prompt: 0,
         agent: 0,
@@ -255,6 +256,7 @@
         sourceFiles: new Set(),
       };
       group.count += 1;
+      if (event.time && (!group.startedAt || event.time < group.startedAt)) group.startedAt = event.time;
       group.latest = !group.latest || event.time > group.latest ? event.time : group.latest;
       if (event.sessionTitle) group.sessionTitle = event.sessionTitle;
       if (!group.fallbackTitle) group.fallbackTitle = deriveFallbackTitleFromEvent(event);
@@ -629,6 +631,79 @@
     }));
   }
 
+  function buildDailySessionHeatmap(events, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const timezoneOffsetMinutes = getTimezoneOffsetMinutes(nowMs, options.timezoneOffsetMinutes);
+    const currentDayMs = getStartOfDayMs(nowMs, timezoneOffsetMinutes);
+    const bucketCount = Number.isFinite(Number(options.dailyBucketCount))
+      ? Math.max(1, Math.min(90, Number(options.dailyBucketCount)))
+      : 14;
+    const firstBucketMs = currentDayMs - (bucketCount - 1) * 24 * 60 * 60 * 1000;
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      time: new Date(firstBucketMs + index * 24 * 60 * 60 * 1000).toISOString(),
+      label: formatDayLabel(firstBucketMs + index * 24 * 60 * 60 * 1000, timezoneOffsetMinutes),
+      events: 0,
+      tokens: 0,
+      sessionSet: new Set(),
+      workspaceMap: new Map(),
+    }));
+
+    for (const event of events || []) {
+      const eventMs = toTimeMs(event?.time);
+      if (eventMs == null || eventMs < firstBucketMs || eventMs >= currentDayMs + 24 * 60 * 60 * 1000) continue;
+      const bucketIndex = Math.floor((eventMs - firstBucketMs) / (24 * 60 * 60 * 1000));
+      const bucket = buckets[bucketIndex];
+      if (!bucket) continue;
+
+      const sessionId = event?.sessionId && event.sessionId !== "unknown" ? event.sessionId : "";
+      const cwd = event?.cwd || "unknown";
+      const tokenTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
+      const workspace = bucket.workspaceMap.get(cwd) || {
+        cwd,
+        events: 0,
+        tokens: 0,
+        sessionSet: new Set(),
+      };
+
+      bucket.events += 1;
+      if (sessionId) {
+        bucket.sessionSet.add(sessionId);
+        workspace.sessionSet.add(sessionId);
+      }
+      if (tokenTotal > 0) {
+        bucket.tokens += tokenTotal;
+        workspace.tokens += tokenTotal;
+      }
+      workspace.events += 1;
+      bucket.workspaceMap.set(cwd, workspace);
+    }
+
+    return buckets.map((bucket) => {
+      const topWorkspace = [...bucket.workspaceMap.values()]
+        .map((workspace) => ({
+          cwd: workspace.cwd,
+          events: workspace.events,
+          sessions: workspace.sessionSet.size,
+          tokens: workspace.tokens,
+        }))
+        .sort((left, right) => {
+          if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+          if (right.events !== left.events) return right.events - left.events;
+          if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+          return String(left.cwd).localeCompare(String(right.cwd), "zh-CN");
+        })[0] || null;
+
+      return {
+        time: bucket.time,
+        label: bucket.label,
+        sessions: bucket.sessionSet.size,
+        events: bucket.events,
+        tokens: bucket.tokens,
+        topWorkspace,
+      };
+    });
+  }
+
   function buildObservabilitySummary(events, options = {}) {
     const eventList = Array.isArray(events) ? events : [];
     const sessions = buildSessionGroups(eventList);
@@ -823,6 +898,7 @@
       charts: {
         hourly: buildHourlyChart(eventList, options),
         daily: buildDailyChart(eventList, options),
+        dailySessions: buildDailySessionHeatmap(eventList, options),
         platformShare: tokenPlatformShare,
         modelTokens: tokenModelChart,
         workspaceTokens: workspaceChart,
@@ -1450,6 +1526,10 @@
     mergeSessionMetaRecords,
     parseClaudeCodeLineToEvent,
     parseCodexLineToEvent,
+    tokenCacheCreationInput,
+    tokenCacheReadInput,
+    tokenCountedTotal,
+    tokenInputTotal,
     toPositiveInt,
     toTimeMs,
   };

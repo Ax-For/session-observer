@@ -173,7 +173,7 @@ function buildSessionDetailStats(session, events) {
   ).slice(0, 5);
   const userEvents = eventList.filter((event) => ["Prompt", "User"].includes(event.callType)).length;
   const agentEvents = eventList.filter((event) => event.callType === "Agent").length;
-  const first = eventList[0]?.time || session?.createdAt || "";
+  const first = eventList[0]?.time || session?.startedAt || session?.createdAt || "";
   const latest = eventList[eventList.length - 1]?.time || session?.latest || "";
 
   return {
@@ -468,7 +468,7 @@ function SessionDetailPanel({
           <div className="session-detail-dialogue">
             <div><span>用户输入</span><strong>{formatNumber(stats.userEvents)}</strong></div>
             <div><span>Agent 输出</span><strong>{formatNumber(stats.agentEvents)}</strong></div>
-            <div><span>首个事件</span><strong>{stats.first ? formatDateTime(stats.first) : "-"}</strong></div>
+            <div><span>开始时间</span><strong>{stats.first ? formatDateTime(stats.first) : "-"}</strong></div>
             <div><span>最新事件</span><strong>{stats.latest ? formatDateTime(stats.latest) : "-"}</strong></div>
           </div>
         </section>

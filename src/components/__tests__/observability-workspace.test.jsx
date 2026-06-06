@@ -149,6 +149,10 @@ const payload = {
         { time: "2026-04-22T00:00:00.000Z", label: "04/22", events: 5, alerts: 0, tokens: 6000, platforms: [{ key: "claude", total: 6000 }] },
         { time: "2026-04-23T00:00:00.000Z", label: "04/23", events: 6, alerts: 1, tokens: 12000, platforms: [{ key: "codex", total: 12000 }] },
       ],
+      dailySessions: [
+        { time: "2026-04-22T00:00:00.000Z", label: "04/22", sessions: 1, events: 5, tokens: 6000, topWorkspace: { cwd: "/Users/me/docs" } },
+        { time: "2026-04-23T00:00:00.000Z", label: "04/23", sessions: 3, events: 6, tokens: 12000, topWorkspace: { cwd: "/Users/me/code/session-observer" } },
+      ],
       platformShare: [
         { key: "codex", total: 12000 },
         { key: "claude", total: 6000 },
@@ -219,6 +223,11 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("1,200")).toBeInTheDocument();
     expect(screen.getByText("数据源状态")).toBeInTheDocument();
     expect(screen.getByText("按天 Token 趋势")).toBeInTheDocument();
+    expect(screen.getByText("会话热度图")).toBeInTheDocument();
+    expect(screen.getByTestId("daily-session-heatmap")).toBeInTheDocument();
+    expect(screen.getByText("活跃率")).toBeInTheDocument();
+    expect(screen.getByText("主要工作区")).toBeInTheDocument();
+    expect(screen.getByText("高频日期")).toBeInTheDocument();
     expect(screen.getByText("活跃会话")).toBeInTheDocument();
     expect(screen.getByText("Trace Span")).toBeInTheDocument();
     expect(screen.getAllByText("480").length).toBeGreaterThan(0);

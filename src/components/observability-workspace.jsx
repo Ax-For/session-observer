@@ -8,6 +8,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import {
   Area,
@@ -473,6 +474,255 @@ function MetricBarChart({ data, valueKey = "events", color = "blue.6", label = "
       </div>
       <ChartSummary data={chartData} valueKey="value" metricKind={valueKey} />
     </>
+  );
+}
+
+function DailySessionHeatmapTooltip({ day }) {
+  const workspace = day?.topWorkspace;
+
+  return (
+    <div className="mc-session-heatmap-tooltip">
+      <strong>{day?.label || "-"}</strong>
+      <span>{formatNumber(day?.sessions || 0)} 会话 · {formatNumber(day?.events || 0)} 事件</span>
+      <span>{tokenLabel(day?.tokens || 0)} Token</span>
+      <em>{workspace?.cwd ? `主要工作区 ${clipText(workspace.cwd, 56)}` : "当天没有会话活动"}</em>
+    </div>
+  );
+}
+
+function heatmapLevel(day, peaks) {
+  const sessions = finiteToken(day?.sessions);
+  const events = finiteToken(day?.events);
+  const tokens = finiteToken(day?.tokens);
+  if (!sessions && !events && !tokens) return 0;
+
+  const sessionScore = sessions / Math.max(1, peaks.sessions);
+  const eventScore = events / Math.max(1, peaks.events);
+  const tokenScore = tokens / Math.max(1, peaks.tokens);
+  const pressure = Math.max(sessionScore, eventScore * 0.78, tokenScore * 0.6);
+  return Math.max(1, Math.min(5, Math.ceil(pressure * 5)));
+}
+
+function heatmapWeekdayIndex(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return (date.getDay() + 6) % 7;
+}
+
+function buildHeatmapCalendar(days) {
+  const normalizedDays = days.map((day) => ({
+    ...day,
+    weekdayIndex: heatmapWeekdayIndex(day?.time),
+  }));
+  const firstWeekday = normalizedDays[0]?.weekdayIndex || 0;
+  const cells = [
+    ...Array.from({ length: firstWeekday }, () => null),
+    ...normalizedDays,
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const weeks = [];
+  for (let index = 0; index < cells.length; index += 7) {
+    weeks.push(cells.slice(index, index + 7));
+  }
+
+  const monthLabels = weeks.map((week, index) => {
+    const firstDay = week.find(Boolean);
+    if (!firstDay?.label) return "";
+    const month = `${Number(firstDay.label.slice(0, 2))}月`;
+    const previousMonth = weeks[index - 1]?.find(Boolean)?.label?.slice(0, 2);
+    return index === 0 || previousMonth !== firstDay.label.slice(0, 2) ? month : "";
+  });
+
+  return { weeks, monthLabels };
+}
+
+function sortedHeatmapDays(days) {
+  return days.slice().sort((left, right) => {
+    const sessionDelta = finiteToken(right?.sessions) - finiteToken(left?.sessions);
+    if (sessionDelta) return sessionDelta;
+    const eventDelta = finiteToken(right?.events) - finiteToken(left?.events);
+    if (eventDelta) return eventDelta;
+    return finiteToken(right?.tokens) - finiteToken(left?.tokens);
+  });
+}
+
+function aggregateHeatmapWorkspaces(days) {
+  const workspaces = new Map();
+  for (const day of days) {
+    const workspace = day?.topWorkspace;
+    if (!workspace?.cwd) continue;
+    const current = workspaces.get(workspace.cwd) || {
+      cwd: workspace.cwd,
+      sessions: 0,
+      events: 0,
+      tokens: 0,
+      days: 0,
+    };
+    current.sessions += finiteToken(workspace.sessions);
+    current.events += finiteToken(workspace.events);
+    current.tokens += finiteToken(workspace.tokens);
+    current.days += 1;
+    workspaces.set(workspace.cwd, current);
+  }
+
+  return [...workspaces.values()].sort((left, right) => {
+    if (right.sessions !== left.sessions) return right.sessions - left.sessions;
+    if (right.events !== left.events) return right.events - left.events;
+    return right.tokens - left.tokens;
+  })[0] || null;
+}
+
+function DailySessionHeatmap({ data }) {
+  const days = Array.isArray(data) ? data : [];
+  const calendar = buildHeatmapCalendar(days);
+  const peaks = {
+    sessions: Math.max(0, ...days.map((day) => finiteToken(day?.sessions))),
+    events: Math.max(0, ...days.map((day) => finiteToken(day?.events))),
+    tokens: Math.max(0, ...days.map((day) => finiteToken(day?.tokens))),
+  };
+  const activeDayRows = days.filter((day) => finiteToken(day?.sessions) > 0);
+  const activeDays = activeDayRows.length;
+  const totalDaySessions = sumBy(days, (day) => day?.sessions);
+  const topDays = sortedHeatmapDays(activeDayRows).slice(0, 3);
+  const peakDay = topDays[0] || sortedHeatmapDays(days)[0];
+  const recentActiveDay = activeDayRows.at(-1);
+  const topWorkspace = aggregateHeatmapWorkspaces(activeDayRows);
+  const activeRate = days.length ? (activeDays / days.length) * 100 : 0;
+  const topDayLabel = topDays.length
+    ? topDays.map((day) => `${day.label} ${formatNumber(day.sessions || 0)}`).join(" / ")
+    : "-";
+  const topDayRows = topDays.length ? topDays : activeDayRows.slice(-3).reverse();
+
+  if (!days.length) {
+    return <EmptyChart label="会话热力" />;
+  }
+
+  const weekdayLabels = ["", "一", "", "三", "", "五", ""];
+  const contributionGridColumns = `34px repeat(${Math.max(1, calendar.weeks.length)}, var(--heatmap-cell-size))`;
+
+  return (
+    <div className="mc-session-heatmap" data-testid="daily-session-heatmap">
+      <div className="mc-session-heatmap__shell">
+        <div className="mc-session-heatmap__main">
+          <div className="mc-session-heatmap__lead">
+            <div className="mc-session-heatmap__lead-copy">
+              <span>近 {formatNumber(days.length)} 天使用轨迹</span>
+              <strong>{formatNumber(totalDaySessions)} 次会话</strong>
+              <em>{formatNumber(activeDays)} 天有活动 · 最近 {recentActiveDay?.label || "-"}</em>
+            </div>
+            <div className="mc-session-heatmap__legend" aria-hidden="true">
+              <span>低</span>
+              {[0, 1, 2, 3, 4, 5].map((level) => (
+                <i key={level} className={`is-level-${level}`} />
+              ))}
+              <span>高</span>
+            </div>
+          </div>
+
+          <div className="mc-session-heatmap__board">
+            <div
+              className="mc-session-heatmap__months"
+              style={{ gridTemplateColumns: contributionGridColumns }}
+              aria-hidden="true"
+            >
+              <span />
+              {calendar.monthLabels.map((label, index) => (
+                <span key={`${label}-${index}`}>{label}</span>
+              ))}
+            </div>
+            <div
+              className="mc-session-heatmap__matrix"
+              style={{ gridTemplateColumns: contributionGridColumns }}
+              role="grid"
+              aria-label="每日会话使用热力图"
+            >
+              {weekdayLabels.map((label, index) => (
+                <span
+                  key={`weekday-${index}`}
+                  className="mc-session-heatmap__weekday"
+                  style={{ gridColumn: 1, gridRow: index + 1 }}
+                  aria-hidden="true"
+                >
+                  {label}
+                </span>
+              ))}
+              {calendar.weeks.flatMap((week, weekIndex) => week.map((day, dayIndex) => {
+                if (!day) {
+                  return (
+                    <span
+                      key={`empty-${weekIndex}-${dayIndex}`}
+                      className="mc-session-heatmap__spacer"
+                      style={{ gridColumn: weekIndex + 2, gridRow: dayIndex + 1 }}
+                      aria-hidden="true"
+                    />
+                  );
+                }
+
+                const level = heatmapLevel(day, peaks);
+                const sessions = finiteToken(day?.sessions);
+                const ariaLabel = `${day.label}，${formatNumber(sessions)} 会话，${formatNumber(day?.events || 0)} 事件，${tokenLabel(day?.tokens || 0)} Token`;
+
+                return (
+                  <Tooltip
+                    key={day.time || day.label}
+                    label={<DailySessionHeatmapTooltip day={day} />}
+                    withArrow
+                    color="dark"
+                    position="top"
+                    openDelay={120}
+                    multiline
+                  >
+                    <button
+                      type="button"
+                      className={`mc-session-heatmap__cell is-level-${level}${sessions ? "" : " is-empty"}`}
+                      aria-label={ariaLabel}
+                      style={{ gridColumn: weekIndex + 2, gridRow: dayIndex + 1 }}
+                      role="gridcell"
+                    />
+                  </Tooltip>
+                );
+              }))}
+            </div>
+          </div>
+
+          <div className="mc-session-heatmap__top-days">
+            <span>高频日期</span>
+            {topDayRows.map((day) => (
+              <div key={day.time || day.label} className="mc-session-heatmap__top-day">
+                <strong>{day.label}</strong>
+                <em>{formatNumber(day.sessions || 0)} 会话 · {formatNumber(day.events || 0)} 事件</em>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <aside className="mc-session-heatmap__rail" aria-label="会话热度摘要">
+          <div className="mc-session-heatmap__rail-hero">
+            <span>活跃率</span>
+            <strong>{percentLabel(activeRate)}</strong>
+            <em>{formatNumber(activeDays)} / {formatNumber(days.length)} 天</em>
+          </div>
+          <div className="mc-session-heatmap__rail-grid">
+            <div>
+              <span>最近活跃</span>
+              <strong>{recentActiveDay?.label || "-"}</strong>
+              <em>{formatNumber(recentActiveDay?.sessions || 0)} 会话</em>
+            </div>
+            <div>
+              <span>峰值</span>
+              <strong>{peakDay?.label || "-"}</strong>
+              <em>{formatNumber(peakDay?.sessions || 0)} 会话 · {formatNumber(peakDay?.events || 0)} 事件</em>
+            </div>
+          </div>
+          <div className="mc-session-heatmap__workspace">
+            <span>主要工作区</span>
+            <strong title={topWorkspace?.cwd || ""}>{clipText(topWorkspace?.cwd || "暂无活跃工作区", 42)}</strong>
+            <em>{topWorkspace ? `${formatNumber(topWorkspace.sessions)} 会话 · ${formatNumber(topWorkspace.days)} 天` : topDayLabel}</em>
+          </div>
+        </aside>
+      </div>
+    </div>
   );
 }
 
@@ -1253,6 +1503,7 @@ export function ObservabilityWorkspace({
   const traces = summary.traces || {};
   const hourlyChart = charts.hourly || [];
   const dailyChart = charts.daily || [];
+  const dailySessionHeatmap = charts.dailySessions || [];
   const tokenWindows = tokens.windows || { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } };
   const index = payload?.index;
   const runtime = payload?.runtime;
@@ -1302,13 +1553,13 @@ export function ObservabilityWorkspace({
                   ? "按平台、模型、工作区和会话定位高消耗来源。"
                   : view === "insights"
                     ? "按时段、工具、工作区和活跃会话定位主要工作负载。"
-                    : "汇总索引健康、数据源状态、成本信号和当前活跃会话。"}
+                    : "汇总按需事件流、数据源状态、Token 信号和当前活跃会话。"}
               </Text>
             </div>
           </Group>
 
           <Group gap="xs" justify="flex-end">
-            <PulseBadge color={index?.lastError ? "red" : "blue"} label={index?.lastError ? "索引异常" : loading ? "刷新中" : "索引正常"} />
+            <PulseBadge color={index?.lastError ? "red" : "blue"} label={index?.lastError ? "读取异常" : loading ? "刷新中" : "按需读取"} />
             <Button
               variant="light"
               radius="xl"
@@ -1363,6 +1614,17 @@ export function ObservabilityWorkspace({
             />
           </div>
 
+          <Paper className="mc-panel mc-overview-heatmap-card" radius="xl" p="lg">
+            <PanelHeader
+              eyebrow="Sessions"
+              title="会话热度图"
+              icon={IconClock}
+              tone="primary"
+              action={<Badge radius="xl" variant="light" tt="none">悬停查看明细</Badge>}
+            />
+            <DailySessionHeatmap data={dailySessionHeatmap} />
+          </Paper>
+
           <div className="mc-overview-layout">
             <div className="mc-overview-main">
               <ChartCard
@@ -1404,8 +1666,12 @@ export function ObservabilityWorkspace({
                 <MemoryUsagePanel runtime={runtime} />
                 <div className="mc-runtime-grid">
                   <div>
-                    <Text className="mc-runtime__label">索引更新</Text>
-                    <Text className="mc-runtime__value">{formatDateTime(index?.lastBuiltAt || payload?.generatedAt)}</Text>
+                    <Text className="mc-runtime__label">数据刷新</Text>
+                    <Text className="mc-runtime__value">{formatDateTime(payload?.generatedAt || index?.lastBuiltAt)}</Text>
+                  </div>
+                  <div>
+                    <Text className="mc-runtime__label">摘要缓存</Text>
+                    <Text className="mc-runtime__value">{formatNumber(index?.cachedFiles || 0)} 文件 · 复用 {formatNumber(index?.reusedFiles || 0)}</Text>
                   </div>
                   <div>
                     <Text className="mc-runtime__label">服务运行</Text>
@@ -1667,6 +1933,17 @@ export function ObservabilityWorkspace({
               >
                 <MetricBarChart data={hourlyChart} valueKey="events" label="事件" testId="activity-heat-chart" height={292} />
               </ChartCard>
+
+              <Paper className="mc-panel mc-insight-card mc-insight-card--session-heatmap" radius="xl" p="lg">
+                <PanelHeader
+                  eyebrow="Sessions"
+                  title="每日会话热力图"
+                  icon={IconClock}
+                  tone="primary"
+                  action={<Badge radius="xl" variant="light" tt="none">悬停查看明细</Badge>}
+                />
+                <DailySessionHeatmap data={dailySessionHeatmap} />
+              </Paper>
 
               <Paper className="mc-panel mc-insight-card mc-insight-card--workspaces" radius="xl" p="lg">
                 <PanelHeader eyebrow="Workspaces" title="工作区负载象限" icon={IconDatabase} tone="default" />

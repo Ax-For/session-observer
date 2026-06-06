@@ -1,6 +1,7 @@
 import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
+import { formatDateTime } from "../../lib/formatters";
 import { SessionWorkspace } from "../session-workspace";
 
 describe("SessionWorkspace", () => {
@@ -307,5 +308,44 @@ describe("SessionWorkspace", () => {
     expect(onClearSessionFocus).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: /Token usage/ }));
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
+  });
+
+  test("shows the selected session start time from summary data before events are loaded", () => {
+    render(
+      <MantineProvider>
+        <SessionWorkspace
+          selectedSessionId="sess-start"
+          detailSession={{
+            sessionId: "sess-start",
+            sourceType: "codex",
+            title: "Session start time",
+            startedAt: "2026-05-30T08:15:00.000Z",
+            latest: "2026-06-01T10:10:00.000Z",
+            count: 12,
+            totalTokens: 1200,
+            hasTokenData: true,
+            cwd: "/Users/me/code/session-observer",
+            sourceFiles: ["/Users/me/.codex/sessions/start.jsonl"],
+            models: ["gpt-5.4"],
+          }}
+          detailEvents={[]}
+          detailPage={{ total: 12, hasMore: true, nextOffset: 0, limit: 500 }}
+          detailLoading={false}
+          sections={[]}
+          workspaceIndex={[]}
+          selectedIds={[]}
+          onToggleSelect={() => {}}
+          onOpenConversation={() => {}}
+          onOpenSessionDetail={() => {}}
+          onFocusWorkspace={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onCopySessionId={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getAllByText("开始时间").length).toBeGreaterThan(0);
+    expect(screen.getByText(formatDateTime("2026-05-30T08:15:00.000Z"))).toBeInTheDocument();
   });
 });

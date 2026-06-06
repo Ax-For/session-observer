@@ -151,13 +151,6 @@ function createSessionDetailPage() {
   };
 }
 
-const DEFAULT_INDEX_WINDOW = {
-  days: 7,
-  defaultDays: 7,
-  maxDays: 30,
-  startTime: "",
-};
-
 export function App() {
   const initialUrlState = useRef(
     parseUrlState(typeof window !== "undefined" ? window.location.search : ""),
@@ -192,13 +185,13 @@ export function App() {
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
-  const [indexWindow, setIndexWindow] = useState(DEFAULT_INDEX_WINDOW);
-  const [indexWindowLoading, setIndexWindowLoading] = useState(false);
   const sessionDetailRequestId = useRef(0);
   const deferredQuery = useDeferredValue(streamFilters.query);
   const notify = useCallback((options) => notifications.show(options), []);
+  const isObservabilityTab = tab === "overview" || tab === "tokens" || tab === "insights";
   const { streamPayload, loadingEvents, loadEvents } = useStreamData({
     dataSource,
+    enabled: tab === "stream",
     mode,
     quickFilter,
     tokenThreshold,
@@ -233,6 +226,7 @@ export function App() {
     dataSource,
     localEvents,
     notify,
+    enabled: isObservabilityTab,
   });
   const {
     selectedSessionIds,
@@ -285,17 +279,12 @@ export function App() {
   ]);
   const currentStream = dataSource === "server" ? streamPayload : localPayload;
   const liveIndexState = currentStream?.index || observabilityPayload?.index || {};
-  const indexWindowOptions = useMemo(() => {
-    const defaultDays = Number(indexWindow.defaultDays) || DEFAULT_INDEX_WINDOW.defaultDays;
-    const maxDays = Number(indexWindow.maxDays) || DEFAULT_INDEX_WINDOW.maxDays;
-    return [...new Map([
-      [defaultDays, `近 ${defaultDays} 天`],
-      [maxDays, `近 ${maxDays} 天`],
-    ]).entries()].map(([value, label]) => ({
-      value: String(value),
-      label,
-    }));
-  }, [indexWindow.defaultDays, indexWindow.maxDays]);
+  const observabilitySessionGroups = useMemo(
+    () => observabilityPayload.summary?.sessions?.byCwd
+      || observabilityPayload.summary?.sessions?.groups
+      || {},
+    [observabilityPayload.summary?.sessions?.byCwd, observabilityPayload.summary?.sessions?.groups],
+  );
   const streamSummary = useMemo(() => buildDashboardSummary({
     events: currentStream.events,
     sessions: currentStream.sessions,
@@ -321,9 +310,14 @@ export function App() {
     () => (dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents)),
     [dataSource, localEvents, sessionsPayload.groups],
   );
-  const activeSessionOverview = useMemo(() => buildActiveSessionOverview(sessionGroups, {
+  const activeOverviewGroups = isObservabilityTab
+    ? observabilitySessionGroups
+    : tab === "stream"
+      ? currentStream.sessions
+      : sessionGroups;
+  const activeSessionOverview = useMemo(() => buildActiveSessionOverview(activeOverviewGroups, {
     filters: sessionFilters,
-  }), [sessionGroups, sessionFilters]);
+  }), [activeOverviewGroups, sessionFilters]);
   const sessionSections = useMemo(
     () => buildSessionSections(sessionGroups, sessionFilters),
     [sessionGroups, sessionFilters],
@@ -340,22 +334,6 @@ export function App() {
     () => findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed,
     [selectedSessionId, sessionDetailSeed, sessionSections],
   );
-
-  const loadIndexWindow = useCallback(async () => {
-    if (dataSource !== "server") return null;
-    try {
-      const payload = await apiClient.fetchIndexWindow();
-      setIndexWindow(payload.indexWindow || DEFAULT_INDEX_WINDOW);
-      return payload;
-    } catch (error) {
-      notify({
-        title: "索引范围加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-      return null;
-    }
-  }, [dataSource, notify]);
 
   async function loadSessionDetailEvents(sessionId = selectedSessionId, options = {}) {
     if (!sessionId) {
@@ -459,12 +437,9 @@ export function App() {
   });
 
   useEffect(() => {
+    if (dataSource !== "server" || tab !== "sessions") return;
     loadSessions();
-  }, [loadSessions]);
-
-  useEffect(() => {
-    void loadIndexWindow();
-  }, [loadIndexWindow]);
+  }, [dataSource, loadSessions, tab]);
 
   useEffect(() => {
     if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
@@ -571,7 +546,7 @@ export function App() {
     setSelectedSessionId("");
     clearSessionSelection();
     notifications.show({
-      title: "已切回实时索引",
+      title: "已切回实时数据",
       message: "当前视图重新使用本地服务端聚合数据。",
       color: "blue",
     });
@@ -599,48 +574,6 @@ export function App() {
       return;
     }
     loadEvents();
-  }
-
-  async function handleIndexWindowChange(value) {
-    const days = Number(value);
-    if (!Number.isFinite(days) || dataSource !== "server" || days === Number(indexWindow.days)) return;
-
-    setIndexWindowLoading(true);
-    closeConversation();
-    setDetailEvent(null);
-    setSelectedSessionId("");
-    setSessionDetailSeed(null);
-    setSessionDetailEvents([]);
-    setSessionDetailPage(createSessionDetailPage());
-    sessionDetailRequestId.current += 1;
-
-    try {
-      const payload = await apiClient.setIndexWindow(days);
-      setIndexWindow(payload.indexWindow || {
-        ...indexWindow,
-        days,
-      });
-      await Promise.all([
-        loadEvents({ sessionIdOverride: "" }),
-        loadSessions(),
-        loadObservability(),
-      ]);
-      notifications.show({
-        title: `已切换到近 ${days} 天索引`,
-        message: days <= (indexWindow.defaultDays || DEFAULT_INDEX_WINDOW.defaultDays)
-          ? "已释放超出当前窗口的索引缓存。"
-          : "已加载更长时间窗口的数据。",
-        color: "blue",
-      });
-    } catch (error) {
-      notify({
-        title: "索引范围切换失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      setIndexWindowLoading(false);
-    }
   }
 
   function selectLowContentSessions() {
@@ -688,9 +621,55 @@ export function App() {
   }
 
   const canMutateSessions = dataSource === "server";
-  const headerStatus = dataSource === "server"
-    ? `实时索引 · 最近更新 ${formatFullDateTime(streamPayload.generatedAt)}`
-    : `本地导入 · ${formatNumber(localEvents.length)} 条事件`;
+  const headerMetrics = useMemo(() => {
+    if (dataSource !== "server") {
+      return {
+        status: `本地导入 · ${formatNumber(localEvents.length)} 条事件`,
+        matching: currentStream.totalMatching || currentStream.events.length,
+        sessions: streamSummary.counts.sessions,
+      };
+    }
+
+    if (isObservabilityTab) {
+      const health = observabilityPayload.summary?.health || {};
+      return {
+        status: `按需摘要 · 最近更新 ${formatFullDateTime(observabilityPayload.generatedAt)}`,
+        matching: Number(health.eventsTotal) || 0,
+        sessions: Number(health.sessionsTotal) || 0,
+      };
+    }
+
+    if (tab === "sessions") {
+      const eventTotal = sessionSections.reduce((sum, section) => (
+        sum + (section.sessions || []).reduce((sessionSum, session) => sessionSum + (Number(session.count) || 0), 0)
+      ), 0);
+      return {
+        status: `会话列表 · 最近更新 ${formatFullDateTime(sessionsPayload.generatedAt)}`,
+        matching: eventTotal,
+        sessions: sessionsPayload.total || sessionSections.reduce((sum, section) => sum + section.total, 0),
+      };
+    }
+
+    return {
+      status: `按需事件流 · 最近更新 ${formatFullDateTime(streamPayload.generatedAt)}`,
+      matching: currentStream.totalMatching || currentStream.events.length,
+      sessions: streamSummary.counts.sessions,
+    };
+  }, [
+    currentStream.events.length,
+    currentStream.totalMatching,
+    dataSource,
+    isObservabilityTab,
+    localEvents.length,
+    observabilityPayload.generatedAt,
+    observabilityPayload.summary?.health,
+    sessionSections,
+    sessionsPayload.generatedAt,
+    sessionsPayload.total,
+    streamPayload.generatedAt,
+    streamSummary.counts.sessions,
+    tab,
+  ]);
   const activeStreamFilters = [
     deferredQuery ? {
       key: "query",
@@ -780,7 +759,7 @@ export function App() {
                     <div className="brand-mark">SO</div>
                     <div>
                       <Title order={3}>Session Observer</Title>
-                      <Text className="header-status">{headerStatus}</Text>
+                      <Text className="header-status">{headerMetrics.status}</Text>
                     </div>
                   </Group>
                   <Group gap="xs">
@@ -788,10 +767,10 @@ export function App() {
                       {dataSource === "server" ? "Live" : "Import"}
                     </Badge>
                     <Badge radius="xl" variant="light" color="gray">
-                      匹配 {formatNumber(currentStream.totalMatching || currentStream.events.length)}
+                      匹配 {formatNumber(headerMetrics.matching)}
                     </Badge>
                     <Badge radius="xl" variant="light" color="gray">
-                      会话 {formatNumber(streamSummary.counts.sessions)}
+                      会话 {formatNumber(headerMetrics.sessions)}
                     </Badge>
                   </Group>
                 </div>
@@ -853,21 +832,19 @@ export function App() {
                   />
                   <Group gap="sm" wrap="wrap" justify="flex-end">
                     <div className="index-window-control">
-                      <Text component="span" className="index-window-control__label">索引范围</Text>
-                      <SegmentedControl
-                        radius="xl"
-                        size="sm"
-                        value={String(indexWindow.days || DEFAULT_INDEX_WINDOW.days)}
-                        onChange={handleIndexWindowChange}
-                        data={indexWindowOptions}
-                        disabled={dataSource !== "server" || indexWindowLoading}
-                      />
-                      <Badge radius="xl" variant="light" color={indexWindowLoading ? "orange" : "gray"} className="index-window-control__metric">
-                        {dataSource !== "server"
-                          ? "本地导入"
-                          : indexWindowLoading
-                            ? "重建中"
-                            : `${formatNumber(liveIndexState.retainedEvents || 0)} / ${formatNumber(liveIndexState.totalEvents || 0)}`}
+                      <Text component="span" className="index-window-control__label">数据策略</Text>
+                      <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "gray"} className="index-window-control__metric">
+                        {dataSource === "server" ? "按需事件流" : "本地导入"}
+                      </Badge>
+                      <Badge radius="xl" variant="light" color="gray" className="index-window-control__metric">
+                        {dataSource === "server"
+                          ? `${formatNumber(liveIndexState.cachedFiles || 0)} 文件缓存`
+                          : `${formatNumber(localEvents.length)} 事件`}
+                      </Badge>
+                      <Badge radius="xl" variant="light" color="teal" className="index-window-control__metric">
+                        {dataSource === "server"
+                          ? "原始事件不驻留"
+                          : "浏览器内查看"}
                       </Badge>
                     </div>
                     {tab === "stream" ? (
@@ -1229,7 +1206,7 @@ export function App() {
             <Text>t 切换主题</Text>
             <Text>m 切换观测 / 原始模式</Text>
             <Divider />
-            <Text>实时模式读取本地服务端索引；导入模式只在浏览器内查看文件内容，不会改动磁盘数据。</Text>
+            <Text>实时模式从本地服务端按需读取事件并复用摘要缓存；导入模式只在浏览器内查看文件内容，不会改动磁盘数据。</Text>
           </Stack>
         </Modal>
 

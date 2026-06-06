@@ -9,6 +9,7 @@ const config = require("./server/config");
 const indexManager = require("./server/index-manager");
 const routes = require("./server/routes");
 const sessionOps = require("./server/session-ops");
+const { createSummaryStore } = require("./server/summary-store");
 
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
@@ -31,6 +32,11 @@ const parsers = {
   parseCodexLineToEvent: parseCodexLineToEventCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
 };
+
+const summaryStore = createSummaryStore({
+  parsers,
+  applyEventSessionMetaCore,
+});
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
   const aggregateBySessionId = new Map(
@@ -73,13 +79,13 @@ routes.init({
   toTimeMsCore,
   buildObservabilitySummaryCore,
   applySessionTitleOverridesCore,
+  summaryStore,
 });
 
-// Bound index functions for use in session ops and watchers
-const boundRefreshIndex = (reason) => indexManager.refreshIndex(
-  reason, parsers, applyEventSessionMetaCore, dedupeEventsCore, mergeSessionMetaRecordsCore
-);
-const boundScheduleIndexRefresh = (reason) => indexManager.scheduleIndexRefresh(reason, boundRefreshIndex);
+// The default data path uses on-demand reads plus lightweight summary caching.
+const boundScheduleSourceRefresh = () => {
+  routes.invalidateCaches();
+};
 
 function readJsonBody(req, res, onPayload) {
   let body = "";
@@ -109,8 +115,6 @@ const server = http.createServer((req, res) => {
       readJsonBody(req, res, (payload) => {
         try {
           const result = indexManager.setIndexWindowDays(payload?.days);
-          routes.invalidateCaches();
-          boundRefreshIndex("index-window");
           routes.invalidateCaches();
           indexManager.trimHeapNow();
           sendJson(req, res, 200, {
@@ -173,7 +177,7 @@ const server = http.createServer((req, res) => {
         try {
           const { sessionId, newName } = JSON.parse(body);
           if (!sessionId || !newName) return sendJson(req, res, 400, { error: "sessionId and newName required" });
-          const result = sessionOps.renameSession(sessionId, newName, boundScheduleIndexRefresh);
+          const result = sessionOps.renameSession(sessionId, newName, boundScheduleSourceRefresh);
           if (!result.success) return sendJson(req, res, 404, { error: result.error });
           sendJson(req, res, 200, result);
         } catch (err) {
@@ -192,7 +196,7 @@ const server = http.createServer((req, res) => {
           if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
             return sendJson(req, res, 400, { error: "sessionIds array required" });
           }
-          const result = sessionOps.batchDeleteSessions(sessionIds, boundScheduleIndexRefresh);
+          const result = sessionOps.batchDeleteSessions(sessionIds, boundScheduleSourceRefresh);
           return sendJson(req, res, 200, result);
         } catch (err) {
           return sendJson(req, res, 500, { error: String(err) });
@@ -204,7 +208,7 @@ const server = http.createServer((req, res) => {
     if (u.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
       const sessionId = u.pathname.split("/").pop();
       if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-      const result = sessionOps.deleteSession(sessionId, boundScheduleIndexRefresh);
+      const result = sessionOps.deleteSession(sessionId, boundScheduleSourceRefresh);
       if (!result.success) return sendJson(req, res, 404, { error: result.error });
       return sendJson(req, res, 200, result);
     }
@@ -216,11 +220,29 @@ const server = http.createServer((req, res) => {
   return routes.serveStatic(u.pathname, res);
 });
 
+const JSON_HEAP_PRESSURE_BYTES = 128 * 1024 * 1024;
+
+function isJsonHeapPressured() {
+  const { heapTotal, heapUsed } = process.memoryUsage();
+  return heapTotal >= JSON_HEAP_PRESSURE_BYTES || heapUsed >= JSON_HEAP_PRESSURE_BYTES * 0.75;
+}
+
+function trimHeapBeforeJson() {
+  if (typeof global.gc !== "function" || !isJsonHeapPressured()) return;
+  try {
+    global.gc();
+  } catch {
+    // Optional V8 GC hook; ignore when unavailable or interrupted.
+  }
+}
+
 function sendJson(req, res, status, data) {
   const zlib = require("zlib");
+  trimHeapBeforeJson();
   const body = JSON.stringify(data);
+  const bodyBuffer = Buffer.from(body);
   const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
-  const shouldGzip = acceptsGzip && Buffer.byteLength(body) > 1024;
+  const shouldGzip = acceptsGzip && bodyBuffer.length > 1024 && !isJsonHeapPressured();
 
   const writePayload = (payload, gzipped = false) => {
     res.writeHead(status, {
@@ -233,13 +255,13 @@ function sendJson(req, res, status, data) {
   };
 
   if (!shouldGzip) {
-    writePayload(Buffer.from(body));
+    writePayload(bodyBuffer);
     return;
   }
 
-  zlib.gzip(body, (error, payload) => {
+  zlib.gzip(bodyBuffer, (error, payload) => {
     if (error) {
-      writePayload(Buffer.from(body));
+      writePayload(bodyBuffer);
       return;
     }
     writePayload(payload, true);
@@ -271,10 +293,5 @@ server.listen(config.PORT, config.HOST, () => {
   console.log(`Session Observer running at http://${config.HOST}:${config.PORT}`);
   console.log(`Codex sessions: ${config.SESSIONS_DIR}`);
   console.log(`Claude Code sessions: ${config.CLAUDE_PROJECTS_DIR}`);
-  indexManager.startIndexWatchers(boundScheduleIndexRefresh);
-  try {
-    boundRefreshIndex("startup");
-  } catch (err) {
-    console.error(`Initial index build failed: ${err}`);
-  }
+  indexManager.startIndexWatchers(boundScheduleSourceRefresh);
 });

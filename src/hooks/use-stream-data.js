@@ -19,6 +19,7 @@ const EMPTY_STREAM_PAYLOAD = {
 
 export function useStreamData({
   dataSource,
+  enabled = true,
   mode,
   quickFilter,
   tokenThreshold,
@@ -101,13 +102,13 @@ export function useStreamData({
   ]);
 
   useEffect(() => {
-    if (dataSource !== "server") return undefined;
+    if (dataSource !== "server" || !enabled) return undefined;
     const timer = window.setTimeout(() => {
       loadEvents();
     }, 140);
 
     return () => window.clearTimeout(timer);
-  }, [dataSource, loadEvents]);
+  }, [dataSource, enabled, loadEvents]);
 
   return {
     streamPayload,
