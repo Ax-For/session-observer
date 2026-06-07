@@ -1,28 +1,6 @@
 import { useCallback, useState } from "react";
 import { apiClient } from "../api/client";
-import { downloadBlob, downloadJsonl, formatNumber } from "../lib/formatters";
-
-async function fetchAllSessionEvents(sessionId) {
-  const events = [];
-  let offset = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    const payload = await apiClient.fetchEvents({
-      sessionId,
-      order: "asc",
-      limit: 1000,
-      offset,
-      mode: "raw",
-      summary: 0,
-    });
-    events.push(...payload.events);
-    hasMore = Boolean(payload.page?.hasMore);
-    offset += Number(payload.page?.limit || 1000);
-  }
-
-  return events;
-}
+import { formatNumber } from "../lib/formatters";
 
 export function useSessionActions({ loadSessions, loadEvents, notify }) {
   const [selectedSessionIds, setSelectedSessionIds] = useState([]);
@@ -120,51 +98,6 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
     }
   }, [loadEvents, loadSessions, notify, selectedSessionIds]);
 
-  const batchExport = useCallback(async () => {
-    if (selectedSessionIds.length === 0) return;
-    try {
-      const chunks = [];
-      for (const sessionId of selectedSessionIds) {
-        const events = await fetchAllSessionEvents(sessionId);
-        chunks.push(...events);
-      }
-      downloadJsonl(`session-observer-selection-${Date.now()}.jsonl`, chunks);
-      notify({
-        title: "批量导出完成",
-        message: `已导出 ${formatNumber(chunks.length)} 条事件`,
-        color: "blue",
-      });
-    } catch (error) {
-      notify({
-        title: "批量导出失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }, [notify, selectedSessionIds]);
-
-  const exportSession = useCallback(async (session) => {
-    if (!session?.sessionId) return;
-    try {
-      const exported = await apiClient.exportSession(session.sessionId, {
-        format: "markdown",
-        sanitize: true,
-      });
-      downloadBlob(exported.filename, exported.blob);
-      notify({
-        title: "脱敏导出完成",
-        message: session.title || session.sessionTitle || session.fallbackTitle || session.sessionId,
-        color: "blue",
-      });
-    } catch (error) {
-      notify({
-        title: "脱敏导出失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }, [notify]);
-
   return {
     selectedSessionIds,
     renameTarget,
@@ -181,7 +114,5 @@ export function useSessionActions({ loadSessions, loadEvents, notify }) {
     toggleSessionSelection,
     clearSessionSelection,
     batchDelete,
-    batchExport,
-    exportSession,
   };
 }

@@ -62,7 +62,6 @@ describe("SessionWorkspace", () => {
   test("keeps a session id copy action on session cards", () => {
     const onCopySessionId = vi.fn();
     const onFocusWorkspace = vi.fn();
-    const onExportSession = vi.fn();
 
     render(
       <MantineProvider>
@@ -105,17 +104,12 @@ describe("SessionWorkspace", () => {
           onRename={() => {}}
           onDelete={() => {}}
           onCopySessionId={onCopySessionId}
-          onExportSession={onExportSession}
         />
       </MantineProvider>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /复制会话 id · 019da544/i }));
     expect(onCopySessionId).toHaveBeenCalledWith("019da544-e133-7b71-9e63-79d2bbba8713");
-    fireEvent.click(screen.getByRole("button", { name: /导出脱敏会话 · 019da544/i }));
-    expect(onExportSession).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: "019da544-e133-7b71-9e63-79d2bbba8713",
-    }));
     expect(screen.getByText("文件位置")).toBeInTheDocument();
     expect(screen.getAllByText(/session\.jsonl/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /定位工作目录 .*session-observer/i }));

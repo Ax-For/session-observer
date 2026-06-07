@@ -22,7 +22,6 @@ import {
   IconActivity,
   IconChevronRight,
   IconCopy,
-  IconDownload,
   IconEdit,
   IconFileText,
   IconFolder,
@@ -336,7 +335,6 @@ function SessionDetailPanel({
   onClearSessionFocus,
   onLoadMore,
   onCopySessionId,
-  onExportSession,
   onOpenEvent,
 }) {
   if (!selectedSessionId) {
@@ -391,11 +389,6 @@ function SessionDetailPanel({
           <Tooltip label="查看对话" withArrow>
             <ActionIcon variant="light" radius="xl" color="blue" onClick={() => onOpenConversation?.(session || { sessionId: selectedSessionId, title })} aria-label="查看当前会话对话">
               <IconMessage2 size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="导出脱敏会话" withArrow>
-            <ActionIcon variant="light" radius="xl" color="gray" onClick={() => onExportSession?.(session || { sessionId: selectedSessionId })} aria-label="导出当前会话">
-              <IconDownload size={16} />
             </ActionIcon>
           </Tooltip>
           <Tooltip label="取消聚焦" withArrow>
@@ -688,7 +681,6 @@ function SessionRow({
   onRename,
   onDelete,
   onCopySessionId,
-  onExportSession,
 }) {
   const sessionIds = getSessionIds(session);
   const selectedCount = sessionIds.filter((id) => selectedSet.has(id)).length;
@@ -773,17 +765,6 @@ function SessionRow({
             onClick={() => onOpenConversation(session)}
           >
             <IconMessage2 size={16} />
-          </ActionIcon>
-        </Tooltip>
-        <Tooltip label="导出脱敏会话" withArrow>
-          <ActionIcon
-            variant="light"
-            radius="xl"
-            color="teal"
-            aria-label={`导出脱敏会话 · ${shortSessionId(session.sessionId)}`}
-            onClick={() => onExportSession?.(session)}
-          >
-            <IconDownload size={16} />
           </ActionIcon>
         </Tooltip>
         <Tooltip label="重命名" withArrow>
@@ -896,7 +877,6 @@ export function SessionWorkspace({
   onRename,
   onDelete,
   onCopySessionId,
-  onExportSession,
   onOpenEvent,
   onLoadMoreSessionDetail,
   workspaceIndex,
@@ -989,7 +969,6 @@ export function SessionWorkspace({
                     onRename={onRename}
                     onDelete={onDelete}
                     onCopySessionId={onCopySessionId}
-                    onExportSession={onExportSession}
                   />
                 )}
               />
@@ -1026,7 +1005,6 @@ export function SessionWorkspace({
               onClearSessionFocus={onClearSessionFocus}
               onLoadMore={onLoadMoreSessionDetail}
               onCopySessionId={onCopySessionId}
-              onExportSession={onExportSession}
               onOpenEvent={onOpenEvent}
             />
           ) : (

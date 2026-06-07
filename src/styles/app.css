@@ -214,6 +214,47 @@ textarea {
   min-width: 34px;
 }
 
+.refresh-status-badge {
+  height: 34px;
+  padding-inline: 10px 12px;
+  cursor: default;
+}
+
+.refresh-status-badge .mantine-Badge-label {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.refresh-status-dot {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-faint) 14%, transparent);
+}
+
+.refresh-status-dot.is-live {
+  background: #21a86d;
+  box-shadow: 0 0 0 3px rgba(33, 168, 109, 0.16);
+}
+
+.refresh-status-dot.is-pending {
+  background: #d18a19;
+  box-shadow: 0 0 0 3px rgba(209, 138, 25, 0.16);
+}
+
+.refresh-status-dot.is-ondemand {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.refresh-status-dot.is-import {
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
+}
+
 .shell-tabs {
   justify-self: center;
   min-width: 330px;
@@ -6441,9 +6482,9 @@ button.mc-active-cost-row:focus-visible {
     gap: 10px;
   }
 
-  .header-actions .mantine-Switch-root {
-    width: 100%;
-    justify-content: space-between;
+  .refresh-status-badge {
+    flex: 1 1 auto;
+    justify-content: flex-start;
   }
 
   .header-actions .mantine-Button-root {

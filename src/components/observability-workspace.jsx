@@ -1748,7 +1748,7 @@ export function ObservabilityWorkspace({
                     <div key={label} className="mc-source-row">
                       <div>
                         <Text className="mc-source-row__name">{label}</Text>
-                        <Text className="mc-source-row__path">{clipText(source?.path || "本地导入数据", 92)}</Text>
+                        <Text className="mc-source-row__path">{clipText(source?.path || "未配置数据源路径", 92)}</Text>
                       </div>
                       <div className="mc-source-row__side">
                         <Badge radius="xl" variant="light" color={source?.exists === false ? "gray" : "blue"}>
@@ -1776,7 +1776,7 @@ export function ObservabilityWorkspace({
                   </div>
                   <div>
                     <Text className="mc-runtime__label">服务运行</Text>
-                    <Text className="mc-runtime__value">{runtime?.uptimeSeconds ? `${formatNumber(runtime.uptimeSeconds)} 秒` : "浏览器导入"}</Text>
+                    <Text className="mc-runtime__value">{runtime?.uptimeSeconds ? `${formatNumber(runtime.uptimeSeconds)} 秒` : "未上报"}</Text>
                   </div>
                   <div>
                     <Text className="mc-runtime__label">CLI 版本</Text>

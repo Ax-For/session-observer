@@ -6,7 +6,6 @@ import {
   Button,
   Checkbox,
   Divider,
-  FileButton,
   Group,
   MantineProvider,
   Modal,
@@ -14,7 +13,6 @@ import {
   SegmentedControl,
   Select,
   Stack,
-  Switch,
   Text,
   TextInput,
   Title,
@@ -26,19 +24,14 @@ import {
   IconAdjustmentsHorizontal,
   IconAlertCircle,
   IconBulb,
-  IconCloudDownload,
-  IconCloudUpload,
   IconMoon,
   IconRefresh,
   IconSearch,
   IconSun,
   IconX,
 } from "@tabler/icons-react";
-import ObserverData from "../shared/observer-data.js";
 import { apiClient } from "./api/client";
 import {
-  downloadJson,
-  downloadJsonl,
   formatFullDateTime,
   formatHumanNumber,
   formatNumber,
@@ -51,8 +44,6 @@ import {
 } from "./lib/url-state";
 import {
   buildActiveSessionOverview,
-  buildLocalSessionGroups,
-  buildLocalStreamPayload,
   buildDashboardSummary,
   buildLowContentSessionIds,
   buildSessionSections,
@@ -69,7 +60,8 @@ import { useSourceChangeStream } from "./hooks/use-source-change-stream";
 import { useStreamData } from "./hooks/use-stream-data";
 import { useUrlStateSync } from "./hooks/use-url-state-sync";
 
-const { parseFiles } = ObserverData;
+const DATA_SOURCE = "server";
+const EMPTY_LOCAL_EVENTS = [];
 
 const StreamWorkspace = lazy(() => import("./components/stream-workspace").then((module) => ({
   default: module.StreamWorkspace,
@@ -167,18 +159,14 @@ export function App() {
     key: "observer-density-mode",
     defaultValue: "cozy",
   });
-  const [autoRefresh, setAutoRefresh] = useLocalStorage({
-    key: "observer-auto-refresh",
-    defaultValue: false,
-  });
   const [mode, setMode] = useState(initialUrlState.mode);
   const [quickFilter, setQuickFilter] = useState(initialUrlState.quickFilter);
   const [tokenThreshold, setTokenThreshold] = useState(initialUrlState.tokenThreshold || DEFAULT_TOKEN_THRESHOLD);
   const [streamFilters, setStreamFilters] = useState(initialUrlState.streamFilters || DEFAULT_STREAM_FILTERS);
   const [sessionFilters, setSessionFilters] = useState(initialUrlState.sessionFilters || DEFAULT_SESSION_FILTERS);
   const [selectedSessionId, setSelectedSessionId] = useState(initialUrlState.selectedSessionId);
-  const [dataSource, setDataSource] = useState("server");
-  const [localEvents, setLocalEvents] = useState([]);
+  const dataSource = DATA_SOURCE;
+  const localEvents = EMPTY_LOCAL_EVENTS;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState(null);
@@ -207,11 +195,34 @@ export function App() {
     notify,
   });
   const sourceChangeStream = useSourceChangeStream({
-    enabled: dataSource === "server" && autoRefresh && tab === "stream",
+    enabled: dataSource === "server" && tab === "stream",
     onChange: () => {
       loadEvents();
     },
   });
+  const refreshStatus = useMemo(() => {
+    if (tab === "stream") {
+      return sourceChangeStream.connected
+        ? {
+            label: "实时连接",
+            color: "teal",
+            tone: "live",
+            title: "事件流已订阅本地文件变化，新事件会自动更新。",
+          }
+        : {
+            label: "等待实时",
+            color: "yellow",
+            tone: "pending",
+            title: "实时连接尚未建立，可使用右侧刷新按钮手动读取最新事件。",
+          };
+    }
+    return {
+      label: "按需读取",
+      color: "blue",
+      tone: "ondemand",
+      title: "当前页面按需读取摘要数据，使用刷新按钮重新加载。",
+    };
+  }, [sourceChangeStream.connected, tab]);
   const { sessionsPayload, loadingSessions, loadSessions } = useSessionData({
     dataSource,
     notify,
@@ -254,42 +265,14 @@ export function App() {
     confirmRename,
     confirmDelete,
     toggleSessionSelection,
-    clearSessionSelection,
     batchDelete,
-    batchExport,
-    exportSession,
   } = useSessionActions({
     loadSessions,
     loadEvents,
     notify,
   });
 
-  const localPayload = useMemo(() => {
-    if (dataSource === "server") return null;
-    return buildLocalStreamPayload({
-      events: localEvents,
-      filters: { ...streamFilters, query: deferredQuery },
-      selectedSessionId,
-      quickFilter,
-      tokenThreshold: Number(tokenThreshold) || 20000,
-      mode,
-    });
-  }, [
-    dataSource,
-    deferredQuery,
-    localEvents,
-    mode,
-    quickFilter,
-    selectedSessionId,
-    streamFilters.end,
-    streamFilters.model,
-    streamFilters.order,
-    streamFilters.platform,
-    streamFilters.start,
-    streamFilters.type,
-    tokenThreshold,
-  ]);
-  const currentStream = dataSource === "server" ? streamPayload : localPayload;
+  const currentStream = streamPayload;
   const currentStreamIndex = currentStream?.index || {};
   const summaryCache = observabilityPayload.summary?.cache || {};
   const liveIndexState = (
@@ -331,10 +314,7 @@ export function App() {
     [currentStream.sessions],
   );
 
-  const sessionGroups = useMemo(
-    () => (dataSource === "server" ? sessionsPayload.groups : buildLocalSessionGroups(localEvents)),
-    [dataSource, localEvents, sessionsPayload.groups],
-  );
+  const sessionGroups = sessionsPayload.groups;
   const activeOverviewGroups = isObservabilityTab
     ? observabilitySessionGroups
     : tab === "stream"
@@ -479,15 +459,6 @@ export function App() {
   }, [dataSource, loadSessions, tab]);
 
   useEffect(() => {
-    if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
-    const intervalMs = sourceChangeStream.connected ? 60000 : 5000;
-    const id = window.setInterval(() => {
-      loadEvents();
-    }, intervalMs);
-    return () => window.clearInterval(id);
-  }, [autoRefresh, dataSource, tab, loadEvents, sourceChangeStream.connected]);
-
-  useEffect(() => {
     function onKeyDown(event) {
       if (event.defaultPrevented || event.isComposing) return;
       const isEditing = isEditableShortcutTarget(event.target);
@@ -506,10 +477,6 @@ export function App() {
         } else {
           loadEvents();
         }
-      }
-      if (event.key === "a" && !hasModifier && !isEditing && dataSource === "server") {
-        event.preventDefault();
-        setAutoRefresh((value) => !value);
       }
       if (event.key === "t" && !hasModifier && !isEditing) {
         event.preventDefault();
@@ -531,7 +498,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dataSource, loadEvents, loadObservability, loadSessions, setAutoRefresh, setThemeMode, tab]);
+  }, [dataSource, loadEvents, loadObservability, loadSessions, setThemeMode, tab]);
 
   function toggleTheme() {
     setThemeMode((value) => (value === "dark" ? "light" : "dark"));
@@ -552,56 +519,6 @@ export function App() {
     setSessionDetailPage(createSessionDetailPage());
   }
 
-  async function handleImport(files) {
-    if (!files?.length) return;
-    try {
-      const events = await parseFiles(Array.from(files));
-      setAutoRefresh(false);
-      setDataSource("local");
-      setSelectedSessionId("");
-      startTransition(() => {
-        setLocalEvents(events);
-        setTab("stream");
-      });
-      notifications.show({
-        title: "本地日志已导入",
-        message: `已载入 ${formatNumber(events.length)} 条事件`,
-        color: "blue",
-      });
-    } catch (error) {
-      notifications.show({
-        title: "导入失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
-  }
-
-  function returnToLiveMode() {
-    closeConversation();
-    setDataSource("server");
-    setLocalEvents([]);
-    setSelectedSessionId("");
-    clearSessionSelection();
-    notifications.show({
-      title: "已切回实时数据",
-      message: "当前视图重新使用本地服务端聚合数据。",
-      color: "blue",
-    });
-  }
-
-  function exportCurrentView() {
-    if (tab === "stream") {
-      downloadJsonl(`session-observer-events-${Date.now()}.jsonl`, currentStream.events);
-      return;
-    }
-    if (tab !== "sessions") {
-      downloadJson(`session-observer-observability-${tab}-${Date.now()}.json`, observabilityPayload);
-      return;
-    }
-    downloadJson(`session-observer-sessions-${Date.now()}.json`, sessionSections);
-  }
-
   function refreshCurrentView() {
     if (tab === "overview" || tab === "tokens" || tab === "insights") {
       loadObservability();
@@ -620,9 +537,7 @@ export function App() {
     setStreamSearchDraft(query);
 
     if (query === submittedStreamQuery.trim()) {
-      if (dataSource === "server" && tab === "stream") {
-        loadEvents();
-      }
+      if (tab === "stream") loadEvents();
       return;
     }
 
@@ -679,16 +594,8 @@ export function App() {
     });
   }
 
-  const canMutateSessions = dataSource === "server";
+  const canMutateSessions = true;
   const headerMetrics = useMemo(() => {
-    if (dataSource !== "server") {
-      return {
-        status: `本地导入 · ${formatNumber(localEvents.length)} 条事件`,
-        matching: currentStream.totalMatching || currentStream.events.length,
-        sessions: streamSummary.counts.sessions,
-      };
-    }
-
     if (isObservabilityTab) {
       const health = observabilityPayload.summary?.health || {};
       return {
@@ -717,9 +624,7 @@ export function App() {
   }, [
     currentStream.events.length,
     currentStream.totalMatching,
-    dataSource,
     isObservabilityTab,
-    localEvents.length,
     observabilityPayload.generatedAt,
     observabilityPayload.summary?.health,
     sessionSections,
@@ -843,16 +748,14 @@ export function App() {
                 />
 
                 <Group gap={6} className="shell-header__metrics" wrap="nowrap">
-                  <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "orange"}>
-                    {dataSource === "server" ? "按需流" : "导入"}
+                  <Badge radius="xl" variant="light" color="blue">
+                    按需流
                   </Badge>
                   <Badge radius="xl" variant="light" color="gray">
-                    {dataSource === "server"
-                      ? `${formatNumber(cachedFileCount)} 文件`
-                      : `${formatNumber(localEvents.length)} 事件`}
+                    {`${formatNumber(cachedFileCount)} 文件`}
                   </Badge>
                   <Badge radius="xl" variant="light" color="teal">
-                    {dataSource === "server" ? "不驻留" : "浏览器"}
+                    不驻留
                   </Badge>
                   <Badge radius="xl" variant="light" color="gray">
                     {tab === "sessions"
@@ -864,13 +767,16 @@ export function App() {
                 </Group>
 
                 <Group gap="xs" align="center" className="header-actions" wrap="nowrap">
-                  <Switch
-                    checked={autoRefresh}
-                    onChange={(event) => setAutoRefresh(event.currentTarget.checked)}
-                    disabled={dataSource !== "server"}
-                    label="自动刷新"
-                    color="blue"
-                  />
+                  <Badge
+                    radius="xl"
+                    variant="light"
+                    color={refreshStatus.color}
+                    title={refreshStatus.title}
+                    className="refresh-status-badge"
+                    leftSection={<span className={`refresh-status-dot is-${refreshStatus.tone}`} />}
+                  >
+                    {refreshStatus.label}
+                  </Badge>
                   <ActionIcon radius="xl" variant="light" color="blue" size="lg" onClick={refreshCurrentView}>
                     <IconRefresh size={18} />
                   </ActionIcon>
@@ -883,21 +789,6 @@ export function App() {
                   <ActionIcon radius="xl" variant="light" color="gray" size="lg" onClick={() => setHelpOpen(true)}>
                     <IconAlertCircle size={18} />
                   </ActionIcon>
-                  <Button variant="light" radius="xl" color="gray" leftSection={<IconCloudDownload size={16} />} onClick={exportCurrentView}>
-                    导出
-                  </Button>
-                  <FileButton onChange={handleImport} accept=".jsonl,.log,.txt" multiple>
-                    {(props) => (
-                      <Button {...props} variant="light" radius="xl" color="blue" leftSection={<IconCloudUpload size={16} />}>
-                        导入
-                      </Button>
-                    )}
-                  </FileButton>
-                  {dataSource === "local" ? (
-                    <Button variant="light" radius="xl" color="orange" onClick={returnToLiveMode}>
-                      返回实时
-                    </Button>
-                  ) : null}
                 </Group>
               </div>
             </div>
@@ -1173,14 +1064,9 @@ export function App() {
                         </Button>
                       ) : null}
                       {selectedSessionIds.length > 0 ? (
-                        <>
-                          <Button variant="light" radius="xl" color="blue" onClick={batchExport}>
-                            批量导出 {formatNumber(selectedSessionIds.length)} 个原始会话
-                          </Button>
-                          <Button variant="light" radius="xl" color="red" onClick={batchDelete} disabled={!canMutateSessions}>
-                            批量删除 {formatNumber(selectedSessionIds.length)} 个原始会话
-                          </Button>
-                        </>
+                        <Button variant="light" radius="xl" color="red" onClick={batchDelete} disabled={!canMutateSessions}>
+                          批量删除 {formatNumber(selectedSessionIds.length)} 个原始会话
+                        </Button>
                       ) : null}
                     </Group>
                   </Paper>
@@ -1210,7 +1096,6 @@ export function App() {
                         if (canMutateSessions) openDelete(session);
                       }}
                       onCopySessionId={copySessionId}
-                      onExportSession={exportSession}
                       onOpenEvent={openEventDetail}
                       onLoadMoreSessionDetail={() => loadSessionDetailEvents(selectedSessionId, { append: true })}
                     />
@@ -1276,12 +1161,11 @@ export function App() {
         <Modal opened={helpOpen} onClose={() => setHelpOpen(false)} title="快捷键与说明" centered>
           <Stack gap="sm">
             <Text>/ 聚焦搜索</Text>
-            <Text>r 刷新实时事件</Text>
-            <Text>a 开关自动刷新</Text>
+            <Text>r 刷新当前视图</Text>
             <Text>t 切换主题</Text>
             <Text>m 切换观测 / 原始模式</Text>
             <Divider />
-            <Text>实时模式从本地服务端按需读取事件并复用摘要缓存；导入模式只在浏览器内查看文件内容，不会改动磁盘数据。</Text>
+            <Text>事件流打开时会订阅本地文件变化并自动更新；其他页面按需读取摘要数据。刷新按钮只会重新读取当前视图。</Text>
           </Stack>
         </Modal>
 
