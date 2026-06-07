@@ -81,6 +81,34 @@ function fetchedUrls() {
   return fetch.mock.calls.map(([input]) => String(input));
 }
 
+function fetchedEventUrls() {
+  return fetchedUrls().filter((url) => url.startsWith("/api/events"));
+}
+
+function mockFetchWithDelayedSearch() {
+  const baseFetch = mockFetch();
+  let resolveSearch;
+  const fetcher = vi.fn((input) => {
+    const url = String(input);
+    if (url.startsWith("/api/events") && url.includes("q=incident")) {
+      return new Promise((resolve) => {
+        resolveSearch = () => resolve(jsonResponse({
+          events: [],
+          sessions: [],
+          meta: { models: [], types: [], platforms: [] },
+          totalVisible: 0,
+          totalMatching: 0,
+          page: { offset: 0, limit: 250, hasMore: false },
+          generatedAt: "2026-04-20T00:00:01.000Z",
+        }));
+      });
+    }
+    return baseFetch(input);
+  });
+  fetcher.resolveSearch = () => resolveSearch?.();
+  return fetcher;
+}
+
 function waitForStartupTimers() {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 220);
@@ -118,6 +146,7 @@ describe("App URL state", () => {
 
     const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
     fireEvent.change(searchInput, { target: { value: "incident" } });
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
     fireEvent.click(screen.getByRole("radio", { name: "原始" }));
     fireEvent.click(screen.getByRole("radio", { name: "异常" }));
     fireEvent.click(screen.getByRole("radio", { name: "会话" }));
@@ -127,6 +156,51 @@ describe("App URL state", () => {
       expect(window.location.search).toContain("q=incident");
       expect(window.location.search).toContain("mode=raw");
       expect(window.location.search).toContain("qf=alert");
+    });
+  });
+
+  test("submits stream search only when the search button is clicked", async () => {
+    render(<App />);
+
+    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    await waitForStartupTimers();
+    const initialEventFetchCount = fetchedEventUrls().length;
+
+    fireEvent.change(searchInput, { target: { value: "incident" } });
+
+    expect(screen.getByText("输入已修改，点击搜索后生效")).toBeInTheDocument();
+    await waitForStartupTimers();
+    expect(fetchedEventUrls()).toHaveLength(initialEventFetchCount);
+    expect(window.location.search).not.toContain("q=incident");
+
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+
+    await waitFor(() => {
+      expect(fetchedEventUrls().some((url) => url.includes("q=incident"))).toBe(true);
+      expect(window.location.search).toContain("q=incident");
+    });
+  });
+
+  test("shows loading feedback while a submitted stream search is running", async () => {
+    const delayedFetch = mockFetchWithDelayedSearch();
+    vi.stubGlobal("fetch", delayedFetch);
+
+    render(<App />);
+
+    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    await waitForStartupTimers();
+
+    fireEvent.change(searchInput, { target: { value: "incident" } });
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("正在按当前条件查询事件...")).toBeInTheDocument();
+    });
+
+    delayedFetch.resolveSearch();
+
+    await waitFor(() => {
+      expect(screen.getByText("当前搜索：incident")).toBeInTheDocument();
     });
   });
 

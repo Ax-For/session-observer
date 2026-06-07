@@ -64,6 +64,7 @@ import { useConversationData } from "./hooks/use-conversation-data";
 import { useObservabilityData } from "./hooks/use-observability-data";
 import { useSessionActions } from "./hooks/use-session-actions";
 import { useSessionData } from "./hooks/use-session-data";
+import { useSourceChangeStream } from "./hooks/use-source-change-stream";
 import { useStreamData } from "./hooks/use-stream-data";
 import { useUrlStateSync } from "./hooks/use-url-state-sync";
 
@@ -186,7 +187,11 @@ export function App() {
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
   const sessionDetailRequestId = useRef(0);
+  const [streamSearchDraft, setStreamSearchDraft] = useState(initialUrlState.streamFilters?.query || "");
   const deferredQuery = useDeferredValue(streamFilters.query);
+  const submittedStreamQuery = streamFilters.query || "";
+  const normalizedStreamSearchDraft = streamSearchDraft.trim();
+  const streamSearchDirty = normalizedStreamSearchDraft !== submittedStreamQuery.trim();
   const notify = useCallback((options) => notifications.show(options), []);
   const isObservabilityTab = tab === "overview" || tab === "tokens" || tab === "insights";
   const { streamPayload, loadingEvents, loadEvents } = useStreamData({
@@ -199,6 +204,12 @@ export function App() {
     streamFilters,
     query: deferredQuery,
     notify,
+  });
+  const sourceChangeStream = useSourceChangeStream({
+    enabled: dataSource === "server" && autoRefresh && tab === "stream",
+    onChange: () => {
+      loadEvents();
+    },
   });
   const { sessionsPayload, loadingSessions, loadSessions } = useSessionData({
     dataSource,
@@ -468,11 +479,12 @@ export function App() {
 
   useEffect(() => {
     if (dataSource !== "server" || !autoRefresh || tab !== "stream") return undefined;
+    const intervalMs = sourceChangeStream.connected ? 60000 : 5000;
     const id = window.setInterval(() => {
       loadEvents();
-    }, 5000);
+    }, intervalMs);
     return () => window.clearInterval(id);
-  }, [autoRefresh, dataSource, tab, loadEvents]);
+  }, [autoRefresh, dataSource, tab, loadEvents, sourceChangeStream.connected]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -601,6 +613,27 @@ export function App() {
     loadEvents();
   }
 
+  function submitStreamSearch(event) {
+    event?.preventDefault();
+    const query = streamSearchDraft.trim();
+    setStreamSearchDraft(query);
+
+    if (query === submittedStreamQuery.trim()) {
+      if (dataSource === "server" && tab === "stream") {
+        loadEvents();
+      }
+      return;
+    }
+
+    setStreamFilters((current) => ({ ...current, query }));
+  }
+
+  function clearStreamSearch() {
+    setStreamSearchDraft("");
+    setStreamFilters((current) => (current.query ? { ...current, query: "" } : current));
+    window.requestAnimationFrame(() => searchRef.current?.focus());
+  }
+
   function selectLowContentSessions() {
     const uniqueIds = buildLowContentSessionIds(sessionGroups, sessionFilters);
     setSelectedSessionIds(uniqueIds);
@@ -699,7 +732,7 @@ export function App() {
     deferredQuery ? {
       key: "query",
       label: `搜索 ${deferredQuery}`,
-      clear: () => setStreamFilters((current) => ({ ...current, query: "" })),
+      clear: clearStreamSearch,
     } : null,
     streamFilters.model ? {
       key: "model",
@@ -742,6 +775,13 @@ export function App() {
       clear: clearSessionFocus,
     } : null,
   ].filter(Boolean);
+  const streamSearchStatus = loadingEvents
+    ? "正在按当前条件查询事件..."
+    : streamSearchDirty
+      ? "输入已修改，点击搜索后生效"
+      : submittedStreamQuery
+        ? `当前搜索：${submittedStreamQuery}`
+        : "输入关键词后点击搜索";
 
   async function copySessionId(sessionId) {
     if (!sessionId) return;
@@ -936,19 +976,46 @@ export function App() {
               ) : tab === "stream" ? (
                 <>
                   <Paper className="control-shelf" radius="xl" p="md">
-                    <Group wrap="wrap" align="flex-end">
-                      <TextInput
-                        ref={searchRef}
-                        label="搜索"
-                        placeholder="内容 / session / tool / cwd"
-                        leftSection={<IconSearch size={16} />}
-                        value={streamFilters.query}
-                        onChange={(event) => {
-                          const query = event.currentTarget.value;
-                          setStreamFilters((current) => ({ ...current, query }));
-                        }}
-                        className="control-field control-field--wide"
-                      />
+                    <div className="stream-filter-grid">
+                      <form className="stream-search-form" onSubmit={submitStreamSearch}>
+                        <TextInput
+                          ref={searchRef}
+                          label="搜索"
+                          placeholder="内容 / session / tool / cwd"
+                          leftSection={<IconSearch size={16} />}
+                          value={streamSearchDraft}
+                          onChange={(event) => {
+                            setStreamSearchDraft(event.currentTarget.value);
+                          }}
+                          aria-describedby="stream-search-status"
+                          className="control-field control-field--wide stream-search-form__input"
+                        />
+                        <Button
+                          type="submit"
+                          variant={streamSearchDirty ? "filled" : "light"}
+                          radius="xl"
+                          color="blue"
+                          leftSection={<IconSearch size={15} />}
+                          loading={dataSource === "server" && loadingEvents}
+                        >
+                          {dataSource === "server" && loadingEvents ? "搜索中" : "搜索"}
+                        </Button>
+                        {submittedStreamQuery || streamSearchDraft ? (
+                          <Button
+                            type="button"
+                            variant="subtle"
+                            radius="xl"
+                            color="gray"
+                            onClick={clearStreamSearch}
+                            disabled={dataSource === "server" && loadingEvents}
+                          >
+                            清除
+                          </Button>
+                        ) : null}
+                        <Text id="stream-search-status" className="stream-search-form__status" aria-live="polite">
+                          {streamSearchStatus}
+                        </Text>
+                      </form>
                       <Select
                         label="模型"
                         placeholder="全部模型"
@@ -956,7 +1023,7 @@ export function App() {
                         value={streamFilters.model}
                         onChange={(value) => setStreamFilters((current) => ({ ...current, model: value || "" }))}
                         clearable
-                        className="control-field"
+                        className="control-field stream-filter-field"
                       />
                       <Select
                         label="类型"
@@ -965,7 +1032,7 @@ export function App() {
                         value={streamFilters.type}
                         onChange={(value) => setStreamFilters((current) => ({ ...current, type: value || "" }))}
                         clearable
-                        className="control-field"
+                        className="control-field stream-filter-field"
                       />
                       <Select
                         label="平台"
@@ -977,9 +1044,9 @@ export function App() {
                         value={streamFilters.platform}
                         onChange={(value) => setStreamFilters((current) => ({ ...current, platform: value || "" }))}
                         clearable
-                        className="control-field"
+                        className="control-field stream-filter-field"
                       />
-                    </Group>
+                    </div>
                     {activeStreamFilters.length ? (
                       <Group gap="xs" className="active-filter-bar">
                         <Text className="active-filter-bar__label">当前筛选</Text>
@@ -1002,7 +1069,8 @@ export function App() {
                           radius="xl"
                           size="xs"
                           onClick={() => {
-                            setStreamFilters(DEFAULT_STREAM_FILTERS);
+                            setStreamSearchDraft("");
+                            setStreamFilters({ ...DEFAULT_STREAM_FILTERS });
                             setQuickFilter("all");
                             setSelectedSessionId("");
                           }}
@@ -1029,6 +1097,7 @@ export function App() {
                       hasMore={Boolean(currentStream.page?.hasMore) && dataSource === "server"}
                       loading={loadingEvents}
                       generatedAt={currentStream.generatedAt}
+                      searchQuery={deferredQuery}
                     />
                   </Suspense>
                 </>
@@ -1215,7 +1284,8 @@ export function App() {
                 variant="subtle"
                 color="gray"
                 onClick={() => {
-                  setStreamFilters(DEFAULT_STREAM_FILTERS);
+                  setStreamSearchDraft("");
+                  setStreamFilters({ ...DEFAULT_STREAM_FILTERS });
                   setQuickFilter("all");
                   setTokenThreshold(DEFAULT_TOKEN_THRESHOLD);
                 }}

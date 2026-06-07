@@ -9,6 +9,7 @@ const config = require("./server/config");
 const indexManager = require("./server/index-manager");
 const routes = require("./server/routes");
 const sessionOps = require("./server/session-ops");
+const { createSourceChangeBus } = require("./server/source-change-bus");
 const { createSummaryStore } = require("./server/summary-store");
 
 const {
@@ -37,6 +38,9 @@ const summaryStore = createSummaryStore({
   parsers,
   applyEventSessionMetaCore,
   cacheFile: config.SUMMARY_CACHE_FILE,
+});
+const sourceChangeBus = createSourceChangeBus({
+  debounceMs: config.SOURCE_CHANGE_DEBOUNCE_MS,
 });
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
@@ -84,8 +88,9 @@ routes.init({
 });
 
 // The default data path uses on-demand reads plus lightweight summary caching.
-const boundScheduleSourceRefresh = () => {
+const boundScheduleSourceRefresh = (reason = "source-change") => {
   routes.invalidateCaches();
+  sourceChangeBus.notify(reason);
 };
 
 function readJsonBody(req, res, onPayload) {
@@ -110,6 +115,11 @@ const server = http.createServer((req, res) => {
         generatedAt: new Date().toISOString(),
         indexWindow: indexManager.getIndexWindowState(),
       });
+    }
+
+    if (u.pathname === "/api/source-events" && req.method === "GET") {
+      streamSourceEvents(req, res);
+      return;
     }
 
     if (u.pathname === "/api/index-window" && (req.method === "PUT" || req.method === "POST")) {
@@ -268,6 +278,39 @@ function sendJson(req, res, status, data) {
       return;
     }
     writePayload(payload, true);
+  });
+}
+
+function writeSseEvent(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function streamSourceEvents(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write("retry: 3000\n\n");
+  writeSseEvent(res, "ready", sourceChangeBus.state());
+
+  const unsubscribe = sourceChangeBus.subscribe((payload) => {
+    writeSseEvent(res, "source-changed", payload);
+  });
+  const heartbeat = setInterval(() => {
+    writeSseEvent(res, "heartbeat", {
+      ...sourceChangeBus.state(),
+      type: "heartbeat",
+      generatedAt: new Date().toISOString(),
+    });
+  }, config.SOURCE_CHANGE_HEARTBEAT_MS);
+  if (typeof heartbeat.unref === "function") heartbeat.unref();
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    unsubscribe();
   });
 }
 

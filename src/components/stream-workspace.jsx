@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -60,7 +60,44 @@ function getWindowPlatformTotal(windowSummary, platformKey) {
   return Number(match?.total) || 0;
 }
 
-function EventRow({ event, onOpenEvent, onOpenSessionDetail }) {
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildHighlightTerms(query) {
+  const normalized = String(query || "").trim();
+  if (normalized.length < 2) return [];
+  return [...new Set([normalized, ...normalized.split(/\s+/)].filter((term) => term.length >= 2))]
+    .sort((left, right) => right.length - left.length);
+}
+
+function HighlightedText({ text, query }) {
+  const content = String(text ?? "");
+  const terms = buildHighlightTerms(query);
+  if (!content || !terms.length) return content;
+
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "ig");
+  const parts = content.split(pattern).filter((part) => part !== "");
+  if (parts.length <= 1) {
+    const lowerContent = content.toLocaleLowerCase();
+    const lowerQuery = String(query || "").toLocaleLowerCase();
+    if (content.trim().length >= 4 && lowerQuery.includes(lowerContent)) {
+      return <mark className="event-search-highlight">{content}</mark>;
+    }
+    return content;
+  }
+
+  return parts.map((part, index) => {
+    const matched = terms.some((term) => part.toLocaleLowerCase() === term.toLocaleLowerCase());
+    return matched ? (
+      <mark key={`${part}-${index}`} className="event-search-highlight">{part}</mark>
+    ) : (
+      <Fragment key={`${part}-${index}`}>{part}</Fragment>
+    );
+  });
+}
+
+function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
   const dialogueRole = eventDialogueRole(event.callType);
   const rowClasses = [
     "event-row",
@@ -84,14 +121,22 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail }) {
                 {dialogueRole === "user" ? "用户" : "Agent"}
               </span>
             ) : null}
-            {!dialogueRole ? <span className="event-row__type">{callTypeLabel(event.callType)}</span> : null}
-            <span className="event-row__model">{event.model || "unknown"}</span>
+            {!dialogueRole ? (
+              <span className="event-row__type">
+                <HighlightedText text={callTypeLabel(event.callType)} query={searchQuery} />
+              </span>
+            ) : null}
+            <span className="event-row__model">
+              <HighlightedText text={event.model || "unknown"} query={searchQuery} />
+            </span>
           </div>
-          <Text className="event-row__summary">{summary}</Text>
+          <Text className="event-row__summary">
+            <HighlightedText text={summary} query={searchQuery} />
+          </Text>
           <div className="event-row__meta-line">
-            <span>{shortSessionId(event.sessionId)}</span>
-            <span>{event.extra || "事件详情"}</span>
-            <span>{clipText(event.cwd || "", 48)}</span>
+            <span><HighlightedText text={shortSessionId(event.sessionId)} query={searchQuery} /></span>
+            <span><HighlightedText text={event.extra || "事件详情"} query={searchQuery} /></span>
+            <span><HighlightedText text={clipText(event.cwd || "", 48)} query={searchQuery} /></span>
           </div>
         </div>
 
@@ -114,7 +159,7 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail }) {
   );
 }
 
-function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail }) {
+function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail, searchQuery }) {
   const viewportRef = useRef(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(520);
@@ -156,7 +201,12 @@ function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail }) {
               className="feed-virtual-scroll__item"
               style={{ transform: `translateY(${absoluteIndex * EVENT_ROW_HEIGHT}px)` }}
             >
-              <EventRow event={event} onOpenEvent={onOpenEvent} onOpenSessionDetail={onOpenSessionDetail} />
+              <EventRow
+                event={event}
+                onOpenEvent={onOpenEvent}
+                onOpenSessionDetail={onOpenSessionDetail}
+                searchQuery={searchQuery}
+              />
             </div>
           );
         })}
@@ -180,6 +230,7 @@ export function StreamWorkspace({
   hasMore,
   loading,
   generatedAt,
+  searchQuery,
 }) {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
   const activeSession = (sessions || []).find((session) => session?.sessionId === selectedSessionId) || null;
@@ -467,8 +518,12 @@ export function StreamWorkspace({
                       </span>
                       <span className="session-rail__main">
                         <span className="session-rail__title-row">
-                          <span className="session-rail__title" title={session.title || "未命名会话"}>{session.title || "未命名会话"}</span>
-                          <span className="session-rail__id">{shortSessionId(session.sessionId)}</span>
+                          <span className="session-rail__title" title={session.title || "未命名会话"}>
+                            <HighlightedText text={session.title || "未命名会话"} query={searchQuery} />
+                          </span>
+                          <span className="session-rail__id">
+                            <HighlightedText text={shortSessionId(session.sessionId)} query={searchQuery} />
+                          </span>
                         </span>
                         <span className="session-rail__metrics" aria-label="会话指标">
                           {sessionMetrics.map((metric, metricIndex) => (
@@ -478,7 +533,9 @@ export function StreamWorkspace({
                             </span>
                           ))}
                         </span>
-                        <span className="session-rail__path" title={session.cwd || ""}>{clipText(session.cwd, 72)}</span>
+                        <span className="session-rail__path" title={session.cwd || ""}>
+                          <HighlightedText text={clipText(session.cwd, 72)} query={searchQuery} />
+                        </span>
                       </span>
                     </button>
                     <button
@@ -527,7 +584,12 @@ export function StreamWorkspace({
               ))}
             </Group>
           </Group>
-          <VirtualEventList events={events} onOpenEvent={onOpenEvent} onOpenSessionDetail={onOpenSessionDetail} />
+          <VirtualEventList
+            events={events}
+            onOpenEvent={onOpenEvent}
+            onOpenSessionDetail={onOpenSessionDetail}
+            searchQuery={searchQuery}
+          />
           <Group justify="space-between" mt="md">
             <Text className="feed-footer">
               <IconChartBar size={14} stroke={1.8} />

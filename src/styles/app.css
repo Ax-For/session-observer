@@ -335,6 +335,39 @@ textarea {
   border-radius: var(--radius-md);
 }
 
+.stream-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(460px, 1.35fr) repeat(3, minmax(152px, 0.42fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.stream-search-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.stream-search-form__input {
+  min-width: 0;
+  max-width: none;
+}
+
+.stream-search-form__status {
+  grid-column: 1 / -1;
+  min-height: 18px;
+  color: var(--text-faint);
+  font-size: 0.76rem;
+  font-weight: 760;
+}
+
+.stream-filter-field {
+  min-width: 0;
+  width: 100%;
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -4137,6 +4170,22 @@ button.mc-active-cost-row:focus-visible {
   content: "/";
 }
 
+.event-search-highlight {
+  padding: 0 2px;
+  border: 1px solid rgba(232, 177, 82, 0.34);
+  border-radius: 5px;
+  background: rgba(232, 177, 82, 0.22);
+  color: inherit;
+  font-weight: 860;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+:root[data-observer-theme="light"] .event-search-highlight {
+  border-color: rgba(173, 112, 26, 0.22);
+  background: rgba(246, 191, 88, 0.3);
+}
+
 .event-row__side {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
@@ -4288,6 +4337,13 @@ button.mc-active-cost-row:focus-visible {
   max-width: min(100%, 680px);
 }
 
+.stream-search-form .control-field--wide {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  flex: initial;
+}
+
 .control-field--small {
   min-width: 120px;
   flex: 0 1 140px;
@@ -4305,6 +4361,30 @@ button.mc-active-cost-row:focus-visible {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+@media (max-width: 720px) {
+  .stream-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-search-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .stream-search-form__input {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1180px) {
+  .stream-filter-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stream-search-form {
+    grid-column: 1 / -1;
+  }
 }
 
 .session-workspace-layout {

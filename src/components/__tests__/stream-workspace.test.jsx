@@ -169,6 +169,77 @@ describe("StreamWorkspace", () => {
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });
 
+  test("highlights the submitted search term in visible stream results", () => {
+    const { container } = render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{
+            title: "全部会话",
+            subtitle: "跨平台 · 全部事件 · observe",
+            tags: ["token_count"],
+          }}
+          summary={{
+            totals: {
+              input: 0,
+              output: 0,
+              total: 0,
+              cachedInput: 0,
+              reasoningOutput: 0,
+            },
+            tokenWindows: {
+              day: { total: 0, platforms: [] },
+              week: { total: 0, platforms: [] },
+            },
+            counts: {
+              totalVisible: 1,
+              totalMatching: 1,
+              totalLoaded: 1,
+              sessions: 1,
+            },
+            topTypes: [{ key: "Token_Usage", value: 1 }],
+            topModels: [{ key: "gpt-5.5", value: 1 }],
+            platforms: [{ key: "codex", sessions: 1, events: 1 }],
+          }}
+          sessions={[
+            {
+              sessionId: "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad",
+              title: "Token count analysis",
+              sourceType: "codex",
+              latest: "2026-06-01T13:58:02.406Z",
+              count: 1,
+              totalTokens: 100,
+              cwd: "/Users/me/code/session-observer",
+            },
+          ]}
+          events={[
+            {
+              time: "2026-06-01T13:58:02.406Z",
+              callType: "Token_Usage",
+              sourceType: "codex",
+              model: "gpt-5.5",
+              sessionId: "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad",
+              summary: "Token usage · Total 100",
+              extra: "token_count",
+              cwd: "/Users/me/code/session-observer",
+            },
+          ]}
+          selectedSessionId=""
+          onSelectSession={() => {}}
+          onClearSessionFocus={() => {}}
+          generatedAt="2026-06-01T13:58:02.406Z"
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+          onOpenSessionDetail={() => {}}
+          searchQuery="token_count"
+        />
+      </MantineProvider>,
+    );
+
+    const highlights = [...container.querySelectorAll(".event-search-highlight")].map((node) => node.textContent);
+    expect(highlights).toContain("token_count");
+    expect(screen.getByText("Token count analysis")).toBeInTheDocument();
+  });
+
   test("formats large token metrics with chinese units in the overview panel", () => {
     render(
       <MantineProvider>
@@ -353,7 +424,7 @@ describe("StreamWorkspace", () => {
     expect(container.querySelector(".session-rail__title-row")).toBeInTheDocument();
     expect(container.querySelectorAll(".session-rail__metric")).toHaveLength(3);
     expect(container.querySelector(".session-rail__path")).toHaveAttribute("title", longCwd);
-    expect(screen.getByText("019e5fc9")).toBeInTheDocument();
+    expect(screen.getAllByText("019e5fc9").length).toBeGreaterThan(0);
   });
 
   test("windows the event list instead of rendering every loaded event", () => {

@@ -49,6 +49,14 @@ const INDEX_MAX_WINDOW_DAYS = Math.max(INDEX_DEFAULT_WINDOW_DAYS, toNonNegativeI
   process.env.INDEX_MAX_WINDOW_DAYS,
   30,
 ));
+const SOURCE_CHANGE_DEBOUNCE_MS = Math.max(50, toNonNegativeInt(
+  process.env.SOURCE_CHANGE_DEBOUNCE_MS,
+  600,
+));
+const SOURCE_CHANGE_HEARTBEAT_MS = Math.max(5000, toNonNegativeInt(
+  process.env.SOURCE_CHANGE_HEARTBEAT_MS,
+  25000,
+));
 
 /**
  * Resolve the static file root, triggering a frontend build if needed.
@@ -105,5 +113,7 @@ module.exports = {
   INDEX_MAX_EVENTS,
   INDEX_DEFAULT_WINDOW_DAYS,
   INDEX_MAX_WINDOW_DAYS,
+  SOURCE_CHANGE_DEBOUNCE_MS,
+  SOURCE_CHANGE_HEARTBEAT_MS,
   MIME,
 };
