@@ -23,6 +23,7 @@ import {
 import { Notifications, notifications } from "@mantine/notifications";
 import { useLocalStorage } from "@mantine/hooks";
 import {
+  IconAdjustmentsHorizontal,
   IconAlertCircle,
   IconBulb,
   IconCloudDownload,
@@ -815,7 +816,7 @@ export function App() {
     <MantineProvider theme={theme} forceColorScheme={themeMode}>
       <Notifications position="top-right" />
       <div className={`observer-root theme-${themeMode} density-${density}`}>
-        <AppShell header={{ height: { base: 118, sm: 82 } }} padding="md">
+        <AppShell header={{ height: { base: 72, sm: 72 } }} padding="md">
           <AppShell.Header className="shell-header">
             <div className="shell-header__inner">
               <div className="shell-header__grid">
@@ -843,13 +844,22 @@ export function App() {
 
                 <Group gap={6} className="shell-header__metrics" wrap="nowrap">
                   <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "orange"}>
-                    {dataSource === "server" ? "Live" : "Import"}
+                    {dataSource === "server" ? "按需流" : "导入"}
                   </Badge>
                   <Badge radius="xl" variant="light" color="gray">
-                    匹配 {formatNumber(headerMetrics.matching)}
+                    {dataSource === "server"
+                      ? `${formatNumber(cachedFileCount)} 文件`
+                      : `${formatNumber(localEvents.length)} 事件`}
+                  </Badge>
+                  <Badge radius="xl" variant="light" color="teal">
+                    {dataSource === "server" ? "不驻留" : "浏览器"}
                   </Badge>
                   <Badge radius="xl" variant="light" color="gray">
-                    会话 {formatNumber(headerMetrics.sessions)}
+                    {tab === "sessions"
+                      ? `会话 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))}`
+                      : tab === "stream"
+                        ? `匹配 ${formatNumber(headerMetrics.matching)}`
+                        : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
                   </Badge>
                 </Group>
 
@@ -895,28 +905,22 @@ export function App() {
 
           <AppShell.Main>
             <Stack gap="lg" className="app-main">
-              <Paper className="toolbar-shell toolbar-shell--context" radius="xl" p="md">
-                <Group justify="space-between" wrap="wrap" gap="sm">
-                  <Group gap="sm" wrap="wrap" className="toolbar-shell__left">
-                    <div className="index-window-control">
-                      <Text component="span" className="index-window-control__label">数据策略</Text>
-                      <Badge radius="xl" variant="light" color={dataSource === "server" ? "blue" : "gray"} className="index-window-control__metric">
-                        {dataSource === "server" ? "按需事件流" : "本地导入"}
-                      </Badge>
-                      <Badge radius="xl" variant="light" color="gray" className="index-window-control__metric">
-                        {dataSource === "server"
-                          ? `${formatNumber(cachedFileCount)} 文件缓存`
-                          : `${formatNumber(localEvents.length)} 事件`}
-                      </Badge>
-                      <Badge radius="xl" variant="light" color="teal" className="index-window-control__metric">
-                        {dataSource === "server"
-                          ? "原始事件不驻留"
-                          : "浏览器内查看"}
-                      </Badge>
-                    </div>
-                  </Group>
-                  <Group gap="sm" wrap="wrap" justify="flex-end" className="toolbar-shell__right">
-                    {tab === "stream" ? (
+              {tab === "overview" || tab === "tokens" || tab === "insights" ? (
+                <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
+                  <ObservabilityWorkspace
+                    payload={observabilityPayload}
+                    view={tab}
+                    activeOverview={activeSessionOverview}
+                    loading={loadingObservability}
+                    onRefresh={loadObservability}
+                    onOpenConversation={openConversation}
+                    onOpenSessionDetail={openSessionDetail}
+                  />
+                </Suspense>
+              ) : tab === "stream" ? (
+                <>
+                  <Paper className="control-shelf" radius="xl" p="md">
+                    <div className="stream-control-header">
                       <Group gap="sm" wrap="wrap">
                         <SegmentedControl
                           radius="xl"
@@ -937,45 +941,17 @@ export function App() {
                             { label: "高 Token", value: "high_token" },
                           ]}
                         />
-                        <Button variant="subtle" radius="xl" color="gray" onClick={() => setFiltersOpen(true)}>
-                          高级筛选
-                        </Button>
                       </Group>
-                    ) : tab === "sessions" ? (
-                      <Group gap="xs">
-                        <Badge radius="xl" variant="light" color="gray">
-                          {loadingSessions ? "刷新中" : `共 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))} 个会话`}
-                        </Badge>
-                      </Group>
-                    ) : (
-                      <Group gap="xs">
-                        <Badge radius="xl" variant="light" color="gray">
-                          {loadingObservability ? "刷新中" : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
-                        </Badge>
-                        <Badge radius="xl" variant="light" color="gray">
-                          Token {formatHumanNumber(observabilityPayload.summary?.tokens?.effectiveTotal || 0)}
-                        </Badge>
-                      </Group>
-                    )}
-                  </Group>
-                </Group>
-              </Paper>
-
-              {tab === "overview" || tab === "tokens" || tab === "insights" ? (
-                <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
-                  <ObservabilityWorkspace
-                    payload={observabilityPayload}
-                    view={tab}
-                    activeOverview={activeSessionOverview}
-                    loading={loadingObservability}
-                    onRefresh={loadObservability}
-                    onOpenConversation={openConversation}
-                    onOpenSessionDetail={openSessionDetail}
-                  />
-                </Suspense>
-              ) : tab === "stream" ? (
-                <>
-                  <Paper className="control-shelf" radius="xl" p="md">
+                      <Button
+                        variant="subtle"
+                        radius="xl"
+                        color="gray"
+                        leftSection={<IconAdjustmentsHorizontal size={16} />}
+                        onClick={() => setFiltersOpen(true)}
+                      >
+                        高级筛选
+                      </Button>
+                    </div>
                     <div className="stream-filter-grid">
                       <form className="stream-search-form" onSubmit={submitStreamSearch}>
                         <TextInput

@@ -147,6 +147,107 @@ test("queryRecentEvents stops inside a large newest file once the first page is 
   assert.ok(parsed < 20, `expected early stop, parsed ${parsed} rows`);
   assert.equal(result.page.hasMore, true);
   assert.equal(result.scan.stoppedEarly, true);
+  assert.equal(result.events[0].sourceLine, undefined);
+  assert.ok(Number.isFinite(result.events[0].sourceOffset));
+});
+
+test("queryRecentEvents compacts large replacement history before parsing list rows", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "large-compacted.jsonl");
+  writeJsonl(file, [
+    {
+      id: "small",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "current",
+      cwd: "/repo",
+      content: "small",
+    },
+    {
+      id: "large",
+      time: "2026-06-01T00:01:00.000Z",
+      sessionId: "current",
+      cwd: "/repo",
+      payload: {
+        replacement_history: [
+          { role: "assistant", content: "x".repeat(8000) },
+          { role: "tool", content: "y".repeat(8000) },
+        ],
+      },
+    },
+  ], Date.parse("2026-06-01T00:01:00.000Z"));
+
+  let replacementHistoryType = "";
+  const compactAwareParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      if (json.id === "large") replacementHistoryType = typeof json.payload?.replacement_history;
+      return {
+        ...parser.parseLine(json, context),
+        content: json.payload?.replacement_history || json.content,
+      };
+    },
+  };
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [compactAwareParser],
+    filters: { order: "desc" },
+    limit: 1,
+    offset: 0,
+  });
+
+  assert.equal(result.events[0].id, "large");
+  assert.equal(replacementHistoryType, "string");
+  assert.match(result.events[0].content, /^\[replacement_history omitted for summary:/);
+});
+
+test("queryRecentEvents synthesizes oversized reverse-scan rows without parsing the full JSON line", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "large-output.jsonl");
+  const largeLine = {
+    timestamp: "2026-06-01T00:01:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "function_call_output",
+      call_id: "call-large",
+      output: "x".repeat(200000),
+    },
+  };
+  writeJsonl(file, [
+    {
+      id: "small",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "current",
+      cwd: "/repo",
+      content: "small",
+    },
+    largeLine,
+  ], Date.parse("2026-06-01T00:01:00.000Z"));
+
+  let parsed = 0;
+  const countingParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      parsed += 1;
+      return parser.parseLine(json, context);
+    },
+  };
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [countingParser],
+    filters: { order: "desc" },
+    limit: 1,
+    offset: 0,
+    maxParseLineBytes: 512,
+  });
+
+  assert.equal(parsed, 0);
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].callType, "Tool_Result");
+  assert.equal(result.events[0].callId, "call-large");
+  assert.match(result.events[0].content, /^Large tool result omitted from event stream/);
+  assert.ok(Number.isFinite(result.events[0].sourceOffset));
 });
 
 test("queryRecentEvents seeds reverse scans with session metadata hints", () => {

@@ -306,7 +306,7 @@ export function StreamWorkspace({
 
   return (
     <Stack gap="lg" className="workspace-stack">
-      <Paper className="overview-shell" radius="xl" p="md">
+      <section className="stream-scope-bar overview-shell">
         <Group justify="space-between" align="flex-start" className="overview-shell__top">
           <div className="overview-shell__scope">
             <Group gap="sm" mb={8} wrap="nowrap">
@@ -480,7 +480,7 @@ export function StreamWorkspace({
             </div>
           </section>
         </div>
-      </Paper>
+      </section>
 
       <div className="stream-layout">
         <Paper className="session-rail" radius="xl" p="md">

@@ -42,3 +42,24 @@ test("compactLargeJsonlLine handles escaped quotes inside large strings", () => 
   assert.equal(parsed.payload.name, "Tool");
   assert.match(parsed.payload.arguments, /^\[arguments omitted for summary:/);
 });
+
+test("compactLargeJsonlLine replaces oversized array fields before JSON.parse", () => {
+  const line = JSON.stringify({
+    timestamp: "2026-06-01T00:00:00.000Z",
+    type: "compacted",
+    payload: {
+      message: "",
+      replacement_history: [
+        { role: "assistant", content: "x".repeat(5000) },
+        { role: "tool", content: "y".repeat(5000) },
+      ],
+    },
+  });
+
+  const compacted = compactLargeJsonlLine(line, { threshold: 256, maxValueLength: 120 });
+  const parsed = JSON.parse(compacted);
+
+  assert.equal(parsed.type, "compacted");
+  assert.match(parsed.payload.replacement_history, /^\[replacement_history omitted for summary:/);
+  assert.ok(compacted.length < 500);
+});

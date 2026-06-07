@@ -9,8 +9,10 @@ const fs = require("fs");
 const path = require("path");
 const ObserverCore = require("../shared/observer-core");
 const tokenPricing = require("../shared/token-pricing");
+const config = require("./config");
 const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
+const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
 const SUMMARY_CACHE_VERSION = 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -565,9 +567,17 @@ function createParserContext(file) {
   };
 }
 
-function ingestJsonlLine(summary, line, context, deps) {
+function ingestJsonlLine(summary, line, context, deps, locator = {}) {
   if (!line) return;
   try {
+    if (locator.truncated) {
+      ingestEvent(summary, makeTruncatedLineEvent(line, {
+        ...context,
+        sourceType: deps.sourceType,
+      }, locator));
+      return;
+    }
+
     const sourceLine = context?.compactContent
       ? compactLargeJsonlLine(line, { maxValueLength: context.contentLimit || 800 })
       : line;
@@ -599,9 +609,9 @@ function parseFileSummary(record, deps) {
   }
 
   const parseDeps = { ...deps, parser, sourceType, file: record.file };
-  const result = fsScanner.forEachCompleteJsonlLine(record.file, (line) => {
-    ingestJsonlLine(summary, line, context, parseDeps);
-  });
+  const result = fsScanner.forEachCompleteJsonlLine(record.file, (line, _lineNumber, locator) => {
+    ingestJsonlLine(summary, line, context, parseDeps, locator);
+  }, { maxLineBytes: config.EVENT_STREAM_MAX_PARSE_LINE_BYTES });
   return {
     summary,
     context: { ...context },

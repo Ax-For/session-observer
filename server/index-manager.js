@@ -128,10 +128,10 @@ function internEventStrings(event) {
 /**
  * Generate a unique event locator ID from file, line, and index.
  */
-function eventLocatorId(file, lineNumber, eventIndex) {
+function eventLocatorId(file, locator, eventIndex) {
   return crypto
     .createHash("sha1")
-    .update(`${file}:${lineNumber}:${eventIndex}`)
+    .update(`${file}:${locator}:${eventIndex}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -139,11 +139,17 @@ function eventLocatorId(file, lineNumber, eventIndex) {
 /**
  * Attach source location info to an event.
  */
-function attachEventLocator(event, file, lineNumber, eventIndex) {
+function attachEventLocator(event, file, lineNumber, eventIndex, options = {}) {
   event.sourceFile = event.sourceFile || file;
-  event.sourceLine = lineNumber;
+  const sourceLine = Number(lineNumber);
+  if (Number.isFinite(sourceLine) && sourceLine > 0) event.sourceLine = sourceLine;
+  const sourceOffset = Number(options.sourceOffset);
+  if (Number.isFinite(sourceOffset) && sourceOffset >= 0) event.sourceOffset = sourceOffset;
+  const sourceLength = Number(options.sourceLength);
+  if (Number.isFinite(sourceLength) && sourceLength >= 0) event.sourceLength = sourceLength;
   event.lineEventIndex = eventIndex;
-  event.eventId = eventLocatorId(file, lineNumber, eventIndex);
+  const locator = event.sourceLine ? `line:${event.sourceLine}` : `offset:${event.sourceOffset || 0}`;
+  event.eventId = eventLocatorId(file, locator, eventIndex);
   return event;
 }
 
@@ -193,6 +199,10 @@ function makeIndexedEvent(event) {
 
   const sourceLine = Number(event.sourceLine);
   if (Number.isFinite(sourceLine) && sourceLine > 0) indexed.sourceLine = sourceLine;
+  const sourceOffset = Number(event.sourceOffset);
+  if (Number.isFinite(sourceOffset) && sourceOffset >= 0) indexed.sourceOffset = sourceOffset;
+  const sourceLength = Number(event.sourceLength);
+  if (Number.isFinite(sourceLength) && sourceLength >= 0) indexed.sourceLength = sourceLength;
   const lineEventIndex = Number(event.lineEventIndex);
   if (Number.isFinite(lineEventIndex) && lineEventIndex > 0) indexed.lineEventIndex = lineEventIndex;
 
@@ -496,7 +506,11 @@ function parseFullFileEvents(file, threadMeta, parsers, applyEventSessionMetaCor
  * Parse a single event line from the index (for detail lookup).
  */
 function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSessionMetaCore) {
-  const line = fsScanner.readJsonlLine(indexedEvent.sourceFile, Number(indexedEvent.sourceLine));
+  const sourceLine = Number(indexedEvent.sourceLine);
+  const sourceOffset = Number(indexedEvent.sourceOffset);
+  const line = Number.isFinite(sourceLine) && sourceLine > 0
+    ? fsScanner.readJsonlLine(indexedEvent.sourceFile, sourceLine)
+    : fsScanner.readJsonlLineAtOffset(indexedEvent.sourceFile, sourceOffset);
   if (!line) return [];
   const { parser } = fsScanner.resolveParserForFile(indexedEvent.sourceFile, parsers);
   const context = {
@@ -520,7 +534,10 @@ function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSe
             : "missing-only";
         applyEventSessionMetaCore(evt, meta, { titleStrategy });
       }
-      return attachEventLocator(evt, indexedEvent.sourceFile, Number(indexedEvent.sourceLine), eventIndex);
+      return attachEventLocator(evt, indexedEvent.sourceFile, sourceLine, eventIndex, {
+        sourceOffset,
+        sourceLength: indexedEvent.sourceLength,
+      });
     });
   } catch {
     return [];

@@ -810,17 +810,6 @@ function SessionRow({
         </Tooltip>
       </Group>
 
-      <Group gap="xs" className="session-row__actions" wrap="nowrap">
-        <Button
-          variant="subtle"
-          color="gray"
-          radius="xl"
-          size="xs"
-          onClick={() => onOpenSessionDetail(session)}
-        >
-          查看详情 · {shortSessionId(session.sessionId)}
-        </Button>
-      </Group>
     </div>
   );
 }

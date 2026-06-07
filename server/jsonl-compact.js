@@ -4,7 +4,18 @@
  * paths. Full detail and export paths still parse original lines.
  */
 
-const DEFAULT_FIELDS = ["output", "arguments"];
+const DEFAULT_FIELDS = [
+  "output",
+  "arguments",
+  "text",
+  "input_text",
+  "output_text",
+  "message",
+  "content",
+  "thinking",
+  "encrypted_content",
+];
+const DEFAULT_VALUE_FIELDS = ["replacement_history"];
 const DEFAULT_THRESHOLD = 4096;
 const DEFAULT_MAX_VALUE_LENGTH = 800;
 
@@ -23,6 +34,55 @@ function findJsonStringEnd(source, quoteIndex) {
     if (char === "\"") return index;
   }
   return -1;
+}
+
+function findJsonContainerEnd(source, startIndex) {
+  const opener = source[startIndex];
+  const closer = opener === "{" ? "}" : opener === "[" ? "]" : "";
+  if (!closer) return -1;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === opener) depth += 1;
+    if (char === closer) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function findJsonPrimitiveEnd(source, startIndex) {
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "," || char === "}" || char === "]") return index - 1;
+  }
+  return source.length - 1;
+}
+
+function findJsonValueEnd(source, startIndex) {
+  const char = source[startIndex];
+  if (char === "\"") return findJsonStringEnd(source, startIndex);
+  if (char === "{" || char === "[") return findJsonContainerEnd(source, startIndex);
+  return findJsonPrimitiveEnd(source, startIndex);
 }
 
 function skipWhitespace(source, index) {
@@ -51,6 +111,11 @@ function compactLargeJsonlLine(line, options = {}) {
   if (source.length <= threshold) return source;
 
   const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : DEFAULT_FIELDS;
+  const valueFields = Array.isArray(options.valueFields) && options.valueFields.length
+    ? options.valueFields
+    : DEFAULT_VALUE_FIELDS;
+  const allFields = [...new Set([...fields, ...valueFields])];
+  const valueFieldSet = new Set(valueFields);
   const maxValueLength = Number(options.maxValueLength) || DEFAULT_MAX_VALUE_LENGTH;
   let searchFrom = 0;
   let lastEmit = 0;
@@ -58,7 +123,7 @@ function compactLargeJsonlLine(line, options = {}) {
   let output = "";
 
   while (searchFrom < source.length) {
-    const next = findNextField(source, fields, searchFrom);
+    const next = findNextField(source, allFields, searchFrom);
     if (next.index === -1) break;
 
     let cursor = next.index + next.field.length + 2;
@@ -68,18 +133,21 @@ function compactLargeJsonlLine(line, options = {}) {
       continue;
     }
     cursor = skipWhitespace(source, cursor + 1);
-    if (source[cursor] !== "\"") {
+    const allowAnyValue = valueFieldSet.has(next.field);
+    if (!allowAnyValue && source[cursor] !== "\"") {
       searchFrom = cursor + 1;
       continue;
     }
 
-    const valueEnd = findJsonStringEnd(source, cursor);
+    const valueEnd = allowAnyValue ? findJsonValueEnd(source, cursor) : findJsonStringEnd(source, cursor);
     if (valueEnd === -1) break;
-    const rawValueLength = valueEnd - cursor - 1;
+    const isStringValue = source[cursor] === "\"";
+    const rawValueLength = isStringValue ? valueEnd - cursor - 1 : valueEnd - cursor + 1;
 
     if (rawValueLength > maxValueLength) {
       const placeholder = `[${next.field} omitted for summary: ${rawValueLength} chars]`;
-      output += source.slice(lastEmit, cursor + 1);
+      output += source.slice(lastEmit, isStringValue ? cursor + 1 : cursor);
+      if (!isStringValue) output += "\"";
       output += placeholder;
       output += "\"";
       lastEmit = valueEnd + 1;

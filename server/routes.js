@@ -113,6 +113,7 @@ function querySessionEventsDirect(filters, records) {
     filters: sessionFilters,
     limit: filters.limit,
     offset: filters.offset,
+    allowSessionEarlyStop: true,
     applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
     eventMatchesModeCore: _deps.eventMatchesModeCore,
     eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
@@ -192,7 +193,7 @@ function getEventDetail(eventId) {
   const { indexManager } = _deps;
   const threadMeta = loadThreadMeta();
   const locator = recentEventsReader.lookupEventLocator(eventId);
-  if (locator?.sourceFile && locator?.sourceLine) {
+  if (locator?.sourceFile && (locator?.sourceLine || locator?.sourceOffset != null)) {
     const events = indexManager.parseEventLineFromIndex(locator, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
     const found = events.find((event) => event.eventId === eventId);
     if (found) return found;

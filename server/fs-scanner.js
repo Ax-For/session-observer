@@ -73,6 +73,42 @@ function readJsonlLine(file, targetLine) {
 }
 
 /**
+ * Read a JSONL record by byte offset. Reverse event scans use this to avoid a
+ * full line-count pass on very large active transcript files.
+ */
+function readJsonlLineAtOffset(file, offset) {
+  const startOffset = Number(offset);
+  if (!fs.existsSync(file) || !Number.isFinite(startOffset) || startOffset < 0) return "";
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  const parts = [];
+  let position = startOffset;
+
+  try {
+    while (true) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, position);
+      if (bytesRead <= 0) break;
+
+      let segmentEnd = bytesRead;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] === 10) {
+          segmentEnd = index;
+          break;
+        }
+      }
+
+      if (segmentEnd > 0) parts.push(Buffer.from(buffer.subarray(0, segmentEnd)));
+      if (segmentEnd < bytesRead) break;
+      position += bytesRead;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return parts.length ? Buffer.concat(parts).toString("utf8").replace(/\r$/, "") : "";
+}
+
+/**
  * Iterate over every line of a JSONL file, calling `onLine` per line.
  * Return `false` from `onLine` to stop early.
  */
@@ -120,13 +156,50 @@ function forEachJsonlLine(file, onLine) {
  * Iterate only complete JSONL lines. A trailing partial line is returned instead
  * of parsed, which avoids dropping data while a log file is still being written.
  */
-function forEachCompleteJsonlLine(file, onLine) {
+function forEachCompleteJsonlLine(file, onLine, options = {}) {
   const result = { lineCount: 0, tailBuffer: "", endedWithNewline: false };
   if (!fs.existsSync(file)) return result;
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   let parts = [];
+  let partsLength = 0;
+  let truncatedBytes = 0;
   let lineNumber = 1;
+  let byteOffset = 0;
+  let lineByteOffset = 0;
+  const maxLineBytes = Number(options.maxLineBytes) || 0;
+
+  const pushSegment = (segment) => {
+    if (!segment.length) return;
+    if (maxLineBytes > 0 && partsLength + segment.length > maxLineBytes) {
+      const remaining = Math.max(0, maxLineBytes - partsLength);
+      if (remaining > 0) {
+        parts.push(Buffer.from(segment.subarray(0, remaining)));
+        partsLength += remaining;
+      }
+      truncatedBytes += segment.length - remaining;
+      return;
+    }
+    parts.push(Buffer.from(segment));
+    partsLength += segment.length;
+  };
+
+  const emitLine = () => {
+    const line = parts.length ? Buffer.concat(parts).toString("utf8").replace(/\r$/, "") : "";
+    const byteLength = partsLength + truncatedBytes;
+    const keepGoing = onLine(line, lineNumber, {
+      byteOffset: lineByteOffset,
+      byteLength,
+      truncated: truncatedBytes > 0,
+    });
+    result.lineCount = lineNumber;
+    result.endedWithNewline = true;
+    parts = [];
+    partsLength = 0;
+    truncatedBytes = 0;
+    lineNumber += 1;
+    return keepGoing;
+  };
 
   try {
     while (true) {
@@ -137,19 +210,18 @@ function forEachCompleteJsonlLine(file, onLine) {
       for (let index = 0; index < bytesRead; index += 1) {
         if (buffer[index] !== 10) continue;
 
-        parts.push(Buffer.from(buffer.subarray(segmentStart, index)));
-        onLine(Buffer.concat(parts).toString("utf8").replace(/\r$/, ""), lineNumber);
-        result.lineCount = lineNumber;
-        result.endedWithNewline = true;
-        parts = [];
-        lineNumber += 1;
+        pushSegment(buffer.subarray(segmentStart, index));
+        const keepGoing = emitLine();
         segmentStart = index + 1;
+        lineByteOffset = byteOffset + segmentStart;
+        if (keepGoing === false) return result;
       }
 
       if (segmentStart < bytesRead) {
-        parts.push(Buffer.from(buffer.subarray(segmentStart, bytesRead)));
+        pushSegment(buffer.subarray(segmentStart, bytesRead));
         result.endedWithNewline = false;
       }
+      byteOffset += bytesRead;
     }
 
     if (parts.length) {
@@ -185,18 +257,36 @@ function countCompleteJsonlLines(file) {
   return { lineCount, endedWithNewline };
 }
 
+function fileEndsWithNewline(file) {
+  if (!fs.existsSync(file)) return false;
+  const stat = fs.statSync(file);
+  if (stat.size <= 0) return false;
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.alloc(1);
+  try {
+    fs.readSync(fd, buffer, 0, 1, stat.size - 1);
+    return buffer[0] === 10;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /**
  * Iterate complete JSONL lines from the end of a file. A trailing partial line
  * is skipped, matching forEachCompleteJsonlLine's behavior for active files.
  */
-function forEachCompleteJsonlLineReverse(file, onLine) {
-  const count = countCompleteJsonlLines(file);
+function forEachCompleteJsonlLineReverse(file, onLine, options = {}) {
+  const shouldCountLines = options.countLines !== false;
+  const maxLineBytes = Number(options.maxLineBytes) || 0;
+  const count = shouldCountLines
+    ? countCompleteJsonlLines(file)
+    : { lineCount: null, endedWithNewline: fileEndsWithNewline(file) };
   const result = {
     lineCount: count.lineCount,
     endedWithNewline: count.endedWithNewline,
     stoppedEarly: false,
   };
-  if (!fs.existsSync(file) || count.lineCount <= 0) return result;
+  if (!fs.existsSync(file) || (shouldCountLines && count.lineCount <= 0)) return result;
 
   const fd = fs.openSync(file, "r");
   const bufferSize = 64 * 1024;
@@ -205,6 +295,7 @@ function forEachCompleteJsonlLineReverse(file, onLine) {
   let tail = Buffer.alloc(0);
   let lineNumber = count.lineCount;
   let skippedTrailingPartial = count.endedWithNewline;
+  let truncatedBytes = 0;
 
   try {
     while (position > 0) {
@@ -229,11 +320,17 @@ function forEachCompleteJsonlLineReverse(file, onLine) {
 
         if (!skippedTrailingPartial) {
           skippedTrailingPartial = true;
+          truncatedBytes = 0;
           continue;
         }
 
-        const keepGoing = onLine(segment.toString("utf8").replace(/\r$/, ""), lineNumber);
-        lineNumber -= 1;
+        const keepGoing = onLine(segment.toString("utf8").replace(/\r$/, ""), lineNumber, {
+          byteOffset: position + index + 1,
+          byteLength: segment.length + truncatedBytes,
+          truncated: truncatedBytes > 0,
+        });
+        truncatedBytes = 0;
+        if (lineNumber != null) lineNumber -= 1;
         if (keepGoing === false) {
           result.stoppedEarly = true;
           return result;
@@ -241,10 +338,18 @@ function forEachCompleteJsonlLineReverse(file, onLine) {
       }
 
       tail = Buffer.from(combined.subarray(0, segmentEnd));
+      if (maxLineBytes > 0 && tail.length > maxLineBytes) {
+        truncatedBytes += tail.length;
+        tail = Buffer.alloc(0);
+      }
     }
 
-    if (tail.length && lineNumber > 0) {
-      const keepGoing = onLine(tail.toString("utf8").replace(/\r$/, ""), lineNumber);
+    if (tail.length && (lineNumber == null || lineNumber > 0)) {
+      const keepGoing = onLine(tail.toString("utf8").replace(/\r$/, ""), lineNumber, {
+        byteOffset: 0,
+        byteLength: tail.length + truncatedBytes,
+        truncated: truncatedBytes > 0,
+      });
       if (keepGoing === false) result.stoppedEarly = true;
     }
   } finally {
@@ -276,6 +381,7 @@ function resolveParserForFile(filePath, parsers) {
 module.exports = {
   listJsonlFiles,
   readJsonlLine,
+  readJsonlLineAtOffset,
   forEachJsonlLine,
   forEachCompleteJsonlLine,
   forEachCompleteJsonlLineReverse,

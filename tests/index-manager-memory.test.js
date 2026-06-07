@@ -10,6 +10,7 @@ const {
   filterFileRecordsForIndexWindow,
   limitIndexedEvents,
   makeIndexedEvent,
+  parseEventLineFromIndex,
   parseFileEvents,
   sortEventsChronologically,
 } = require("../server/index-manager");
@@ -120,6 +121,42 @@ test("parseFileEvents includes the latest complete JSON event without a trailing
   assert.equal(cached.lineCount, 1);
   assert.equal(cached.tailBuffer, "");
   assert.equal(cached.endedWithNewline, false);
+});
+
+test("parseEventLineFromIndex can read an event by byte offset", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-offset-"));
+  const file = path.join(dir, "events.jsonl");
+  const first = JSON.stringify({ timestamp: "2026-06-01T10:00:00.000Z", content: "first" });
+  const second = JSON.stringify({ timestamp: "2026-06-01T10:01:00.000Z", content: "second" });
+  fs.writeFileSync(file, `${first}\n${second}\n`);
+
+  const parsers = {
+    parseCodexLineToEvent: (obj, context) => ({
+      time: obj.timestamp,
+      sessionId: context.sessionId,
+      model: context.model,
+      cwd: context.cwd,
+      sourceFile: context.sourceFile,
+      sourceType: "codex",
+      callType: "Agent",
+      content: obj.content,
+      summary: obj.content,
+    }),
+  };
+
+  const events = parseEventLineFromIndex({
+    sourceFile: file,
+    sourceOffset: Buffer.byteLength(`${first}\n`),
+    sourceLength: Buffer.byteLength(second),
+    sessionId: "sess-offset",
+    model: "gpt-5.5",
+    cwd: "/tmp/project",
+  }, new Map(), parsers, (event) => event);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].content, "second");
+  assert.equal(events[0].sourceLine, undefined);
+  assert.equal(events[0].sourceOffset, Buffer.byteLength(`${first}\n`));
 });
 
 test("sortEventsChronologically keeps missing timestamps before dated events and latest events last", () => {

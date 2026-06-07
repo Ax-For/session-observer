@@ -267,21 +267,19 @@ describe("ObservabilityWorkspace", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
+    expect(screen.getByText("Token 账本分解")).toBeInTheDocument();
+    expect(screen.getByText("Prompt 与上下文未命中输入")).toBeInTheDocument();
     expect(screen.getAllByText("有效总量").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("输入侧总量").length).toBeGreaterThan(0);
     expect(screen.getAllByText("非缓存输入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存命中").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("缓存写入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("输出").length).toBeGreaterThan(0);
     expect(screen.getAllByText("推理输出").length).toBeGreaterThan(0);
     expect(screen.getByText("成本估算")).toBeInTheDocument();
     expect(screen.getByText("$0.0525")).toBeInTheDocument();
-    expect(screen.getByText("缓存经济性")).toBeInTheDocument();
-    expect(screen.getByText("命中覆盖")).toBeInTheDocument();
-    expect(screen.getByText("读写杠杆")).toBeInTheDocument();
     expect(screen.getByText("模型成本效率")).toBeInTheDocument();
     expect(screen.getAllByText((_, element) => element.textContent.includes("/M")).length).toBeGreaterThan(0);
     expect(screen.getByText("近 14 天 Token 消耗趋势")).toBeInTheDocument();
-    expect(screen.getByText("Token 账本分解")).toBeInTheDocument();
     expect(screen.getByText("工作区消耗")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
     expect(screen.getByText("时间窗口")).toBeInTheDocument();

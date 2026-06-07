@@ -40,6 +40,8 @@ Environment variables:
                        Default: 7, load the recent index window by default
   INDEX_MAX_WINDOW_DAYS
                        Default: 30, maximum switchable index window from the UI/API
+  EVENT_STREAM_MAX_PARSE_LINE_BYTES
+                       Default: 131072, truncate oversized JSONL rows on list/summary paths
   OBSERVER_NODE_MAX_OLD_SPACE_MB
                        Default: 192, cap V8 old-space to limit RSS growth
   OBSERVER_NODE_SEMI_SPACE_MB

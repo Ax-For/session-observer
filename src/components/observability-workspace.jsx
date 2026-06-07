@@ -974,6 +974,20 @@ function MetricTiles({ rows, className = "" }) {
   );
 }
 
+function OperationalKpiStrip({ rows }) {
+  return (
+    <div className="mc-operational-strip">
+      {rows.map((row) => (
+        <div key={row.label} className={`mc-operational-strip__item${row.tone ? ` is-${row.tone}` : ""}`}>
+          <span>{row.label}</span>
+          <strong>{row.value}</strong>
+          <em>{row.meta}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CoverageScorePanel({ health, tokens, tokenCost, traces, sources, activeOverview }) {
   const sourceRows = Object.values(sources || {}).filter(Boolean);
   const connectedSources = sourceRows.filter((source) => source.exists !== false && !source.error).length;
@@ -1661,24 +1675,37 @@ export function ObservabilityWorkspace({
   const activeTotal = Number(activeOverview?.total || 0);
   const activeWindowMinutes = activeOverview?.windowMinutes || 30;
   const newestActiveAge = activeOverview?.sessions?.[0]?.ageMs;
-  const tokenInput = finiteToken(tokens.input);
-  const tokenCacheReadInput = cacheReadToken(tokens);
-  const tokenCacheCreationInput = cacheCreationToken(tokens);
-  const tokenOutput = finiteToken(tokens.output);
-  const tokenReasoningOutput = finiteToken(tokens.reasoningOutput);
-  const tokenEffectiveTotal = finiteToken(tokens.effectiveTotal) || finiteToken(tokens.total);
   const tokenCost = tokens.cost || {};
-  const tokenInputSideTotal = inputSideToken(tokens) || tokenInput;
-  const tokenCacheShare = percentValue(tokenCacheReadInput, tokenInputSideTotal);
-  const hourlyEventsTotal = hourlyChart.reduce((sum, item) => sum + (Number(item.events) || 0), 0);
-  const activeHourCount = hourlyChart.filter((item) => Number(item.events) > 0).length;
-  const toolResultRate = tools.totalCalls
-    ? Math.round((Number(tools.totalResults || 0) / Number(tools.totalCalls || 1)) * 100)
-    : 0;
-  const topWorkspace = workspaces.topWorkspaces?.[0];
-
-  // Build sparkline data from charts
-  const dailyTokenSpark = dailyChart.map((d) => Number(d.tokens) || 0);
+  const overviewKpis = [
+    {
+      label: "事件总量",
+      value: formatNumber(health.eventsTotal),
+      meta: `最近 ${formatDateTime(health.lastEventAt)}`,
+      tone: "primary",
+    },
+    {
+      label: "会话覆盖",
+      value: formatNumber(health.sessionsTotal),
+      meta: `${formatNumber(health.platformCount)} 平台 · ${formatNumber(health.modelCount)} 模型`,
+    },
+    {
+      label: "活跃会话",
+      value: formatNumber(activeTotal),
+      meta: activeTotal ? `最近写入 ${formatAgeText(newestActiveAge)}` : `窗口 ${formatNumber(activeWindowMinutes)} 分钟`,
+      tone: activeTotal ? "success" : "default",
+    },
+    {
+      label: "Token 口径",
+      value: tokenLabel(tokens.effectiveTotal),
+      meta: `今日 ${tokenLabel(tokenWindows.day?.total || 0)} · 本周 ${tokenLabel(tokenWindows.week?.total || 0)}`,
+      tone: "accent",
+    },
+    {
+      label: "Trace Span",
+      value: formatNumber(traces.spans || 0),
+      meta: `${formatNumber(traces.traces || 0)} traces · 深度 ${formatNumber(traces.maxDepth || 0)}`,
+    },
+  ];
 
   return (
     <Stack gap="md" className="workspace-stack mc-workspace">
@@ -1686,44 +1713,7 @@ export function ObservabilityWorkspace({
 
       {view === "overview" ? (
         <>
-          {/* Hero stats — asymmetric grid */}
-          <div className="mc-stat-grid mc-stat-grid--overview">
-            <HeroStat
-              label="事件总量"
-              value={formatNumber(health.eventsTotal)}
-              detail={`最近 ${formatDateTime(health.lastEventAt)}`}
-              tone="primary"
-              sparkData={dailyTokenSpark.slice(-7)}
-              icon={IconArrowUpRight}
-            />
-            <HeroStat
-              label="会话覆盖"
-              value={formatNumber(health.sessionsTotal)}
-              detail={`${formatNumber(health.platformCount)} 平台 · ${formatNumber(health.modelCount)} 模型`}
-              icon={IconChartBar}
-            />
-            <HeroStat
-              label="活跃会话"
-              value={formatNumber(activeTotal)}
-              detail={activeTotal ? `最近写入 ${formatAgeText(newestActiveAge)} · 窗口 ${formatNumber(activeWindowMinutes)} 分钟` : `最近 ${formatNumber(activeWindowMinutes)} 分钟暂无写入`}
-              tone={activeTotal ? "success" : "default"}
-              icon={IconActivityHeartbeat}
-            />
-            <HeroStat
-              label="Token 口径"
-              value={tokenLabel(tokens.effectiveTotal)}
-              detail={`今日 ${tokenLabel(tokenWindows.day?.total || 0)} · 本周 ${tokenLabel(tokenWindows.week?.total || 0)}`}
-              tone="accent"
-              icon={IconCpu}
-            />
-            <HeroStat
-              label="Trace Span"
-              value={formatNumber(traces.spans || 0)}
-              detail={`${formatNumber(traces.traces || 0)} traces · 深度 ${formatNumber(traces.maxDepth || 0)}`}
-              tone="default"
-              icon={IconRoute}
-            />
-          </div>
+          <OperationalKpiStrip rows={overviewKpis} />
 
           <Paper className="mc-panel mc-overview-heatmap-card" radius="xl" p="lg">
             <PanelHeader
@@ -1850,44 +1840,6 @@ export function ObservabilityWorkspace({
 
       {view === "tokens" ? (
         <>
-          <div className="mc-stat-grid mc-stat-grid--tokens">
-            <HeroStat
-              label="有效总量"
-              value={tokenLabel(tokenEffectiveTotal)}
-              detail={`原始 total ${tokenLabel(tokens.total || tokenInput + tokenOutput)}`}
-              tone="primary"
-              sparkData={dailyTokenSpark.slice(-7)}
-              icon={IconCpu}
-            />
-            <HeroStat
-              label="输入侧总量"
-              value={tokenLabel(tokenInputSideTotal)}
-              detail={`非缓存 ${tokenLabel(tokenInput)} · Prompt 与上下文`}
-              icon={IconArrowUpRight}
-            />
-            <HeroStat
-              label="缓存命中"
-              value={tokenLabel(tokenCacheReadInput)}
-              detail={`命中率 ${percentLabel(tokenCacheShare)}${tokenCacheCreationInput ? ` · 写入 ${tokenLabel(tokenCacheCreationInput)}` : ""}`}
-              tone={tokenCacheReadInput ? "success" : "default"}
-              icon={IconDatabase}
-            />
-            <HeroStat
-              label="输出 Token"
-              value={tokenLabel(tokenOutput)}
-              detail="模型生成输出"
-              tone="accent"
-              icon={IconChartBar}
-            />
-            <HeroStat
-              label="推理输出"
-              value={tokenLabel(tokenReasoningOutput)}
-              detail="reasoning output"
-              tone={tokenReasoningOutput ? "warn" : "default"}
-              icon={IconGauge}
-            />
-          </div>
-
           <TokenLedgerPanel tokens={tokens} tokenCost={tokenCost} />
 
           <div className="mc-token-layout">
@@ -1948,11 +1900,6 @@ export function ObservabilityWorkspace({
                 </div>
               </Paper>
 
-              <Paper className="mc-panel mc-token-card mc-token-card--cache" radius="xl" p="lg">
-                <PanelHeader eyebrow="Cache" title="缓存经济性" icon={IconDatabase} tone="success" />
-                <CacheEconomyPanel tokens={tokens} />
-              </Paper>
-
               <Paper className="mc-panel mc-token-card mc-token-card--sessions" radius="xl" p="lg">
                 <PanelHeader eyebrow="Sessions" title="高消耗会话" icon={IconActivityHeartbeat} tone="success" />
                 <div className="mc-session-list">
@@ -2005,36 +1952,6 @@ export function ObservabilityWorkspace({
 
       {view === "insights" ? (
         <>
-          <div className="mc-stat-grid mc-stat-grid--insights">
-            <HeroStat
-              label="24h 事件"
-              value={formatNumber(hourlyEventsTotal)}
-              detail={`${formatNumber(activeHourCount)} 个小时有活动`}
-              tone="primary"
-              icon={IconActivityHeartbeat}
-            />
-            <HeroStat
-              label="工具吞吐"
-              value={formatNumber((tools.totalCalls || 0) + (tools.totalResults || 0))}
-              detail={`${formatNumber(tools.totalCalls)} 调用 · ${formatNumber(tools.totalResults)} 结果`}
-              icon={IconTerminal2}
-            />
-            <HeroStat
-              label="结果回收率"
-              value={`${formatNumber(toolResultRate)}%`}
-              detail="按工具调用与结果事件粗略估算"
-              tone={toolResultRate >= 90 ? "success" : "default"}
-              icon={IconGauge}
-            />
-            <HeroStat
-              label="最活跃工作区"
-              value={formatNumber(topWorkspace?.events || 0)}
-              detail={clipText(topWorkspace?.cwd || "暂无工作区数据", 44)}
-              tone="accent"
-              icon={IconDatabase}
-            />
-          </div>
-
           <InsightDigestPanel
             health={health}
             tokens={tokens}

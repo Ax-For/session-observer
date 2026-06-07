@@ -4,7 +4,11 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { forEachCompleteJsonlLine, forEachCompleteJsonlLineReverse } = require("../server/fs-scanner");
+const {
+  forEachCompleteJsonlLine,
+  forEachCompleteJsonlLineReverse,
+  readJsonlLineAtOffset,
+} = require("../server/fs-scanner");
 
 test("forEachCompleteJsonlLine streams only complete lines and returns the trailing partial", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-scan-"));
@@ -74,4 +78,56 @@ test("forEachCompleteJsonlLineReverse streams complete lines from newest to olde
   assert.equal(result.stoppedEarly, true);
   assert.equal(result.lineCount, 3);
   assert.equal(result.endedWithNewline, false);
+});
+
+test("forEachCompleteJsonlLineReverse can skip line counting and expose byte offsets", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-scan-"));
+  const file = path.join(dir, "events.jsonl");
+  fs.writeFileSync(file, [
+    JSON.stringify({ id: 1 }),
+    JSON.stringify({ id: 2 }),
+    JSON.stringify({ id: 3 }),
+    "{\"id\":",
+  ].join("\n"));
+
+  const lines = [];
+  const result = forEachCompleteJsonlLineReverse(file, (line, lineNumber, locator) => {
+    lines.push({ line, lineNumber, locator });
+    return lines.length < 2;
+  }, { countLines: false });
+
+  assert.equal(result.lineCount, null);
+  assert.equal(result.stoppedEarly, true);
+  assert.deepEqual(lines.map((entry) => entry.line), [
+    JSON.stringify({ id: 3 }),
+    JSON.stringify({ id: 2 }),
+  ]);
+  assert.deepEqual(lines.map((entry) => entry.lineNumber), [null, null]);
+  assert.equal(readJsonlLineAtOffset(file, lines[0].locator.byteOffset), JSON.stringify({ id: 3 }));
+  assert.equal(readJsonlLineAtOffset(file, lines[1].locator.byteOffset), JSON.stringify({ id: 2 }));
+});
+
+test("forEachCompleteJsonlLineReverse truncates oversized lines for reverse list scans", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-scan-"));
+  const file = path.join(dir, "events.jsonl");
+  const large = JSON.stringify({ id: 2, output: "x".repeat(200000) });
+  fs.writeFileSync(file, [
+    JSON.stringify({ id: 1 }),
+    large,
+    JSON.stringify({ id: 3 }),
+  ].join("\n") + "\n");
+
+  const lines = [];
+  const result = forEachCompleteJsonlLineReverse(file, (line, lineNumber, locator) => {
+    lines.push({ line, lineNumber, locator });
+    return lines.length < 2;
+  }, { countLines: false, maxLineBytes: 256 });
+
+  assert.equal(result.stoppedEarly, true);
+  assert.equal(lines[0].line, JSON.stringify({ id: 3 }));
+  assert.equal(lines[1].locator.truncated, true);
+  assert.equal(lines[1].locator.byteOffset, Buffer.byteLength(`${JSON.stringify({ id: 1 })}\n`));
+  assert.equal(lines[1].locator.byteLength, Buffer.byteLength(large));
+  assert.ok(lines[1].line.length < large.length);
+  assert.equal(readJsonlLineAtOffset(file, lines[1].locator.byteOffset), large);
 });
