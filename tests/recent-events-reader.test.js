@@ -5,6 +5,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 
 const { queryRecentEvents } = require("../server/recent-events-reader");
+const { parseCodexLineToEvent } = require("../shared/observer-core");
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-recent-"));
@@ -112,6 +113,53 @@ test("queryRecentEvents can search raw session content on demand", () => {
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].id, "b");
   assert.equal(result.events[0].content, "needle from prompt");
+});
+
+test("queryRecentEvents dedupes duplicate Codex assistant message records", () => {
+  const dir = makeTempDir();
+  const sessionId = "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad";
+  const file = path.join(dir, `rollout-2026-06-01T00-00-00-${sessionId}.jsonl`);
+
+  writeJsonl(file, [
+    {
+      timestamp: "2026-06-01T00:00:00.000Z",
+      type: "event_msg",
+      payload: {
+        type: "agent_message",
+        message: "我会先检查会话详情的事件来源。",
+      },
+    },
+    {
+      timestamp: "2026-06-01T00:00:00.500Z",
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "我会先检查会话详情的事件来源。" }],
+      },
+    },
+  ], Date.parse("2026-06-01T00:00:00.500Z"));
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [{ sourceType: "codex", parseLine: parseCodexLineToEvent }],
+    filters: { sessionId, order: "asc", mode: "raw" },
+    limit: 10,
+    offset: 0,
+    sessionHints: [
+      {
+        sessionId,
+        cwd: "/repo/session-observer",
+        models: ["gpt-5.5"],
+        sourceFiles: [file],
+      },
+    ],
+  });
+
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].callType, "Agent");
+  assert.equal(result.events[0].extra, "role=assistant");
+  assert.equal(result.events[0].content, "我会先检查会话详情的事件来源。");
 });
 
 test("queryRecentEvents stops inside a large newest file once the first page is satisfied", () => {

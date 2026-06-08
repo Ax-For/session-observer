@@ -356,6 +356,7 @@ function queryRecentEvents(options = {}) {
   }
 
   sortEvents(candidates, order);
+  ObserverCore.dedupeEvents(candidates, { inPlace: true });
   const events = candidates.slice(offset, pageEnd);
   const hasMore = candidates.length > pageEnd || stoppedEarly;
   return {
