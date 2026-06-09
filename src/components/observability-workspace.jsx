@@ -1,9 +1,11 @@
+import { useState } from "react";
 import {
   Badge,
   Button,
   Group,
   Paper,
   Progress,
+  SegmentedControl,
   Stack,
   Text,
   ThemeIcon,
@@ -528,20 +530,61 @@ function MetricBarChart({ data, valueKey = "events", color = "blue.6", label = "
   );
 }
 
-function DailySessionHeatmapTooltip({ day }) {
-  const workspace = day?.topWorkspace;
+const HEATMAP_METRICS = {
+  sessions: {
+    shortLabel: "会话",
+    peakLabel: "会话峰值",
+    scaleLabel: "每日会话数",
+    summaryLabel: "次会话",
+    valueKey: "sessions",
+  },
+  events: {
+    shortLabel: "事件",
+    peakLabel: "事件峰值",
+    scaleLabel: "每日事件数",
+    summaryLabel: "个事件",
+    valueKey: "events",
+  },
+  tokens: {
+    shortLabel: "Token",
+    peakLabel: "Token 峰值",
+    scaleLabel: "每日 Token 量",
+    summaryLabel: "Token",
+    valueKey: "tokens",
+  },
+  pressure: {
+    shortLabel: "综合",
+    peakLabel: "综合峰值",
+    scaleLabel: "会话优先的综合热度",
+    summaryLabel: "次会话",
+    valueKey: "pressure",
+  },
+};
 
-  return (
-    <div className="mc-session-heatmap-tooltip">
-      <strong>{day?.label || "-"}</strong>
-      <span>{formatNumber(day?.sessions || 0)} 会话 · {formatNumber(day?.events || 0)} 事件</span>
-      <span>{tokenLabel(day?.tokens || 0)} Token</span>
-      <em>{workspace?.cwd ? `主要工作区 ${clipText(workspace.cwd, 56)}` : "当天没有会话活动"}</em>
-    </div>
-  );
+const HEATMAP_METRIC_OPTIONS = [
+  { label: "会话", value: "sessions" },
+  { label: "事件", value: "events" },
+  { label: "Token", value: "tokens" },
+  { label: "综合", value: "pressure" },
+];
+
+function heatmapMetricConfig(metric) {
+  return HEATMAP_METRICS[metric] || HEATMAP_METRICS.sessions;
 }
 
-function heatmapLevel(day, peaks) {
+function heatmapMetricRawValue(day, metric) {
+  const config = heatmapMetricConfig(metric);
+  if (config.valueKey === "pressure") {
+    return Math.max(
+      finiteToken(day?.sessions),
+      finiteToken(day?.events),
+      finiteToken(day?.tokens),
+    );
+  }
+  return finiteToken(day?.[config.valueKey]);
+}
+
+function compositeHeatmapPressure(day, peaks) {
   const sessions = finiteToken(day?.sessions);
   const events = finiteToken(day?.events);
   const tokens = finiteToken(day?.tokens);
@@ -550,8 +593,53 @@ function heatmapLevel(day, peaks) {
   const sessionScore = sessions / Math.max(1, peaks.sessions);
   const eventScore = events / Math.max(1, peaks.events);
   const tokenScore = tokens / Math.max(1, peaks.tokens);
-  const pressure = Math.max(sessionScore, eventScore * 0.78, tokenScore * 0.6);
+  return Math.max(sessionScore, eventScore * 0.78, tokenScore * 0.6);
+}
+
+function heatmapMetricScore(day, metric, peaks) {
+  if (metric === "pressure") return compositeHeatmapPressure(day, peaks);
+  const value = heatmapMetricRawValue(day, metric);
+  if (!value) return 0;
+  return value / Math.max(1, finiteToken(peaks?.[heatmapMetricConfig(metric).valueKey]));
+}
+
+function heatmapLevel(day, metric, peaks) {
+  const pressure = heatmapMetricScore(day, metric, peaks);
+  if (!pressure) return 0;
   return Math.max(1, Math.min(5, Math.ceil(pressure * 5)));
+}
+
+function heatmapValueLabel(day, metric, peaks) {
+  const value = heatmapMetricRawValue(day, metric);
+  if (metric === "tokens") return `${tokenLabel(value)} Token`;
+  if (metric === "pressure") return `${percentLabel(heatmapMetricScore(day, metric, peaks) * 100)} 综合热度`;
+  return `${formatNumber(value)} ${heatmapMetricConfig(metric).summaryLabel}`;
+}
+
+function heatmapSummaryLabel(value, metric) {
+  if (metric === "tokens") return `${tokenLabel(value)} Token`;
+  return `${formatNumber(value)} ${heatmapMetricConfig(metric).summaryLabel}`;
+}
+
+function heatmapTopDayDetail(day, metric, peaks) {
+  const value = heatmapValueLabel(day, metric, peaks);
+  if (metric === "sessions") return value;
+  return `${value} · ${formatNumber(day?.sessions || 0)} 会话`;
+}
+
+function DailySessionHeatmapTooltip({ day, metric, peaks }) {
+  const workspace = day?.topWorkspace;
+  const config = heatmapMetricConfig(metric);
+
+  return (
+    <div className="mc-session-heatmap-tooltip">
+      <strong>{day?.label || "-"}</strong>
+      <span>颜色依据：{config.shortLabel} · {heatmapValueLabel(day, metric, peaks)}</span>
+      <span>{formatNumber(day?.sessions || 0)} 会话 · {formatNumber(day?.events || 0)} 事件</span>
+      <span>{tokenLabel(day?.tokens || 0)} Token</span>
+      <em>{workspace?.cwd ? `主要工作区 ${clipText(workspace.cwd, 56)}` : "当天没有会话活动"}</em>
+    </div>
+  );
 }
 
 function heatmapWeekdayIndex(value) {
@@ -588,8 +676,10 @@ function buildHeatmapCalendar(days) {
   return { weeks, monthLabels };
 }
 
-function sortedHeatmapDays(days) {
+function sortedHeatmapDays(days, metric = "sessions", peaks = {}) {
   return days.slice().sort((left, right) => {
+    const metricDelta = heatmapMetricScore(right, metric, peaks) - heatmapMetricScore(left, metric, peaks);
+    if (metricDelta) return metricDelta;
     const sessionDelta = finiteToken(right?.sessions) - finiteToken(left?.sessions);
     if (sessionDelta) return sessionDelta;
     const eventDelta = finiteToken(right?.events) - finiteToken(left?.events);
@@ -625,6 +715,7 @@ function aggregateHeatmapWorkspaces(days) {
 }
 
 function DailySessionHeatmap({ data }) {
+  const [metric, setMetric] = useState("sessions");
   const days = Array.isArray(data) ? data : [];
   const calendar = buildHeatmapCalendar(days);
   const peaks = {
@@ -632,16 +723,21 @@ function DailySessionHeatmap({ data }) {
     events: Math.max(0, ...days.map((day) => finiteToken(day?.events))),
     tokens: Math.max(0, ...days.map((day) => finiteToken(day?.tokens))),
   };
+  const config = heatmapMetricConfig(metric);
   const activeDayRows = days.filter((day) => finiteToken(day?.sessions) > 0);
+  const selectedDayRows = days.filter((day) => heatmapMetricRawValue(day, metric) > 0);
   const activeDays = activeDayRows.length;
   const totalDaySessions = sumBy(days, (day) => day?.sessions);
-  const topDays = sortedHeatmapDays(activeDayRows).slice(0, 3);
-  const peakDay = topDays[0] || sortedHeatmapDays(days)[0];
+  const selectedTotal = metric === "pressure"
+    ? totalDaySessions
+    : sumBy(days, (day) => heatmapMetricRawValue(day, metric));
+  const topDays = sortedHeatmapDays(selectedDayRows, metric, peaks).slice(0, 3);
+  const peakDay = topDays[0] || sortedHeatmapDays(days, metric, peaks)[0];
   const recentActiveDay = activeDayRows.at(-1);
   const topWorkspace = aggregateHeatmapWorkspaces(activeDayRows);
   const activeRate = days.length ? (activeDays / days.length) * 100 : 0;
   const topDayLabel = topDays.length
-    ? topDays.map((day) => `${day.label} ${formatNumber(day.sessions || 0)}`).join(" / ")
+    ? topDays.map((day) => `${day.label} ${heatmapValueLabel(day, metric, peaks)}`).join(" / ")
     : "-";
   const topDayRows = topDays.length ? topDays : activeDayRows.slice(-3).reverse();
 
@@ -658,16 +754,26 @@ function DailySessionHeatmap({ data }) {
         <div className="mc-session-heatmap__main">
           <div className="mc-session-heatmap__lead">
             <div className="mc-session-heatmap__lead-copy">
-              <span>近 {formatNumber(days.length)} 天使用轨迹</span>
-              <strong>{formatNumber(totalDaySessions)} 次会话</strong>
+              <span className="mc-session-heatmap__metric-label">颜色依据：{config.scaleLabel}</span>
+              <strong>{heatmapSummaryLabel(selectedTotal, metric)}</strong>
               <em>{formatNumber(activeDays)} 天有活动 · 最近 {recentActiveDay?.label || "-"}</em>
             </div>
-            <div className="mc-session-heatmap__legend" aria-hidden="true">
-              <span>低</span>
-              {[0, 1, 2, 3, 4, 5].map((level) => (
-                <i key={level} className={`is-level-${level}`} />
-              ))}
-              <span>高</span>
+            <div className="mc-session-heatmap__controls">
+              <SegmentedControl
+                aria-label="切换热度图指标"
+                className="mc-session-heatmap__metric-control"
+                data={HEATMAP_METRIC_OPTIONS}
+                size="xs"
+                value={metric}
+                onChange={setMetric}
+              />
+              <div className="mc-session-heatmap__legend" aria-hidden="true">
+                <span>低</span>
+                {[0, 1, 2, 3, 4, 5].map((level) => (
+                  <i key={level} className={`is-level-${level}`} />
+                ))}
+                <span>高</span>
+              </div>
             </div>
           </div>
 
@@ -710,14 +816,14 @@ function DailySessionHeatmap({ data }) {
                   );
                 }
 
-                const level = heatmapLevel(day, peaks);
-                const sessions = finiteToken(day?.sessions);
-                const ariaLabel = `${day.label}，${formatNumber(sessions)} 会话，${formatNumber(day?.events || 0)} 事件，${tokenLabel(day?.tokens || 0)} Token`;
+                const level = heatmapLevel(day, metric, peaks);
+                const metricValue = heatmapMetricRawValue(day, metric);
+                const ariaLabel = `${day.label}，颜色依据 ${config.shortLabel} ${heatmapValueLabel(day, metric, peaks)}，${formatNumber(day?.sessions || 0)} 会话，${formatNumber(day?.events || 0)} 事件，${tokenLabel(day?.tokens || 0)} Token`;
 
                 return (
                   <Tooltip
                     key={day.time || day.label}
-                    label={<DailySessionHeatmapTooltip day={day} />}
+                    label={<DailySessionHeatmapTooltip day={day} metric={metric} peaks={peaks} />}
                     withArrow
                     color="dark"
                     position="top"
@@ -726,7 +832,7 @@ function DailySessionHeatmap({ data }) {
                   >
                     <button
                       type="button"
-                      className={`mc-session-heatmap__cell is-level-${level}${sessions ? "" : " is-empty"}`}
+                      className={`mc-session-heatmap__cell is-level-${level}${metricValue ? "" : " is-empty"}`}
                       aria-label={ariaLabel}
                       style={{ gridColumn: weekIndex + 2, gridRow: dayIndex + 1 }}
                       role="gridcell"
@@ -738,11 +844,11 @@ function DailySessionHeatmap({ data }) {
           </div>
 
           <div className="mc-session-heatmap__top-days">
-            <span>高频日期</span>
+            <span>高值日期</span>
             {topDayRows.map((day) => (
               <div key={day.time || day.label} className="mc-session-heatmap__top-day">
                 <strong>{day.label}</strong>
-                <em>{formatNumber(day.sessions || 0)} 会话 · {formatNumber(day.events || 0)} 事件</em>
+                <em>{heatmapTopDayDetail(day, metric, peaks)}</em>
               </div>
             ))}
           </div>
@@ -761,9 +867,9 @@ function DailySessionHeatmap({ data }) {
               <em>{formatNumber(recentActiveDay?.sessions || 0)} 会话</em>
             </div>
             <div>
-              <span>峰值</span>
+              <span className="mc-session-heatmap__metric-label">{config.peakLabel}</span>
               <strong>{peakDay?.label || "-"}</strong>
-              <em>{formatNumber(peakDay?.sessions || 0)} 会话 · {formatNumber(peakDay?.events || 0)} 事件</em>
+              <em>{heatmapValueLabel(peakDay, metric, peaks)}</em>
             </div>
           </div>
           <div className="mc-session-heatmap__workspace">

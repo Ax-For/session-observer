@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, test } from "vitest";
 import { ObservabilityWorkspace } from "../observability-workspace";
 
@@ -231,7 +231,7 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByTestId("daily-session-heatmap")).toBeInTheDocument();
     expect(screen.getByText("活跃率")).toBeInTheDocument();
     expect(screen.getByText("主要工作区")).toBeInTheDocument();
-    expect(screen.getByText("高频日期")).toBeInTheDocument();
+    expect(screen.getByText("高值日期")).toBeInTheDocument();
     expect(screen.getByText("活跃会话")).toBeInTheDocument();
     expect(screen.getByText("Trace Span")).toBeInTheDocument();
     expect(screen.getAllByText("480").length).toBeGreaterThan(0);
@@ -257,6 +257,32 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("工作区集中度")).toBeInTheDocument();
     expect(screen.getAllByText("Shell").length).toBeGreaterThan(0);
     expect(screen.queryByText("平台 Token 占比")).not.toBeInTheDocument();
+  });
+
+  test("switches the daily session heatmap color metric", () => {
+    render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={payload}
+          view="overview"
+          activeOverview={activeOverview}
+          loading={false}
+          onRefresh={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    const heatmap = screen.getByTestId("daily-session-heatmap");
+    expect(within(heatmap).getByText("颜色依据：每日会话数")).toBeInTheDocument();
+    expect(within(heatmap).getByText("4 次会话")).toBeInTheDocument();
+
+    const metricGroup = within(heatmap).getByRole("radiogroup", { name: "切换热度图指标" });
+    fireEvent.click(within(metricGroup).getByLabelText("Token"));
+
+    expect(within(metricGroup).getByLabelText("Token")).toBeChecked();
+    expect(within(heatmap).getByText("颜色依据：每日 Token 量")).toBeInTheDocument();
+    expect(within(heatmap).getByText("1.8万 Token")).toBeInTheDocument();
+    expect(within(heatmap).getByText("Token 峰值")).toBeInTheDocument();
   });
 
   test("renders token windows, model ranking, and high-cost sessions", () => {

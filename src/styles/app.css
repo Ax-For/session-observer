@@ -1388,6 +1388,40 @@ textarea {
   padding-left: 34px;
 }
 
+.mc-session-heatmap__controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mc-session-heatmap__metric-control {
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, #f2fbf6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.mc-session-heatmap__metric-control .mantine-SegmentedControl-indicator {
+  border: 1px solid color-mix(in srgb, #95d5b2 52%, var(--line));
+  background: #ffffff;
+  box-shadow: 0 6px 14px rgba(31, 111, 61, 0.1);
+}
+
+.mc-session-heatmap__metric-control .mantine-SegmentedControl-label {
+  min-height: 26px;
+  padding: 0 10px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.mc-session-heatmap__metric-control [data-active] .mantine-SegmentedControl-label {
+  color: #165f36;
+}
+
 .mc-session-heatmap__lead-copy {
   display: grid;
   gap: 4px;
@@ -1405,6 +1439,12 @@ textarea {
   letter-spacing: 0.04em;
   line-height: 1;
   text-transform: uppercase;
+}
+
+.mc-session-heatmap__lead-copy .mc-session-heatmap__metric-label,
+.mc-session-heatmap__rail-grid .mc-session-heatmap__metric-label {
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .mc-session-heatmap__lead-copy strong {
@@ -1719,6 +1759,10 @@ textarea {
     align-items: flex-start;
     flex-direction: column;
     padding-left: 0;
+  }
+
+  .mc-session-heatmap__controls {
+    justify-content: flex-start;
   }
 
   .mc-session-heatmap__rail,
