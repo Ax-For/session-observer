@@ -230,6 +230,21 @@
     return true;
   }
 
+  function isDialogueEvent(event) {
+    const type = String(event?.callType || "").toLowerCase();
+    return type === "prompt" || type === "user" || type === "agent";
+  }
+
+  function searchableDialogueText(event) {
+    if (!isDialogueEvent(event)) return "";
+    return [
+      event.searchText,
+      event.content,
+      event.contentPreview,
+      event.summary,
+    ].map((value) => String(value || "")).join("\n");
+  }
+
   function eventMatchesFilters(event, filters) {
     if (!eventMatchesMode(event, filters.mode)) return false;
     if (filters.platform && event.sourceType !== filters.platform) return false;
@@ -246,23 +261,7 @@
     if (filters.endMs != null && eventMs != null && eventMs > filters.endMs) return false;
 
     if (!filters.query) return true;
-    return [
-      event.searchText,
-      event.content,
-      event.contentPreview,
-      event.callType,
-      event.model,
-      event.sessionId,
-      event.turnId,
-      event.callId,
-      event.toolName,
-      event.extra,
-      event.rawType,
-      event.rawSubType,
-      event.cwd,
-      event.sessionTitle,
-      event.tokenUsage ? JSON.stringify(event.tokenUsage) : "",
-    ].some((value) => String(value || "").toLowerCase().includes(filters.query));
+    return searchableDialogueText(event).toLowerCase().includes(filters.query);
   }
 
   function deriveFallbackTitleFromEvent(event) {

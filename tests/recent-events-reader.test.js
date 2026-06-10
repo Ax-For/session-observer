@@ -115,6 +115,57 @@ test("queryRecentEvents can search raw session content on demand", () => {
   assert.equal(result.events[0].content, "needle from prompt");
 });
 
+test("queryRecentEvents only searches user and agent message content", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "dialogue-search.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "tool",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "one",
+      cwd: "/repo",
+      callType: "Tool_Result",
+      content: "needle from tool output",
+    },
+    {
+      id: "metadata",
+      time: "2026-06-01T00:01:00.000Z",
+      sessionId: "needle-session",
+      cwd: "/repo/needle-workspace",
+      model: "needle-model",
+      callType: "Agent",
+      content: "ordinary answer",
+    },
+    {
+      id: "user",
+      time: "2026-06-01T00:02:00.000Z",
+      sessionId: "one",
+      cwd: "/repo",
+      callType: "Prompt",
+      content: "needle from user question",
+    },
+    {
+      id: "agent",
+      time: "2026-06-01T00:03:00.000Z",
+      sessionId: "one",
+      cwd: "/repo",
+      callType: "Agent",
+      content: "needle from agent answer",
+    },
+  ], Date.parse("2026-06-01T00:03:00.000Z"));
+
+  const result = queryRecentEvents({
+    files: [file],
+    parsers: [parser],
+    filters: { q: "needle", order: "desc" },
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.deepEqual(result.events.map((event) => event.id), ["agent", "user"]);
+});
+
 test("queryRecentEvents dedupes duplicate Codex assistant message records", () => {
   const dir = makeTempDir();
   const sessionId = "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad";

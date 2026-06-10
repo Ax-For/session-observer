@@ -123,20 +123,20 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
             ) : null}
             {!dialogueRole ? (
               <span className="event-row__type">
-                <HighlightedText text={callTypeLabel(event.callType)} query={searchQuery} />
+                <HighlightedText text={callTypeLabel(event.callType)} query="" />
               </span>
             ) : null}
             <span className="event-row__model">
-              <HighlightedText text={event.model || "unknown"} query={searchQuery} />
+              <HighlightedText text={event.model || "unknown"} query="" />
             </span>
           </div>
           <Text className="event-row__summary">
-            <HighlightedText text={summary} query={searchQuery} />
+            <HighlightedText text={summary} query={dialogueRole ? searchQuery : ""} />
           </Text>
           <div className="event-row__meta-line">
-            <span><HighlightedText text={shortSessionId(event.sessionId)} query={searchQuery} /></span>
-            <span><HighlightedText text={event.extra || "事件详情"} query={searchQuery} /></span>
-            <span><HighlightedText text={clipText(event.cwd || "", 48)} query={searchQuery} /></span>
+            <span><HighlightedText text={shortSessionId(event.sessionId)} query="" /></span>
+            <span><HighlightedText text={event.extra || "事件详情"} query="" /></span>
+            <span><HighlightedText text={clipText(event.cwd || "", 48)} query="" /></span>
           </div>
         </div>
 
@@ -519,10 +519,10 @@ export function StreamWorkspace({
                       <span className="session-rail__main">
                         <span className="session-rail__title-row">
                           <span className="session-rail__title" title={session.title || "未命名会话"}>
-                            <HighlightedText text={session.title || "未命名会话"} query={searchQuery} />
+                            <HighlightedText text={session.title || "未命名会话"} query="" />
                           </span>
                           <span className="session-rail__id">
-                            <HighlightedText text={shortSessionId(session.sessionId)} query={searchQuery} />
+                            <HighlightedText text={shortSessionId(session.sessionId)} query="" />
                           </span>
                         </span>
                         <span className="session-rail__metrics" aria-label="会话指标">
@@ -534,7 +534,7 @@ export function StreamWorkspace({
                           ))}
                         </span>
                         <span className="session-rail__path" title={session.cwd || ""}>
-                          <HighlightedText text={clipText(session.cwd, 72)} query={searchQuery} />
+                          <HighlightedText text={clipText(session.cwd, 72)} query="" />
                         </span>
                       </span>
                     </button>

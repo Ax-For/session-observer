@@ -88,6 +88,21 @@ function rawLineMayMatch(line, filters) {
   return String(line || "").toLowerCase().includes(query);
 }
 
+function isDialogueEvent(event) {
+  const type = String(event?.callType || "").toLowerCase();
+  return type === "prompt" || type === "user" || type === "agent";
+}
+
+function searchableDialogueText(event) {
+  if (!isDialogueEvent(event)) return "";
+  return [
+    event.content,
+    event.searchText,
+    event.contentPreview,
+    event.summary,
+  ].map((value) => String(value || "")).join("\n");
+}
+
 function defaultMatchesFilters(event, filters) {
   const query = String(filters?.query || filters?.q || "").trim().toLowerCase();
   if (filters?.platform && event.sourceType !== filters.platform) return false;
@@ -103,17 +118,7 @@ function defaultMatchesFilters(event, filters) {
     if (eventMs == null || eventMs > filters.endMs) return false;
   }
   if (!query) return true;
-  return [
-    event.content,
-    event.searchText,
-    event.summary,
-    event.model,
-    event.toolName,
-    event.cwd,
-    event.sessionId,
-    event.sessionTitle,
-    event.tokenUsage ? JSON.stringify(event.tokenUsage) : "",
-  ].some((value) => String(value || "").toLowerCase().includes(query));
+  return searchableDialogueText(event).toLowerCase().includes(query);
 }
 
 function eventTimeMs(event) {

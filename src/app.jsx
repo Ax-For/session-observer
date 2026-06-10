@@ -687,7 +687,7 @@ export function App() {
       ? "输入已修改，点击搜索后生效"
       : submittedStreamQuery
         ? `当前搜索：${submittedStreamQuery}`
-        : "输入关键词后点击搜索";
+        : "输入用户或 Agent 问答关键词后点击搜索";
 
   async function copySessionId(sessionId) {
     if (!sessionId) return;
@@ -848,7 +848,7 @@ export function App() {
                         <TextInput
                           ref={searchRef}
                           label="搜索"
-                          placeholder="内容 / session / tool / cwd"
+                          placeholder="用户 / Agent 问答内容"
                           leftSection={<IconSearch size={16} />}
                           value={streamSearchDraft}
                           onChange={(event) => {

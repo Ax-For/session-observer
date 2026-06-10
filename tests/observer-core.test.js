@@ -8,6 +8,7 @@ const {
   buildTokenUsageWindows,
   buildSessionGroups,
   dedupeEvents,
+  eventMatchesFilters,
   eventMatchesMode,
   mergeSessionMetaRecords,
   parseClaudeCodeLineToEvent,
@@ -152,6 +153,18 @@ test("parseClaudeCodeLineToEvent captures Claude custom title records", () => {
   assert.equal(agentNameEvent.callType, "Raw");
   assert.equal(agentNameEvent.rawType, "agent-name");
   assert.equal(agentNameEvent.sessionTitle, "Readable Alias");
+});
+
+test("eventMatchesFilters searches only user and agent message content", () => {
+  const filters = { query: "needle" };
+
+  assert.equal(eventMatchesFilters({ callType: "Prompt", content: "needle from user" }, filters), true);
+  assert.equal(eventMatchesFilters({ callType: "User", searchText: "needle from user text" }, filters), true);
+  assert.equal(eventMatchesFilters({ callType: "Agent", content: "needle from agent" }, filters), true);
+  assert.equal(eventMatchesFilters({ callType: "Tool_Result", content: "needle from tool output" }, filters), false);
+  assert.equal(eventMatchesFilters({ callType: "Agent", cwd: "/repo/needle", content: "ordinary answer" }, filters), false);
+  assert.equal(eventMatchesFilters({ callType: "Agent", model: "needle-model", content: "ordinary answer" }, filters), false);
+  assert.equal(eventMatchesFilters({ callType: "Agent", sessionId: "needle-session", content: "ordinary answer" }, filters), false);
 });
 
 test("dedupeEvents prefers non-sidechain events when duplicated", () => {

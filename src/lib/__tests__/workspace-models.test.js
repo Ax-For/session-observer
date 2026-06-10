@@ -508,7 +508,33 @@ describe("local workspace models", () => {
 
   test("buildLocalStreamPayload keeps session token aggregates when text filters exclude token events", () => {
     const payload = buildLocalStreamPayload({
-      events: sampleEvents,
+      events: [
+        {
+          callType: "Token_Usage",
+          model: "gpt-5.4",
+          sourceType: "codex",
+          sessionId: "sess-1",
+          sessionTitle: "Incident triage",
+          time: "2026-04-19T14:36:10.720Z",
+          tokenUsage: {
+            input: 2400,
+            output: 220,
+            total: 2620,
+            cachedInput: 1200,
+            cacheReadInput: 1200,
+            reasoningOutput: 80,
+          },
+        },
+        {
+          callType: "Prompt",
+          model: "gpt-5.4",
+          sourceType: "codex",
+          sessionId: "sess-1",
+          sessionTitle: "Incident triage",
+          time: "2026-04-19T14:35:10.720Z",
+          content: "please inspect the tool output",
+        },
+      ],
       filters: {
         query: "tool",
         model: "",
@@ -522,7 +548,7 @@ describe("local workspace models", () => {
       mode: "observe",
     });
 
-    expect(payload.events.map((event) => event.callType)).toEqual(["Tool_Call"]);
+    expect(payload.events.map((event) => event.callType)).toEqual(["Prompt"]);
     expect(payload.sessions).toEqual([
       expect.objectContaining({
         sessionId: "sess-1",

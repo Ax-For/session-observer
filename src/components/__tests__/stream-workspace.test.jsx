@@ -169,7 +169,7 @@ describe("StreamWorkspace", () => {
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });
 
-  test("highlights the submitted search term in visible stream results", () => {
+  test("highlights the submitted search term only in dialogue content", () => {
     const { container } = render(
       <MantineProvider>
         <StreamWorkspace
@@ -202,25 +202,26 @@ describe("StreamWorkspace", () => {
           }}
           sessions={[
             {
-              sessionId: "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad",
-              title: "Token count analysis",
+              sessionId: "needle-session",
+              title: "Needle count analysis",
               sourceType: "codex",
               latest: "2026-06-01T13:58:02.406Z",
               count: 1,
               totalTokens: 100,
-              cwd: "/Users/me/code/session-observer",
+              cwd: "/Users/me/code/needle-workspace",
             },
           ]}
           events={[
             {
               time: "2026-06-01T13:58:02.406Z",
-              callType: "Token_Usage",
+              callType: "Agent",
               sourceType: "codex",
-              model: "gpt-5.5",
-              sessionId: "019e5fc9-10b7-7cd3-98f0-6c1c2cbfecad",
-              summary: "Token usage · Total 100",
-              extra: "token_count",
-              cwd: "/Users/me/code/session-observer",
+              model: "needle-model",
+              sessionId: "needle-session",
+              content: "Needle answer from the agent",
+              summary: "Needle answer from the agent",
+              extra: "needle-extra",
+              cwd: "/Users/me/code/needle-workspace",
             },
           ]}
           selectedSessionId=""
@@ -230,14 +231,14 @@ describe("StreamWorkspace", () => {
           onOpenFilters={() => {}}
           onOpenEvent={() => {}}
           onOpenSessionDetail={() => {}}
-          searchQuery="token_count"
+          searchQuery="needle"
         />
       </MantineProvider>,
     );
 
     const highlights = [...container.querySelectorAll(".event-search-highlight")].map((node) => node.textContent);
-    expect(highlights).toContain("token_count");
-    expect(screen.getByText("Token count analysis")).toBeInTheDocument();
+    expect(highlights).toEqual(["Needle"]);
+    expect(screen.getByText("Needle count analysis")).toBeInTheDocument();
   });
 
   test("formats large token metrics with chinese units in the overview panel", () => {

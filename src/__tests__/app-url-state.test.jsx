@@ -144,7 +144,7 @@ describe("App URL state", () => {
   test("writes key workspace state back into the URL", async () => {
     render(<App />);
 
-    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    const searchInput = await screen.findByPlaceholderText("用户 / Agent 问答内容");
     fireEvent.change(searchInput, { target: { value: "incident" } });
     fireEvent.click(screen.getByRole("button", { name: "搜索" }));
     fireEvent.click(screen.getByRole("radio", { name: "原始" }));
@@ -162,7 +162,7 @@ describe("App URL state", () => {
   test("submits stream search only when the search button is clicked", async () => {
     render(<App />);
 
-    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    const searchInput = await screen.findByPlaceholderText("用户 / Agent 问答内容");
     await waitForStartupTimers();
     const initialEventFetchCount = fetchedEventUrls().length;
 
@@ -187,7 +187,7 @@ describe("App URL state", () => {
 
     render(<App />);
 
-    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    const searchInput = await screen.findByPlaceholderText("用户 / Agent 问答内容");
     await waitForStartupTimers();
 
     fireEvent.change(searchInput, { target: { value: "incident" } });
@@ -265,7 +265,7 @@ describe("App URL state", () => {
   test("does not trigger global shortcuts while typing in search inputs", async () => {
     render(<App />);
 
-    const searchInput = await screen.findByPlaceholderText("内容 / session / tool / cwd");
+    const searchInput = await screen.findByPlaceholderText("用户 / Agent 问答内容");
     searchInput.focus();
 
     expect(screen.getByRole("radio", { name: "观测" })).toBeChecked();
