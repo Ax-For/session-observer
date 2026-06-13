@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest an improvement or new workflow.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is difficult today?
+      placeholder: I want to compare two sessions because...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: What would you like Session Observer to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any other approaches or tools you tried?
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Main Surface
+      options:
+        - Overview
+        - Token
+        - Insights
+        - Event stream
+        - Sessions
+        - Backend / parsing
+        - Documentation
+        - Not sure
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, examples, or sanitized data shapes.

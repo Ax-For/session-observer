@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem with Session Observer.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please sanitize prompts, logs, paths, screenshots, and JSONL snippets before sharing.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+      placeholder: The event stream does not update after...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction Steps
+      description: How can we reproduce this with sanitized data?
+      placeholder: |
+        1. Start with ./manage.sh start
+        2. Open ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Data Source
+      multiple: true
+      options:
+        - Codex
+        - Claude Code
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js Version
+      placeholder: "v22.0.0"
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "macOS 15, Ubuntu 24.04, Windows 11"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized Logs or Screenshots
+      description: Paste sanitized logs or attach redacted screenshots.

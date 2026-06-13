@@ -1,49 +1,48 @@
 # Session Observer
 
-本地优先的 Codex / Claude Code 会话观测工作台。它读取本机会话日志，帮助你查看事件流、会话详情、Token 消耗、工作目录分布、活跃热度和运行内存状态。
+[![CI](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-LTS%20or%20newer-339933.svg)](package.json)
+[![React](https://img.shields.io/badge/react-19-149eca.svg)](package.json)
 
-Session Observer 默认只监听本机 `127.0.0.1`，不会上传会话内容，也不会把原始 JSONL 文件提交到仓库。
+Local-first observability dashboard for Codex and Claude Code sessions: event stream search, conversation replay, token usage, workspace insights, and memory-safe JSONL scanning.
+
+[中文文档](README.zh-CN.md)
 
 ![Session Observer overview](docs/screenshots/overview.png)
 
+## Why Session Observer?
+
+AI coding sessions quickly become hard to inspect: prompts, agent messages, tool calls, token usage, working directories, and long JSONL histories are scattered across local files. Session Observer turns those local logs into a desktop-friendly observability workspace without uploading your session content anywhere.
+
+Use it when you want to:
+
+- inspect recent Codex and Claude Code activity in one timeline;
+- jump from an event to the related session and conversation detail;
+- understand token usage, cache hits, reasoning output, and high-cost sessions;
+- see workspace-level activity and daily session heat;
+- monitor process memory while scanning large local JSONL histories.
+
 ## Highlights
 
-- **本地优先观测**: 读取 Codex 与 Claude Code 的本机 JSONL 日志，统一成一个可搜索、可跳转的工作台。
-- **按需事件流**: 事件流按需读取最近事件，支持按钮触发搜索、加载状态、关键词高亮、平台/模型/类型筛选和单会话聚焦。
-- **会话工作区**: 按工作目录、来源文件或平台分组，支持活跃会话、工作目录树、会话详情、对话抽屉、重命名、删除和复制 session ID。
-- **完整会话详情**: 展示开始时间、最近写入、事件数量、Token 构成、模型分布、工具调用、事件类型和最近事件。
-- **Token 账本**: 区分非缓存输入、缓存命中、缓存写入、输出与推理输出，并按时间窗口、模型、工作区和高消耗会话拆分。
-- **运行总览**: 提供事件总量、会话覆盖、Trace Span、会话热度图、数据源状态、运行内存、工作区集中度和关键观察。
-- **低内存策略**: 默认避免把完整历史 JSONL 常驻内存，事件流、会话详情和搜索按需读取；页面直接展示 RSS、Heap、External 等运行内存指标。
+- **Local-first by default**: binds to `127.0.0.1` and reads local Codex / Claude Code transcripts directly.
+- **On-demand event stream**: recent events are read as needed, with explicit search submission, loading state, filters, and dialogue-only highlighting.
+- **Conversation-aware sessions**: browse active sessions, workspace trees, session details, conversation drawers, models, tools, and related events.
+- **Detailed token ledger**: separates uncached input, cache hits, cache creation, output, and reasoning output across time, model, workspace, and session views.
+- **Memory-aware architecture**: avoids keeping full historical JSONL data resident in memory; dashboard surfaces RSS, heap, external memory, and source-cache state.
+- **Privacy-conscious docs and exports**: screenshots and examples are sanitized; raw session files are intentionally excluded from source control.
 
 ## Screenshots
 
-截图使用脱敏示例数据生成，不包含真实路径、prompt、工具输出或原始会话内容。
+Screenshots are generated from sanitized example data. They do not contain real prompts, local paths, tool outputs, or raw session JSONL content.
 
-| Token 消耗 | 事件流 |
+| Overview | Event stream |
 | --- | --- |
-| ![Token dashboard](docs/screenshots/tokens.png) | ![Event stream](docs/screenshots/stream.png) |
+| ![Overview dashboard](docs/screenshots/overview.png) | ![Event stream](docs/screenshots/stream.png) |
 
-| 会话详情 | 运行总览 |
+| Token ledger | Session detail |
 | --- | --- |
-| ![Session detail](docs/screenshots/sessions.png) | ![Overview dashboard](docs/screenshots/overview.png) |
-
-## Data Sources
-
-默认读取以下本机目录:
-
-| 平台 | 默认位置 | 说明 |
-| --- | --- | --- |
-| Codex | `~/.codex/sessions/**/*.jsonl` | Codex 会话事件、Token、工具调用和消息流 |
-| Claude Code | `~/.claude/projects/**/*.jsonl` | Claude Code 项目会话、工具调用和消息流 |
-| Codex state | `~/.codex/state_5.sqlite` | Codex 会话标题元数据，依赖 `sqlite3` CLI |
-
-## Requirements
-
-- Node.js: 建议使用当前 LTS 或更新版本
-- npm
-- `sqlite3` CLI: 用于读取 Codex 会话标题元数据
-- 现代桌面浏览器
+| ![Token dashboard](docs/screenshots/tokens.png) | ![Session detail](docs/screenshots/sessions.png) |
 
 ## Quick Start
 
@@ -53,77 +52,111 @@ npm install
 ./manage.sh open
 ```
 
-默认地址是 `http://127.0.0.1:8787`。
+The default UI is `http://127.0.0.1:8787`.
 
-`manage.sh` 会在 `dist/` 缺失或前端源码更新时自动执行 `npm run build`。开发 UI 时可以直接运行:
+`manage.sh` automatically builds the Vite frontend when `dist/` is missing or stale. For UI-only iteration, run:
 
 ```bash
 npm run dev
 ```
 
+## Data Sources
+
+| Source | Default path | Purpose |
+| --- | --- | --- |
+| Codex sessions | `~/.codex/sessions/**/*.jsonl` | Codex events, prompts, agent messages, tool calls, and token usage |
+| Claude Code projects | `~/.claude/projects/**/*.jsonl` | Claude Code project sessions, tool calls, messages, and usage |
+| Codex state DB | `~/.codex/state_5.sqlite` | Codex title metadata, read through the `sqlite3` CLI |
+
+## Requirements
+
+- Node.js LTS or newer
+- npm
+- `sqlite3` CLI for Codex title metadata
+- A modern desktop browser
+
 ## Common Commands
 
 ```bash
-./manage.sh start      # 后台启动本地服务
-./manage.sh status     # 查看运行状态
-./manage.sh logs -f    # 跟随服务日志
-./manage.sh stop       # 停止服务
-./manage.sh run        # 前台运行，便于调试
+./manage.sh start      # Start the local observer in the background
+./manage.sh status     # Show PID and local URL
+./manage.sh logs -f    # Follow runtime logs
+./manage.sh stop       # Stop the background service
+./manage.sh run        # Run the server in the foreground
 
-npm test               # 运行前端 Vitest 测试
-npm run test:core      # 运行共享解析与聚合测试
-npm run build          # 构建前端产物
-npm run check          # lint、测试核心逻辑并构建
+npm test               # Run frontend Vitest tests
+npm run test:core      # Run parser and aggregation tests
+npm run build          # Build the frontend
+npm run check          # Run lint, tests, core tests, and production build
 ```
 
 ## Feature Map
 
-| 页面 | 主要能力 |
+| Surface | What it shows |
 | --- | --- |
-| 总览 | 运行状态、会话热度图、Token 趋势、观测覆盖、数据源状态、内存占用、工作区集中度、最近活跃会话 |
-| Token | Token 账本分解、缓存命中、缓存写入、输出、推理输出、时间窗口、模型成本、工作区消耗、高消耗会话 |
-| 洞察 | 活跃率、会话负载、工具调用、工作区负载、活动形态和关键观察 |
-| 事件流 | 观察/原始模式、搜索提交、高亮、加载态、筛选器、事件时间线、最近活跃会话、跳转会话详情 |
-| 会话 | 分组列表、工作目录树、活跃会话、详情面板、会话对话、单会话聚焦、批量删除、低内容选择 |
+| Overview | Runtime status, session heatmap, token trend, source health, memory usage, workspace concentration, and active sessions |
+| Token | Token ledger, cache hits, cache creation, output, reasoning output, time windows, model cost, workspace spend, and high-cost sessions |
+| Insights | Active rate, session load, tool reliability, workspace load, activity shape, and operational notes |
+| Event stream | Observe/raw modes, button-triggered search, loading state, filters, highlighted dialogue results, recent active sessions, and session jumps |
+| Sessions | Grouped session list, workspace tree, active sessions, detail panel, conversation replay, focused stream navigation, and batch operations |
 
 ## Architecture
 
 ```text
-server.js              Node HTTP API、静态资源服务、会话管理接口
-manage.sh              本地服务生命周期脚本
-shared/                Codex / Claude Code 解析、去重、聚合逻辑
-src/app.jsx            React 工作台壳、路由状态和页面编排
-src/components/        总览、事件流、会话页、详情抽屉、对话抽屉
-src/hooks/             数据加载、实时文件变化、会话操作和 URL 状态同步
-src/lib/               视图模型、格式化、分页、URL 编码
-src/styles/app.css     产品 UI 样式和设计变量
-tests/                 Node 侧解析和聚合测试
+server.js              Node HTTP API, static frontend, and session-management routes
+manage.sh              Local service lifecycle helper
+shared/                Codex / Claude Code parsing, dedupe, token, trace, and aggregation logic
+server/                Source scanning, on-demand event reading, summary cache, and HTTP routes
+src/app.jsx            React workspace shell, URL state, and page orchestration
+src/components/        Overview, stream, sessions, event drawer, and conversation drawer
+src/hooks/             Data loading, source change stream, session actions, and URL sync
+src/lib/               View models, formatting, paging, event display, and URL helpers
+tests/                 Node-side parser, cache, memory, route, export, and trace tests
 ```
 
-后端保持单进程本地服务，前端由 Vite 构建后由同一个 Node 服务托管。共享解析逻辑放在 `shared/`，避免前后端重复实现事件归一化、Token 聚合和会话分组。
+The backend stays a single local Node process. The frontend is built with Vite and served by the same process. Shared parsing lives in `shared/` so server-side summaries and frontend view models use the same event vocabulary.
 
 ## Configuration
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` | HTTP 监听地址 |
-| `PORT` | `8787` | HTTP 端口 |
-| `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex 会话目录 |
-| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code 项目目录 |
-| `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex 标题元数据 SQLite |
+| `HOST` | `127.0.0.1` | HTTP bind address |
+| `PORT` | `8787` | HTTP port |
+| `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex session directory |
+| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code projects directory |
+| `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata SQLite database |
 
-示例:
+Example:
 
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```
 
-## Privacy
+## Privacy Model
 
-会话日志可能包含 prompt、工具输出、本地路径、代码片段和其他敏感信息。请不要提交原始 JSONL、手动整理出的会话内容或 `.runtime/` 内容。截图、Issue、PR 描述和文档示例应使用脱敏数据。
+Session logs may contain prompts, tool output, local paths, code snippets, and other sensitive data. Session Observer is designed for local inspection:
 
-如果需要绑定到非本机地址，请先确认网络访问范围和日志暴露风险:
+- the default server binds to `127.0.0.1`;
+- raw JSONL transcripts and `.runtime/` artifacts are ignored by source control;
+- screenshots and documentation examples should use sanitized data;
+- binding to `0.0.0.0` should be done only when you understand the network exposure.
 
 ```bash
 HOST=0.0.0.0 ./manage.sh start
 ```
+
+## Project Health
+
+- License: [MIT](LICENSE)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Social preview asset: [docs/social-preview.png](docs/social-preview.png)
+
+## Roadmap
+
+- More local coding-agent adapters.
+- Session diff and timeline comparison.
+- Sanitized report exports for sharing incidents.
+- Pluggable cost models and model aliases.
+- Better long-running source cache diagnostics.
