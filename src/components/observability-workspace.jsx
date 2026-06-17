@@ -1,4 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  AreaChart,
+  BarChart,
+  DonutChart,
+} from "@mantine/charts";
 import {
   Badge,
   Button,
@@ -12,17 +17,6 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import {
-  Area,
-  AreaChart as RechartsAreaChart,
-  Bar,
-  BarChart as RechartsBarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import {
   IconActivityHeartbeat,
   IconDatabase,
@@ -132,25 +126,18 @@ function compactDateLabel(value) {
   });
 }
 
-const CHART_CSS_COLORS = {
-  "blue.6": "var(--accent)",
-  "orange.6": "var(--orange)",
-  "teal.6": "#14b8a6",
-  "grape.6": "var(--violet)",
-  "indigo.6": "#4f7cff",
-  "pink.6": "#db2777",
+const MANTINE_CHART_CLASS_NAMES = {
+  tooltip: "mc-chart-tooltip",
+  tooltipLabel: "mc-chart-tooltip__label",
+  tooltipItem: "mc-chart-tooltip__item",
+  tooltipItemBody: "mc-chart-tooltip__item-body",
+  tooltipItemColor: "mc-chart-tooltip__item-color",
+  tooltipItemName: "mc-chart-tooltip__item-name",
+  tooltipItemData: "mc-chart-tooltip__item-data",
 };
 
 function metricLabel(value, valueKey) {
   return valueKey === "tokens" ? tokenLabel(value) : formatNumber(value);
-}
-
-function chartColor(value) {
-  return CHART_CSS_COLORS[value] || value || "var(--accent)";
-}
-
-function chartGradientId(value) {
-  return `mc-gradient-${String(value || "chart").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function orderedToolRows(topTools = [], limit = 6) {
@@ -378,6 +365,44 @@ function ChartSummary({ data, valueKey, metricKind = valueKey }) {
   );
 }
 
+function chartValueFormatter(metricKind, fallbackLabel) {
+  return (value) => metricLabel(value, metricKind || fallbackLabel);
+}
+
+function ChartMountGate({ height, children }) {
+  const rootRef = useRef(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return undefined;
+
+    const markReady = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 1) setReady(true);
+    };
+
+    const frame = requestAnimationFrame(markReady);
+    if (typeof ResizeObserver === "undefined") {
+      return () => cancelAnimationFrame(frame);
+    }
+
+    const observer = new ResizeObserver(markReady);
+    observer.observe(node);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={rootRef} className="mc-chart-gate">
+      {ready ? children : <div className="mc-chart-placeholder" style={{ height }} />}
+    </div>
+  );
+}
+
 function EmptyChart({ label }) {
   return (
     <div className="mc-chart-empty">
@@ -387,13 +412,12 @@ function EmptyChart({ label }) {
 }
 
 function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = "Token", testId, height = 222 }) {
-  const stroke = chartColor(color);
-  const gradientId = chartGradientId(testId || valueKey);
   const chartData = (data || []).map((item) => ({
     ...item,
     label: item.label || "-",
     value: Number(item[valueKey]) || 0,
   }));
+  const valueFormatter = chartValueFormatter(valueKey, label);
 
   if (!chartData.length) {
     return <EmptyChart label={label} />;
@@ -401,61 +425,34 @@ function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = 
 
   return (
     <>
-      <div className="mc-chart-frame mc-chart-frame--area" data-testid={testId} aria-label={`${label}趋势图`}>
-        <ResponsiveContainer
-          width="100%"
-          height={height}
-          minWidth={1}
-          initialDimension={{ width: 720, height }}
-        >
-          <RechartsAreaChart data={chartData} margin={{ top: 12, right: 10, bottom: 0, left: 0 }}>
-            <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
-                <stop offset="100%" stopColor={stroke} stopOpacity="0.02" />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="var(--line)" strokeDasharray="4 6" vertical />
-            <XAxis
-              dataKey="label"
-              tick={{ fill: "var(--text-faint)", fontSize: 12, fontWeight: 650 }}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={10}
-            />
-            <YAxis
-              width={72}
-              tick={{ fill: "var(--text-faint)", fontSize: 12, fontWeight: 650 }}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(value) => metricLabel(value, valueKey)}
-            />
-            <RechartsTooltip
-              cursor={{ stroke: "var(--line-strong)", strokeDasharray: "4 5" }}
-              contentStyle={{
-                background: "var(--panel-strong)",
-                border: "1px solid var(--line-strong)",
-                borderRadius: 12,
-                color: "var(--text)",
-                boxShadow: "var(--shadow-md)",
-              }}
-              labelStyle={{ color: "var(--text-soft)", fontWeight: 700 }}
-              formatter={(value) => [metricLabel(value, valueKey), label]}
-            />
-            <Area
-              type="natural"
-              dataKey="value"
-              name={label}
-              stroke={stroke}
-              strokeWidth={2.8}
-              fill={`url(#${gradientId})`}
-              activeDot={{ r: 4, fill: stroke, stroke: "var(--panel)", strokeWidth: 2 }}
-              dot={false}
-              isAnimationActive
-            />
-          </RechartsAreaChart>
-        </ResponsiveContainer>
+      <div className="mc-chart-frame mc-chart-frame--area mc-chart-frame--mantine" data-testid={testId} aria-label={`${label}趋势图`}>
+        <ChartMountGate height={height}>
+          <AreaChart
+            h={height}
+            w="100%"
+            data={chartData}
+            dataKey="label"
+            series={[{ name: "value", label, color }]}
+            type="default"
+            curveType="natural"
+            withGradient
+            withDots={false}
+            strokeWidth={2.8}
+            fillOpacity={0.26}
+            gridAxis="xy"
+            tickLine="none"
+            textColor="var(--text-faint)"
+            gridColor="var(--line)"
+            valueFormatter={valueFormatter}
+            yAxisProps={{ width: 72, tickFormatter: valueFormatter, tickMargin: 8 }}
+            xAxisProps={{ tickMargin: 10 }}
+            tooltipProps={{ cursor: { stroke: "var(--line-strong)", strokeDasharray: "4 5" } }}
+            areaChartProps={{ margin: { top: 12, right: 10, bottom: 0, left: 0 } }}
+            activeDotProps={{ r: 4, stroke: "var(--panel)", strokeWidth: 2 }}
+            classNames={MANTINE_CHART_CLASS_NAMES}
+            className="mc-mantine-chart"
+          />
+        </ChartMountGate>
       </div>
       <ChartSummary data={chartData} valueKey="value" metricKind={valueKey} />
     </>
@@ -463,12 +460,12 @@ function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = 
 }
 
 function MetricBarChart({ data, valueKey = "events", color = "blue.6", label = "事件", testId, height = 222 }) {
-  const fill = chartColor(color);
   const chartData = (data || []).map((item) => ({
     ...item,
     label: item.label || "-",
     value: Number(item[valueKey]) || 0,
   }));
+  const valueFormatter = chartValueFormatter(valueKey, label);
 
   if (!chartData.length) {
     return <EmptyChart label={label} />;
@@ -476,54 +473,29 @@ function MetricBarChart({ data, valueKey = "events", color = "blue.6", label = "
 
   return (
     <>
-      <div className="mc-chart-frame mc-chart-frame--bar" data-testid={testId} aria-label={`${label}柱状图`}>
-        <ResponsiveContainer
-          width="100%"
-          height={height}
-          minWidth={1}
-          initialDimension={{ width: 720, height }}
-        >
-          <RechartsBarChart data={chartData} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="var(--line)" strokeDasharray="4 6" vertical={false} />
-            <XAxis
-              dataKey="label"
-              interval="preserveStartEnd"
-              tick={{ fill: "var(--text-faint)", fontSize: 12, fontWeight: 650 }}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={10}
-            />
-            <YAxis
-              width={54}
-              tick={{ fill: "var(--text-faint)", fontSize: 12, fontWeight: 650 }}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(value) => metricLabel(value, valueKey)}
-            />
-            <RechartsTooltip
-              cursor={{ fill: "color-mix(in srgb, var(--accent) 12%, transparent)" }}
-              contentStyle={{
-                background: "var(--panel-strong)",
-                border: "1px solid var(--line-strong)",
-                borderRadius: 12,
-                color: "var(--text)",
-                boxShadow: "var(--shadow-md)",
-              }}
-              labelStyle={{ color: "var(--text-soft)", fontWeight: 700 }}
-              formatter={(value) => [metricLabel(value, valueKey), label]}
-            />
-            <Bar
-              dataKey="value"
-              name={label}
-              fill={fill}
-              radius={[8, 8, 3, 3]}
-              minPointSize={2}
-              maxBarSize={18}
-              isAnimationActive
-            />
-          </RechartsBarChart>
-        </ResponsiveContainer>
+      <div className="mc-chart-frame mc-chart-frame--bar mc-chart-frame--mantine" data-testid={testId} aria-label={`${label}柱状图`}>
+        <ChartMountGate height={height}>
+          <BarChart
+            h={height}
+            w="100%"
+            data={chartData}
+            dataKey="label"
+            series={[{ name: "value", label, color }]}
+            gridAxis="x"
+            tickLine="none"
+            textColor="var(--text-faint)"
+            gridColor="var(--line)"
+            valueFormatter={valueFormatter}
+            yAxisProps={{ width: 54, tickFormatter: valueFormatter, tickMargin: 8 }}
+            xAxisProps={{ interval: "preserveStartEnd", tickMargin: 10 }}
+            tooltipProps={{ cursor: { fill: "color-mix(in srgb, var(--accent) 12%, transparent)" } }}
+            barChartProps={{ margin: { top: 12, right: 8, bottom: 0, left: 0 } }}
+            barProps={{ radius: [8, 8, 3, 3], minPointSize: 2 }}
+            maxBarWidth={18}
+            classNames={MANTINE_CHART_CLASS_NAMES}
+            className="mc-mantine-chart"
+          />
+        </ChartMountGate>
       </div>
       <ChartSummary data={chartData} valueKey="value" metricKind={valueKey} />
     </>
@@ -899,6 +871,7 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       value: input,
       meta: "Prompt 与上下文未命中输入",
       color: "var(--accent)",
+      chartColor: "blue.6",
     },
     {
       key: "cacheRead",
@@ -906,6 +879,7 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       value: cacheReadInput,
       meta: `${percentLabel(percentValue(cacheReadInput, inputSideTotal))} 输入侧覆盖`,
       color: "#2fa66a",
+      chartColor: "green.6",
     },
     {
       key: "cacheWrite",
@@ -913,6 +887,7 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       value: cacheCreationInput,
       meta: `读写杠杆 ${ratioLabel(cacheReadInput, cacheCreationInput)}`,
       color: "#14b8a6",
+      chartColor: "teal.6",
     },
     {
       key: "output",
@@ -920,6 +895,7 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       value: output,
       meta: `${percentLabel(percentValue(output, effectiveTotal))} 有效总量`,
       color: "var(--violet)",
+      chartColor: "violet.6",
     },
     {
       key: "reasoning",
@@ -927,8 +903,16 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       value: reasoningOutput,
       meta: `${percentLabel(percentValue(reasoningOutput, output + reasoningOutput))} 输出侧`,
       color: "var(--orange)",
+      chartColor: "orange.6",
     },
   ];
+  const donutRows = rows
+    .filter((row) => row.value > 0)
+    .map((row) => ({
+      name: row.label,
+      value: row.value,
+      color: row.chartColor,
+    }));
 
   return (
     <Paper className="mc-panel mc-token-ledger" radius="xl" p="lg">
@@ -955,15 +939,34 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
           />
         ) : null)}
       </div>
-      <div className="mc-token-ledger__rows">
-        {rows.map((row) => (
-          <div key={row.key} className="mc-token-ledger-row">
-            <i style={{ background: row.color }} />
-            <span>{row.label}</span>
-            <strong>{tokenLabel(row.value)}</strong>
-            <em>{row.meta}</em>
-          </div>
-        ))}
+      <div className="mc-token-ledger__body">
+        <div className="mc-token-ledger__donut" aria-label="Token 结构占比图">
+          {donutRows.length ? (
+            <DonutChart
+              data={donutRows}
+              size={158}
+              thickness={24}
+              paddingAngle={2}
+              strokeWidth={2}
+              chartLabel={tokenLabel(effectiveTotal)}
+              valueFormatter={tokenLabel}
+              tooltipDataSource="segment"
+            />
+          ) : (
+            <div className="mc-token-ledger__donut-empty">暂无 Token</div>
+          )}
+          <span>有效 Token 结构</span>
+        </div>
+        <div className="mc-token-ledger__rows">
+          {rows.map((row) => (
+            <div key={row.key} className="mc-token-ledger-row">
+              <i style={{ background: row.color }} />
+              <span>{row.label}</span>
+              <strong>{tokenLabel(row.value)}</strong>
+              <em>{row.meta}</em>
+            </div>
+          ))}
+        </div>
       </div>
     </Paper>
   );

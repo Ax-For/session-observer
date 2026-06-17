@@ -1282,16 +1282,34 @@ textarea {
   position: relative;
   min-width: 1px;
   min-height: 0;
-  padding: 10px 8px 2px;
+  padding: 12px 10px 4px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 62%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 56%, transparent), transparent 72%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.4), transparent 48%),
     var(--panel-soft);
 }
 
 .mc-chart-frame > div {
   min-width: 1px;
+}
+
+.mc-chart-frame--mantine {
+  isolation: isolate;
+}
+
+.mc-chart-gate {
+  width: 100%;
+  min-width: 1px;
+}
+
+.mc-chart-placeholder {
+  min-width: 1px;
+  border-radius: calc(var(--radius-lg) - 6px);
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent),
+    color-mix(in srgb, var(--panel-soft) 72%, transparent);
 }
 
 .mc-chart-frame--bar {
@@ -1306,6 +1324,56 @@ textarea {
 
 .mc-chart-frame :where(.recharts-tooltip-cursor) {
   opacity: 0.18;
+}
+
+.mc-chart-frame--mantine :where(.recharts-cartesian-axis-tick-value) {
+  fill: var(--text-faint);
+  font-family: "Manrope", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 720;
+}
+
+.mc-chart-frame--mantine :where(.recharts-cartesian-grid line) {
+  stroke-dasharray: 4 6;
+}
+
+.mc-chart-frame--mantine :where(.recharts-area-area) {
+  filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--accent) 12%, transparent));
+}
+
+.mc-chart-tooltip {
+  min-width: 156px;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 14px !important;
+  background: color-mix(in srgb, var(--panel-strong) 96%, white) !important;
+  box-shadow: var(--shadow-md) !important;
+  color: var(--text) !important;
+}
+
+.mc-chart-tooltip__label {
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 780;
+}
+
+.mc-chart-tooltip__item {
+  gap: 12px;
+}
+
+.mc-chart-tooltip__item-body {
+  min-width: 0;
+}
+
+.mc-chart-tooltip__item-name {
+  color: var(--text-soft);
+  font-weight: 720;
+}
+
+.mc-chart-tooltip__item-data {
+  color: var(--text);
+  font-family: "Sora", "Manrope", sans-serif;
+  font-weight: 760;
 }
 
 .mc-chart-kpis {
@@ -2193,6 +2261,51 @@ textarea {
   height: 100%;
 }
 
+.mc-token-ledger__body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.mc-token-ledger__donut {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.9), transparent 54%),
+    color-mix(in srgb, var(--panel-soft) 82%, transparent);
+}
+
+.mc-token-ledger__donut span {
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.mc-token-ledger__donut :where(text) {
+  fill: var(--text);
+  font-family: "Sora", "Manrope", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.mc-token-ledger__donut-empty {
+  display: grid;
+  width: 158px;
+  height: 158px;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
 .mc-token-ledger__rows {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -2207,12 +2320,18 @@ textarea {
   min-width: 0;
   grid-template-columns: 8px minmax(0, 1fr);
   gap: 5px 8px;
-  padding: 10px 12px;
+  padding: 12px;
   background: color-mix(in srgb, var(--panel-soft) 78%, transparent);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .mc-token-ledger-row + .mc-token-ledger-row {
   border-left: 1px solid var(--line);
+}
+
+.mc-token-ledger-row:hover {
+  background: color-mix(in srgb, var(--accent-soft) 36%, var(--panel-soft));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
 }
 
 .mc-token-ledger-row i {
