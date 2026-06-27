@@ -14,7 +14,7 @@ const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 1;
+const SUMMARY_CACHE_VERSION = 4;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -30,6 +30,44 @@ function emptyUsage() {
     reasoningOutput: 0,
     effectiveTotal: 0,
   };
+}
+
+function emptyCost() {
+  return {
+    estimatedUsd: 0,
+    knownTokenTotal: 0,
+  };
+}
+
+function addCostEstimate(target, estimate) {
+  if (!target || !estimate?.known) return;
+  target.estimatedUsd += Number(estimate.estimatedUsd) || 0;
+  target.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+}
+
+function mergeCost(target, source) {
+  if (!target || !source) return;
+  target.estimatedUsd += Number(source.estimatedUsd) || 0;
+  target.knownTokenTotal += Number(source.knownTokenTotal) || 0;
+}
+
+function addModelCost(map, model, estimate) {
+  if (!map || !estimate?.known) return;
+  const modelKey = model || "unknown";
+  const row = map.get(modelKey) || { model: modelKey, estimatedUsd: 0, knownTokenTotal: 0 };
+  row.estimatedUsd += Number(estimate.estimatedUsd) || 0;
+  row.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+  map.set(modelKey, row);
+}
+
+function mergeModelCosts(target, source) {
+  for (const [model, row] of source || []) {
+    addModelCost(target, model, {
+      known: true,
+      estimatedUsd: row?.estimatedUsd,
+      knownTokenTotal: row?.knownTokenTotal,
+    });
+  }
 }
 
 function addMapValue(map, key, amount) {
@@ -92,6 +130,7 @@ function createSessionSummary(sessionId, sourceType) {
     latestToken: null,
     latestTokenTime: "",
     aggregateToken: null,
+    ...emptyCost(),
     models: new Set(),
     count: 0,
     startedAt: "",
@@ -137,6 +176,7 @@ function createDailyBucket() {
     alerts: 0,
     tokens: 0,
     usage: emptyUsage(),
+    ...emptyCost(),
     sessions: new Set(),
     platforms: new Map(),
     workspaces: new Map(),
@@ -148,6 +188,7 @@ function createWorkspaceBucket(cwd) {
     cwd,
     events: 0,
     tokens: 0,
+    ...emptyCost(),
     alerts: 0,
     sessions: new Set(),
   };
@@ -157,6 +198,7 @@ function createFileSummary(file, signature) {
   return {
     file,
     signature,
+    costSpeedTier: "standard",
     eventsTotal: 0,
     firstEventAt: "",
     lastEventAt: "",
@@ -166,6 +208,8 @@ function createFileSummary(file, signature) {
     platforms: new Set(),
     usage: emptyUsage(),
     usageByModel: new Map(),
+    costByModel: new Map(),
+    unknownCostModels: new Set(),
     tokensByPlatform: new Map(),
     tokensByModel: new Map(),
     tokensByWorkspace: new Map(),
@@ -201,7 +245,7 @@ function pushRecentByTime(items, item, limit) {
   if (items.length > limit) items.length = limit;
 }
 
-function touchSession(summary, event) {
+function touchSession(summary, event, costEstimate) {
   const sessionId = event?.sessionId || "unknown";
   if (!sessionId || sessionId === "unknown") return null;
   const session = summary.sessions.get(sessionId) || createSessionSummary(sessionId, event?.sourceType);
@@ -220,6 +264,7 @@ function touchSession(summary, event) {
       session.latestTokenTime = event.time || "";
     }
     session.aggregateToken = ObserverCore.addTokenUsage(session.aggregateToken, event.tokenUsage);
+    addCostEstimate(session, costEstimate);
   }
   if (event?.callType === "Prompt" || event?.callType === "User") session.prompt += 1;
   else if (event?.callType === "Agent") session.agent += 1;
@@ -228,18 +273,19 @@ function touchSession(summary, event) {
   return session;
 }
 
-function touchWorkspace(summary, event, tokenTotal, isAlert) {
+function touchWorkspace(summary, event, tokenTotal, isAlert, costEstimate) {
   const cwd = event?.cwd || "unknown";
   const workspace = summary.workspaces.get(cwd) || createWorkspaceBucket(cwd);
   workspace.events += 1;
   workspace.tokens += tokenTotal;
+  addCostEstimate(workspace, costEstimate);
   if (isAlert) workspace.alerts += 1;
   if (event?.sessionId && event.sessionId !== "unknown") workspace.sessions.add(event.sessionId);
   summary.workspaces.set(cwd, workspace);
   return workspace;
 }
 
-function touchDaily(summary, event, eventMs, tokenTotal, isAlert) {
+function touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate) {
   const key = dayKeyFromMs(eventMs);
   const bucket = summary.daily.get(key) || createDailyBucket();
   const cwd = event?.cwd || "unknown";
@@ -248,8 +294,10 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert) {
   bucket.events += 1;
   if (isAlert) bucket.alerts += 1;
   bucket.tokens += tokenTotal;
+  addCostEstimate(bucket, costEstimate);
   workspace.events += 1;
   workspace.tokens += tokenTotal;
+  addCostEstimate(workspace, costEstimate);
   if (isAlert) workspace.alerts += 1;
   if (event?.sessionId && event.sessionId !== "unknown") {
     bucket.sessions.add(event.sessionId);
@@ -263,17 +311,19 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert) {
   summary.daily.set(key, bucket);
 }
 
-function touchHourly(summary, event, eventMs, tokenTotal, isAlert) {
+function touchHourly(summary, event, eventMs, tokenTotal, isAlert, costEstimate) {
   const key = hourKeyFromMs(eventMs);
   const bucket = summary.hourly.get(key) || {
     events: 0,
     alerts: 0,
     tokens: 0,
+    ...emptyCost(),
     platforms: new Map(),
   };
   bucket.events += 1;
   if (isAlert) bucket.alerts += 1;
   bucket.tokens += tokenTotal;
+  addCostEstimate(bucket, costEstimate);
   if (tokenTotal > 0) addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
   summary.hourly.set(key, bucket);
 }
@@ -287,14 +337,18 @@ function ingestEvent(summary, event) {
   if (event.model) summary.models.add(event.model);
   if (event.callType) summary.types.add(event.callType);
   if (event.sourceType) summary.platforms.add(event.sourceType);
-  touchSession(summary, event);
 
   const isAlert = ObserverCore.isAlertEvent(event);
   const tokenTotal = ObserverCore.tokenCountedTotal(event.tokenUsage, event.sourceType);
+  const costOptions = event?.sourceType === "codex" ? { speed: summary.costSpeedTier } : {};
+  const costEstimate = tokenTotal > 0 ? tokenPricing.estimateTokenCost(event.tokenUsage, event.model, costOptions) : null;
+  touchSession(summary, event, costEstimate);
   if (tokenTotal > 0) {
     addUsageTotals(summary.usage, event.tokenUsage, event.sourceType);
     const modelKey = event?.model || "unknown";
     summary.usageByModel.set(modelKey, ObserverCore.addTokenUsage(summary.usageByModel.get(modelKey), event.tokenUsage));
+    if (costEstimate?.known) addModelCost(summary.costByModel, modelKey, costEstimate);
+    else summary.unknownCostModels.add(modelKey);
     addMapValue(summary.tokensByPlatform, event?.sourceType, tokenTotal);
     addMapValue(summary.tokensByModel, event?.model, tokenTotal);
     addMapValue(summary.tokensByWorkspace, event?.cwd, tokenTotal);
@@ -336,9 +390,9 @@ function ingestEvent(summary, event) {
 
   const eventMs = ObserverCore.toTimeMs(time);
   if (eventMs == null) return;
-  touchWorkspace(summary, event, tokenTotal, isAlert);
-  touchDaily(summary, event, eventMs, tokenTotal, isAlert);
-  touchHourly(summary, event, eventMs, tokenTotal, isAlert);
+  touchWorkspace(summary, event, tokenTotal, isAlert, costEstimate);
+  touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate);
+  touchHourly(summary, event, eventMs, tokenTotal, isAlert, costEstimate);
 }
 
 function mergeMapTotals(target, source) {
@@ -360,6 +414,7 @@ function mergeUsageByModel(target, source) {
 function mergeWorkspace(target, source) {
   target.events += source.events || 0;
   target.tokens += source.tokens || 0;
+  mergeCost(target, source);
   target.alerts += source.alerts || 0;
   for (const sessionId of source.sessions || []) target.sessions.add(sessionId);
 }
@@ -368,6 +423,7 @@ function mergeDailyBucket(target, source) {
   target.events += source.events || 0;
   target.alerts += source.alerts || 0;
   target.tokens += source.tokens || 0;
+  mergeCost(target, source);
   mergeUsage(target.usage, source.usage);
   for (const sessionId of source.sessions || []) target.sessions.add(sessionId);
   mergeMapTotals(target.platforms, source.platforms);
@@ -393,6 +449,7 @@ function mergeSession(target, source) {
     target.latestTokenTime = source.latestTokenTime || "";
   }
   if (source.aggregateToken) target.aggregateToken = ObserverCore.addTokenUsage(target.aggregateToken, source.aggregateToken);
+  mergeCost(target, source);
   target.prompt += source.prompt || 0;
   target.agent += source.agent || 0;
   target.tool += source.tool || 0;
@@ -407,6 +464,8 @@ function mergeSummary(target, source) {
   for (const platform of source.platforms || []) target.platforms.add(platform);
   mergeUsage(target.usage, source.usage);
   mergeUsageByModel(target.usageByModel, source.usageByModel);
+  mergeModelCosts(target.costByModel, source.costByModel);
+  for (const model of source.unknownCostModels || []) target.unknownCostModels.add(model);
   mergeMapTotals(target.tokensByPlatform, source.tokensByPlatform);
   mergeMapTotals(target.tokensByModel, source.tokensByModel);
   mergeMapTotals(target.tokensByWorkspace, source.tokensByWorkspace);
@@ -439,10 +498,11 @@ function mergeSummary(target, source) {
     target.daily.set(key, bucket);
   }
   for (const [key, sourceBucket] of source.hourly || []) {
-    const bucket = target.hourly.get(key) || { events: 0, alerts: 0, tokens: 0, platforms: new Map() };
+    const bucket = target.hourly.get(key) || { events: 0, alerts: 0, tokens: 0, ...emptyCost(), platforms: new Map() };
     bucket.events += sourceBucket.events || 0;
     bucket.alerts += sourceBucket.alerts || 0;
     bucket.tokens += sourceBucket.tokens || 0;
+    mergeCost(bucket, sourceBucket);
     mergeMapTotals(bucket.platforms, sourceBucket.platforms);
     target.hourly.set(key, bucket);
   }
@@ -609,6 +669,7 @@ function parseFileSummary(record, deps) {
   }
 
   const parseDeps = { ...deps, parser, sourceType, file: record.file };
+  summary.costSpeedTier = parseDeps.costSpeedTier || "standard";
   const result = fsScanner.forEachCompleteJsonlLine(record.file, (line, _lineNumber, locator) => {
     ingestJsonlLine(summary, line, context, parseDeps, locator);
   }, { maxLineBytes: config.EVENT_STREAM_MAX_PARSE_LINE_BYTES });
@@ -692,6 +753,8 @@ function serializeSession(session, threadMeta) {
     cwd: session.cwd || metaCwd,
     latestToken: session.latestToken,
     aggregateToken: session.aggregateToken,
+    estimatedUsd: session.estimatedUsd || 0,
+    knownTokenTotal: session.knownTokenTotal || 0,
     models: [...session.models].sort(),
     count: session.count,
     startedAt: session.startedAt,
@@ -730,6 +793,8 @@ function buildHourlyChart(summary, nowMs, bucketCount = 24) {
       events: bucket?.events || 0,
       alerts: bucket?.alerts || 0,
       tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+      knownTokenTotal: bucket?.knownTokenTotal || 0,
       platforms: sortedValueEntries(bucket?.platforms || new Map()),
     };
   });
@@ -742,6 +807,8 @@ function topWorkspaceFromBucket(bucket) {
       events: workspace.events,
       sessions: workspace.sessions.size,
       tokens: workspace.tokens,
+      estimatedUsd: workspace.estimatedUsd || 0,
+      knownTokenTotal: workspace.knownTokenTotal || 0,
     }))
     .sort((left, right) => {
       if (right.sessions !== left.sessions) return right.sessions - left.sessions;
@@ -763,6 +830,8 @@ function buildDailyChart(summary, nowMs, bucketCount = 30) {
       events: bucket?.events || 0,
       alerts: bucket?.alerts || 0,
       tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+      knownTokenTotal: bucket?.knownTokenTotal || 0,
       platforms: sortedValueEntries(bucket?.platforms || new Map()),
     };
   });
@@ -780,6 +849,8 @@ function buildDailySessionHeatmap(summary, nowMs, bucketCount = 365) {
       sessions: bucket?.sessions?.size || 0,
       events: bucket?.events || 0,
       tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+      knownTokenTotal: bucket?.knownTokenTotal || 0,
       topWorkspace: topWorkspaceFromBucket(bucket),
     };
   });
@@ -788,8 +859,8 @@ function buildDailySessionHeatmap(summary, nowMs, bucketCount = 365) {
 function buildTokenWindows(summary, nowMs) {
   const dayStartMs = startOfLocalDayMs(nowMs);
   const weekStartMs = startOfLocalWeekMs(nowMs);
-  const day = { ...emptyUsage(), platforms: new Map(), rawTotal: 0 };
-  const week = { ...emptyUsage(), platforms: new Map(), rawTotal: 0 };
+  const day = { ...emptyUsage(), ...emptyCost(), platforms: new Map(), rawTotal: 0 };
+  const week = { ...emptyUsage(), ...emptyCost(), platforms: new Map(), rawTotal: 0 };
 
   for (const [key, bucket] of summary.daily) {
     const bucketMs = Number(key);
@@ -799,6 +870,7 @@ function buildTokenWindows(summary, nowMs) {
     if (bucketMs >= dayStartMs) targets.push(day);
     for (const target of targets) {
       mergeUsage(target, bucket.usage);
+      mergeCost(target, bucket);
       target.rawTotal += bucket.usage.total || 0;
       mergeMapTotals(target.platforms, bucket.platforms);
     }
@@ -819,32 +891,22 @@ function buildTokenWindows(summary, nowMs) {
 }
 
 function buildCostSummary(summary) {
-  let estimatedUsd = 0;
-  let knownTokenTotal = 0;
-  const unknownModels = new Set();
-  const byModel = [];
-
-  for (const [model, usage] of summary.usageByModel) {
-    const estimate = tokenPricing.estimateTokenCost(usage, model);
-    if (!estimate.known) {
-      unknownModels.add(model);
-      continue;
-    }
-    estimatedUsd += estimate.estimatedUsd;
-    knownTokenTotal += estimate.knownTokenTotal;
-    byModel.push({
-      model,
-      estimatedUsd: estimate.estimatedUsd,
-      knownTokenTotal: estimate.knownTokenTotal,
-    });
-  }
+  const byModel = [...(summary.costByModel || new Map()).values()]
+    .map((row) => ({
+      model: row.model,
+      estimatedUsd: row.estimatedUsd || 0,
+      knownTokenTotal: row.knownTokenTotal || 0,
+    }));
+  const estimatedUsd = byModel.reduce((total, row) => total + (Number(row.estimatedUsd) || 0), 0);
+  const knownTokenTotal = byModel.reduce((total, row) => total + (Number(row.knownTokenTotal) || 0), 0);
 
   return {
     estimatedUsd,
     knownTokenTotal,
     currency: "USD",
     source: "built-in-estimate",
-    unknownModels: [...unknownModels].sort(),
+    speedTier: summary.costSpeedTier || "standard",
+    unknownModels: [...(summary.unknownCostModels || new Set())].sort(),
     byModel: byModel.sort((left, right) => right.estimatedUsd - left.estimatedUsd),
   };
 }
@@ -861,6 +923,8 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       latest: session.latest || "",
       events: session.count || 0,
       tokens: ObserverCore.tokenCountedTotal(session.aggregateToken, session.sourceType),
+      estimatedUsd: session.estimatedUsd || 0,
+      knownTokenTotal: session.knownTokenTotal || 0,
       alerts: summary.alerts.bySession.get(session.sessionId) || 0,
     }))
     .sort((left, right) => {
@@ -874,6 +938,8 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       events: workspace.events,
       sessions: workspace.sessions.size,
       tokens: workspace.tokens,
+      estimatedUsd: workspace.estimatedUsd || 0,
+      knownTokenTotal: workspace.knownTokenTotal || 0,
       alerts: workspace.alerts,
     }))
     .sort((left, right) => {
@@ -896,8 +962,13 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
   }
   const platformShare = sortedValueEntries(summary.tokensByPlatform);
   const modelTokens = sortedValueEntries(summary.tokensByModel).slice(0, 10);
-  const workspaceTokens = sortedValueEntries(summary.tokensByWorkspace)
-    .map((item) => ({ cwd: item.key, total: item.total }));
+  const workspaceTokens = workspaceChart
+    .map((item) => ({
+      cwd: item.cwd,
+      total: item.tokens,
+      estimatedUsd: item.estimatedUsd || 0,
+      knownTokenTotal: item.knownTokenTotal || 0,
+    }));
 
   const costSummary = buildCostSummary(summary);
 
@@ -982,9 +1053,11 @@ function createSummaryStore(options = {}) {
   let persistentCacheLoaded = false;
   let persistentCacheDirty = false;
   const cacheFile = options.cacheFile || "";
+  const costSpeedTier = tokenPricing.normalizeSpeedTier(options.costSpeedTier);
   const deps = {
     parsers: options.parsers || {},
     threadMeta: options.threadMeta || new Map(),
+    costSpeedTier,
   };
   const now = typeof options.now === "function" ? options.now : () => Date.now();
 
@@ -995,6 +1068,7 @@ function createSummaryStore(options = {}) {
     try {
       const payload = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
       if (payload?.version !== SUMMARY_CACHE_VERSION || !payload.files || typeof payload.files !== "object") return;
+      if (tokenPricing.normalizeSpeedTier(payload.costSpeedTier) !== costSpeedTier) return;
       for (const [file, entry] of Object.entries(payload.files)) {
         const restored = deserializeCacheEntry(file, entry);
         if (restored) fileCache.set(file, restored);
@@ -1014,6 +1088,7 @@ function createSummaryStore(options = {}) {
       const tmpFile = `${cacheFile}.tmp`;
       fs.writeFileSync(tmpFile, JSON.stringify({
         version: SUMMARY_CACHE_VERSION,
+        costSpeedTier,
         savedAt: new Date(Number(now())).toISOString(),
         files,
       }));
@@ -1060,6 +1135,7 @@ function createSummaryStore(options = {}) {
     let reusedFiles = 0;
     let incrementalFiles = 0;
     const aggregate = createFileSummary("aggregate", "aggregate");
+    aggregate.costSpeedTier = costSpeedTier;
 
     for (const record of records) {
       const cached = fileCache.get(record.file);

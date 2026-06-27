@@ -84,7 +84,7 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, o
                 radius="xl"
                 color="teal"
                 leftSection={<IconRoute size={16} />}
-                onClick={() => onOpenSessionDetail?.(event)}
+                onClick={() => onOpenSessionDetail?.(event, { order: "desc" })}
               >
                 打开会话详情
               </Button>

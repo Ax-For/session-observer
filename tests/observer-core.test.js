@@ -69,6 +69,69 @@ test("parseCodexLineToEvent keeps full content by default but compacts large out
   assert.equal(compactEvent.content.endsWith("..."), true);
 });
 
+test("parseCodexLineToEvent splits cached input from uncached input tokens", () => {
+  const event = parseCodexLineToEvent({
+    timestamp: "2026-04-19T10:02:00.000Z",
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 3970,
+          cached_input_tokens: 3200,
+          output_tokens: 48,
+          reasoning_output_tokens: 12,
+          total_tokens: 4018,
+        },
+      },
+    },
+  }, {
+    model: "gpt-5.5",
+    sessionId: "sess-codex",
+    cwd: "/tmp/workspace",
+    sessionTitle: "Codex Session",
+    sourceFile: "codex.jsonl",
+  });
+
+  assert.equal(event.callType, "Token_Usage");
+  assert.deepEqual(event.tokenUsage, {
+    input: 770,
+    output: 48,
+    total: 4018,
+    cachedInput: 3200,
+    cacheReadInput: 3200,
+    cacheCreationInput: 0,
+    reasoningOutput: 12,
+  });
+});
+
+test("parseCodexLineToEvent clamps inconsistent cached input to zero uncached input", () => {
+  const event = parseCodexLineToEvent({
+    timestamp: "2026-04-19T10:03:00.000Z",
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 100,
+          cached_input_tokens: 128,
+          output_tokens: 8,
+          total_tokens: 108,
+        },
+      },
+    },
+  }, {
+    model: "gpt-5.5",
+    sessionId: "sess-codex",
+    cwd: "/tmp/workspace",
+    sessionTitle: "Codex Session",
+    sourceFile: "codex.jsonl",
+  });
+
+  assert.equal(event.tokenUsage.input, 0);
+  assert.equal(event.tokenUsage.cacheReadInput, 128);
+});
+
 test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from assistant output", () => {
   const context = {
     model: "unknown",
@@ -333,7 +396,7 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
       time: "2026-04-23T01:10:00.000Z",
       sourceType: "codex",
       callType: "Token_Usage",
-      tokenUsage: { input: 900, output: 300, total: 1200, cachedInput: 300, reasoningOutput: 50 },
+      tokenUsage: { input: 600, output: 300, total: 1200, cachedInput: 300, reasoningOutput: 50 },
     },
     {
       time: "2026-04-22T11:20:00.000Z",
@@ -356,7 +419,7 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
     day: {
       total: 1200,
       rawTotal: 1200,
-      input: 900,
+      input: 600,
       inputTotal: 900,
       output: 300,
       cachedInput: 300,
@@ -370,7 +433,7 @@ test("buildTokenUsageWindows aggregates today and current week token totals by p
     week: {
       total: 2200,
       rawTotal: 2000,
-      input: 1500,
+      input: 1200,
       inputTotal: 1700,
       output: 500,
       cachedInput: 500,
@@ -432,7 +495,7 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
       cwd: "/repo/a",
       callType: "Token_Usage",
       tokenUsage: {
-        input: 1000,
+        input: 700,
         output: 200,
         total: 1200,
         cachedInput: 300,
@@ -560,6 +623,30 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.deepEqual(summary.charts.alertTypes, [
     { key: "Tool_Result", count: 1 },
   ]);
+});
+
+test("buildObservabilitySummary can apply Codex fast pricing", () => {
+  const summary = buildObservabilitySummary([
+    {
+      time: "2026-06-01T11:00:00.000Z",
+      sessionId: "sess-fast",
+      sourceType: "codex",
+      model: "gpt-5.5",
+      cwd: "/repo/fast",
+      callType: "Token_Usage",
+      tokenUsage: {
+        input: 100,
+        cacheReadInput: 100,
+        output: 10,
+        total: 210,
+      },
+    },
+  ], {
+    nowMs: Date.parse("2026-06-01T12:00:00.000Z"),
+    costSpeedTier: "fast",
+  });
+
+  assert.equal(summary.tokens.cost.estimatedUsd, 0.002125);
 });
 
 test("applySessionTitleOverrides updates only matching source groups", () => {

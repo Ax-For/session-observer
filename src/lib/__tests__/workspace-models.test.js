@@ -21,7 +21,7 @@ const sampleEvents = [
     sessionTitle: "Incident triage",
     time: "2026-04-19T14:36:10.720Z",
     tokenUsage: {
-      input: 2400,
+      input: 1200,
       output: 220,
       total: 2620,
       cachedInput: 1200,
@@ -132,7 +132,7 @@ describe("buildDashboardSummary", () => {
         day: {
           total: 2620,
           rawTotal: 2620,
-          input: 2400,
+          input: 1200,
           inputTotal: 2400,
           output: 220,
           cachedInput: 1200,
@@ -146,7 +146,7 @@ describe("buildDashboardSummary", () => {
         week: {
           total: 2620,
           rawTotal: 2620,
-          input: 2400,
+          input: 1200,
           inputTotal: 2400,
           output: 220,
           cachedInput: 1200,
@@ -517,7 +517,7 @@ describe("local workspace models", () => {
           sessionTitle: "Incident triage",
           time: "2026-04-19T14:36:10.720Z",
           tokenUsage: {
-            input: 2400,
+            input: 1200,
             output: 220,
             total: 2620,
             cachedInput: 1200,

@@ -38,6 +38,7 @@ const summaryStore = createSummaryStore({
   parsers,
   applyEventSessionMetaCore,
   cacheFile: config.SUMMARY_CACHE_FILE,
+  costSpeedTier: config.CODEX_SERVICE_TIER,
 });
 const sourceChangeBus = createSourceChangeBus({
   debounceMs: config.SOURCE_CHANGE_DEBOUNCE_MS,

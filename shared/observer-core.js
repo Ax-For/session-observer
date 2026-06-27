@@ -48,6 +48,11 @@
     return String(n);
   }
 
+  function finiteTokenOrNull(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
   function hasTokenUsageData(tokenUsage) {
     if (!tokenUsage) return false;
     return ["input", "output", "total", "cachedInput", "cacheReadInput", "cacheCreationInput", "reasoningOutput"].some((key) => {
@@ -570,7 +575,7 @@
     if (!hasTokenUsageData(tokenUsage)) return 0;
     const input = Number(tokenUsage?.input);
     const countedInput = Number.isFinite(input) ? input : 0;
-    if (sourceType === "claude") {
+    if (sourceType === "claude" || sourceType === "codex") {
       return countedInput + tokenCacheReadInput(tokenUsage) + tokenCacheCreationInput(tokenUsage);
     }
     return countedInput;
@@ -756,7 +761,9 @@
       traceSummary = traceModelApi.summarizeTraceModel(traceModelApi.buildTraceModel(eventList));
     }
     const costSummary = tokenPricingApi?.estimateCostSummary
-      ? tokenPricingApi.estimateCostSummary(eventList)
+      ? tokenPricingApi.estimateCostSummary(eventList, {
+        resolveOptions: (event) => (event?.sourceType === "codex" ? { speed: options.costSpeedTier } : {}),
+      })
       : { estimatedUsd: 0, knownTokenTotal: 0, currency: "USD", source: "unavailable", unknownModels: [], byModel: [] };
     const sessionById = new Map();
     for (const session of sessions) sessionById.set(session.sessionId, session);
@@ -1090,6 +1097,11 @@
 
     if (obj.type === "event_msg" && obj.payload?.type === "token_count") {
       const usage = obj.payload?.info?.last_token_usage || {};
+      const inputTokens = finiteTokenOrNull(usage.input_tokens);
+      const cacheReadTokens = finiteTokenOrNull(usage.cached_input_tokens);
+      const nonCachedInput = inputTokens == null
+        ? null
+        : Math.max(0, inputTokens - (cacheReadTokens || 0));
       const content = [
         "Token usage",
         `In ${fmtTokenHuman(usage.input_tokens)} (${fmtNum(usage.input_tokens)})`,
@@ -1114,7 +1126,7 @@
         content,
         summary: clip(content, 220),
         tokenUsage: {
-          input: usage.input_tokens ?? null,
+          input: nonCachedInput,
           output: usage.output_tokens ?? null,
           total: usage.total_tokens ?? null,
           cachedInput: usage.cached_input_tokens ?? null,

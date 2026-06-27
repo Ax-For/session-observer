@@ -151,7 +151,7 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
         type="button"
         className="event-row__session-action"
         aria-label={`查看会话详情 ${shortSessionId(event.sessionId)}`}
-        onClick={() => onOpenSessionDetail?.(event)}
+        onClick={() => onOpenSessionDetail?.(event, { order: "desc" })}
       >
         会话详情
       </button>
@@ -542,7 +542,7 @@ export function StreamWorkspace({
                       type="button"
                       className="session-rail__detail"
                       aria-label={`查看会话详情 ${session.title || session.sessionId}`}
-                      onClick={() => onOpenSessionDetail?.(session)}
+                      onClick={() => onOpenSessionDetail?.(session, { order: "desc" })}
                     >
                       <IconArrowRight size={15} stroke={2.2} aria-hidden="true" />
                     </button>

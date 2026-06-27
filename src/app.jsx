@@ -140,6 +140,7 @@ function createSessionDetailPage() {
     total: 0,
     offset: 0,
     limit: 500,
+    order: "asc",
     hasMore: false,
     nextOffset: 0,
   };
@@ -174,6 +175,7 @@ export function App() {
   const [sessionDetailEvents, setSessionDetailEvents] = useState([]);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
+  const [sessionDetailOrder, setSessionDetailOrder] = useState("asc");
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
   const sessionDetailRequestId = useRef(0);
   const [streamSearchDraft, setStreamSearchDraft] = useState(initialUrlState.streamFilters?.query || "");
@@ -362,6 +364,7 @@ export function App() {
     }
 
     const append = Boolean(options.append);
+    const order = options.order || (append ? sessionDetailPage.order : sessionDetailOrder) || "asc";
     const limit = sessionDetailPage.limit || 500;
     const offset = append ? sessionDetailPage.nextOffset : 0;
     const requestId = ++sessionDetailRequestId.current;
@@ -377,6 +380,7 @@ export function App() {
         total: allEvents.length,
         offset: 0,
         limit: allEvents.length,
+        order: "asc",
         hasMore: false,
         nextOffset: allEvents.length,
       });
@@ -387,7 +391,7 @@ export function App() {
     try {
       const payload = await apiClient.fetchEvents({
         sessionId,
-        order: "asc",
+        order,
         limit,
         offset,
         mode: "raw",
@@ -402,6 +406,7 @@ export function App() {
         total,
         offset,
         limit,
+        order,
         hasMore: Boolean(payload.page?.hasMore) || nextOffset < total,
         nextOffset,
       });
@@ -431,9 +436,9 @@ export function App() {
 
   useEffect(() => {
     if (tab !== "sessions" || !selectedSessionId) return undefined;
-    void loadSessionDetailEvents(selectedSessionId, { append: false });
+    void loadSessionDetailEvents(selectedSessionId, { append: false, order: sessionDetailOrder });
     return undefined;
-  }, [dataSource, selectedSessionId, tab]);
+  }, [dataSource, selectedSessionId, sessionDetailOrder, tab]);
 
   useEffect(() => {
     document.documentElement.dataset.observerTheme = themeMode;
@@ -517,6 +522,7 @@ export function App() {
     setSessionDetailSeed(null);
     setSessionDetailEvents([]);
     setSessionDetailPage(createSessionDetailPage());
+    setSessionDetailOrder("asc");
   }
 
   function refreshCurrentView() {
@@ -575,7 +581,9 @@ export function App() {
     const sessionId = getNavigationSessionId(target);
     if (!sessionId) return;
     const seed = buildSessionDetailSeed(target);
+    const preferredOrder = options.order || (target?.time ? "desc" : "asc");
     setSessionDetailSeed(seed);
+    setSessionDetailOrder(preferredOrder);
     setSelectedSessionId(sessionId);
     if (options.closeEventDrawer) setDetailEvent(null);
     startTransition(() => {

@@ -137,6 +137,9 @@ const MANTINE_CHART_CLASS_NAMES = {
 };
 
 function metricLabel(value, valueKey) {
+  if (valueKey === "estimatedUsd" || valueKey === "cost" || valueKey === "usd" || valueKey === "金额") {
+    return usdLabel(value);
+  }
   return valueKey === "tokens" ? tokenLabel(value) : formatNumber(value);
 }
 
@@ -901,13 +904,14 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
       key: "reasoning",
       label: "推理输出",
       value: reasoningOutput,
-      meta: `${percentLabel(percentValue(reasoningOutput, output + reasoningOutput))} 输出侧`,
+      meta: `${percentLabel(percentValue(reasoningOutput, output))} 输出侧`,
       color: "var(--orange)",
       chartColor: "orange.6",
+      detailOnly: true,
     },
   ];
   const donutRows = rows
-    .filter((row) => row.value > 0)
+    .filter((row) => row.value > 0 && !row.detailOnly)
     .map((row) => ({
       name: row.label,
       value: row.value,
@@ -1046,7 +1050,7 @@ function TokenEfficiencyPanel({ tokens, tokenCost }) {
     },
     {
       label: "推理占输出侧",
-      value: percentLabel(percentValue(reasoning, output + reasoning)),
+      value: percentLabel(percentValue(reasoning, output)),
       meta: `${tokenLabel(reasoning)} reasoning`,
     },
     {
@@ -1209,7 +1213,7 @@ function CacheEconomyPanel({ tokens }) {
     },
     {
       label: "输出压力",
-      value: percentLabel(percentValue(output + reasoning, finiteToken(tokens?.effectiveTotal))),
+      value: percentLabel(percentValue(output, finiteToken(tokens?.effectiveTotal))),
       meta: `输出 ${tokenLabel(output)} · 推理 ${tokenLabel(reasoning)}`,
       tone: "accent",
     },
@@ -1223,9 +1227,9 @@ function CacheEconomyPanel({ tokens }) {
           ["非缓存", nonCache, "var(--accent)"],
           ["命中", cacheRead, "#39d98a"],
           ["写入", cacheCreation, "#14b8a6"],
-          ["输出", output + reasoning, "var(--violet)"],
+          ["输出", output, "var(--violet)"],
         ].map(([label, value, color]) => (
-          value ? <span key={label} title={label} style={{ width: `${Math.max(2, percentValue(value, inputSideTotal + output + reasoning))}%`, background: color }} /> : null
+          value ? <span key={label} title={label} style={{ width: `${Math.max(2, percentValue(value, inputSideTotal + output))}%`, background: color }} /> : null
         ))}
       </div>
     </div>
@@ -1249,7 +1253,7 @@ function TokenWorkspacePanel({ tokens }) {
           {
             label: "Top 工作区",
             value: percentLabel(percentValue(top?.total, total)),
-            meta: clipText(top?.cwd || "-", 36),
+            meta: `${clipText(top?.cwd || "-", 36)} · ${usdLabel(top?.estimatedUsd || 0)}`,
             tone: "primary",
           },
           {
@@ -1263,7 +1267,7 @@ function TokenWorkspacePanel({ tokens }) {
       <RankedRows
         rows={rows.map((row) => ({ ...row, key: row.cwd }))}
         renderLabel={(row) => clipText(row.cwd, 44)}
-        renderMeta={(row) => `${percentLabel(percentValue(row.total, total))} 总量`}
+        renderMeta={(row) => `${percentLabel(percentValue(row.total, total))} 总量 · ${usdLabel(row.estimatedUsd || 0)}`}
         valueFormatter={tokenLabel}
       />
     </div>
@@ -1964,6 +1968,24 @@ export function ObservabilityWorkspace({
                 <MetricAreaChart data={dailyChart} valueKey="tokens" label="Token" testId="token-trend-chart" />
               </ChartCard>
 
+              <ChartCard
+                eyebrow="Spend"
+                title="近 14 天金额花费趋势"
+                icon={IconGauge}
+                tone="success"
+                className="mc-token-card mc-token-card--cost-trend"
+                action={<Badge radius="xl" variant="light" color="teal">估算 USD</Badge>}
+              >
+                <MetricAreaChart
+                  data={dailyChart}
+                  valueKey="estimatedUsd"
+                  color="teal.6"
+                  label="金额"
+                  testId="token-cost-trend-chart"
+                  height={184}
+                />
+              </ChartCard>
+
               <Paper className="mc-panel mc-panel--token mc-token-card mc-token-card--windows" radius="xl" p="lg">
                 <PanelHeader
                   eyebrow="Token Windows"
@@ -1993,6 +2015,7 @@ export function ObservabilityWorkspace({
                           className="mc-token-window__progress"
                         />
                         <Text className="mc-token-window__meta">Codex {tokenLabel(codexTotal)} · Claude Code {tokenLabel(claudeTotal)}</Text>
+                        <Text className="mc-token-window__cost">估算 {usdLabel(window?.estimatedUsd || 0)}</Text>
                         {hasWindowBreakdown ? (
                           <div className="mc-token-window__detail">
                             <span>输入侧 {tokenLabel(inputSideToken(window) || window?.input || 0)}</span>
@@ -2018,7 +2041,10 @@ export function ObservabilityWorkspace({
                         <Text className="mc-session-row__title">{session.title}</Text>
                         <Text className="mc-session-row__meta">{platformLabel(session.sourceType)} · {shortSessionId(session.sessionId)} · {formatNumber(session.events)} 事件</Text>
                       </div>
-                      <Text className="mc-session-row__value">{tokenLabel(session.tokens)}</Text>
+                      <Text className="mc-session-row__value">
+                        <span>{tokenLabel(session.tokens)}</span>
+                        <em>{usdLabel(session.estimatedUsd || 0)}</em>
+                      </Text>
                     </div>
                   ))}
                 </div>
@@ -2035,7 +2061,7 @@ export function ObservabilityWorkspace({
                 <PanelHeader eyebrow="Cost" title="成本估算" icon={IconGauge} tone="success" />
                 <Text className="mc-panel__lead">{usdLabel(tokenCost.estimatedUsd)}</Text>
                 <Text className="mc-muted-line">
-                  已覆盖 {tokenLabel(tokenCost.knownTokenTotal || 0)}
+                  {tokenCost.speedTier === "fast" ? "Codex fast" : "Codex standard"} · API 等价估算 · 已覆盖 {tokenLabel(tokenCost.knownTokenTotal || 0)}
                   {tokenCost.unknownModels?.length ? ` · ${formatNumber(tokenCost.unknownModels.length)} 个模型缺少价格` : " · 价格表已覆盖"}
                 </Text>
                 <RankedRows

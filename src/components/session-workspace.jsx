@@ -48,6 +48,7 @@ import { readableEventSummary } from "../lib/event-display";
 const SESSION_VIRTUAL_THRESHOLD = 24;
 const SESSION_ROW_HEIGHT = 112;
 const SESSION_ROW_OVERSCAN = 4;
+const DIALOGUE_TYPES = new Set(["Prompt", "User", "Agent"]);
 
 function formatTokenText(value, hasTokenData = true) {
   return hasTokenData ? `${formatCompactNumber(value)} Tok` : "Token 未记录";
@@ -138,6 +139,25 @@ function toolNameFromEvent(event) {
   return summary.match(/tool=([^\s]+)/i)?.[1] || "";
 }
 
+function dialogueRoleLabel(event) {
+  if (event?.callType === "Agent") return "Agent";
+  if (event?.callType === "Prompt" || event?.callType === "User") return "用户";
+  return callTypeLabel(event?.callType);
+}
+
+function dedupeDialoguePreviewEvents(events) {
+  const seen = new Set();
+  const rows = [];
+  for (const event of events || []) {
+    const text = readableEventSummary(event, 360).trim().replace(/\s+/g, " ");
+    const signature = `${event?.callType || ""}:${text}`;
+    if (!text || seen.has(signature)) continue;
+    seen.add(signature);
+    rows.push(event);
+  }
+  return rows;
+}
+
 function sessionMatchesId(session, selectedSessionId) {
   if (!selectedSessionId || !session) return false;
   return session.sessionId === selectedSessionId || (session.sessionIds || []).includes(selectedSessionId);
@@ -174,6 +194,7 @@ function buildSessionDetailStats(session, events) {
   const agentEvents = eventList.filter((event) => event.callType === "Agent").length;
   const first = eventList[0]?.time || session?.startedAt || session?.createdAt || "";
   const latest = eventList[eventList.length - 1]?.time || session?.latest || "";
+  const dialoguePreview = dedupeDialoguePreviewEvents(eventList.filter((event) => DIALOGUE_TYPES.has(event.callType))).slice(-6);
 
   return {
     eventCount: eventList.length || toFiniteNumber(session?.count || session?.events),
@@ -184,6 +205,7 @@ function buildSessionDetailStats(session, events) {
     toolRows,
     userEvents,
     agentEvents,
+    dialoguePreview,
     first,
     latest,
     duration: formatDurationText(first, latest),
@@ -337,6 +359,12 @@ function SessionDetailPanel({
   onCopySessionId,
   onOpenEvent,
 }) {
+  const [conversationCollapsed, setConversationCollapsed] = useState(false);
+
+  useEffect(() => {
+    setConversationCollapsed(false);
+  }, [selectedSessionId]);
+
   if (!selectedSessionId) {
     return (
       <Paper className="session-detail-panel session-detail-panel--empty" radius="xl" p="lg" data-session-detail-panel>
@@ -356,9 +384,11 @@ function SessionDetailPanel({
   const title = getSessionTitle(session, selectedSessionId);
   const tokenTotal = stats.tokens.total || toFiniteNumber(session?.totalTokens || session?.tokens);
   const inputSideTotal = stats.tokens.input + stats.tokens.cacheReadInput;
+  const tokenCompositionTotal = inputSideTotal + stats.tokens.output;
   const sourceFiles = session?.sourceFiles || [];
   const rawIds = getSessionIds({ ...session, sessionId: selectedSessionId });
   const eventTotalLabel = page?.total ? `${formatNumber((events || []).length)} / ${formatNumber(page.total)} 已载入` : `${formatNumber(stats.eventCount)} 事件`;
+  const hasDialoguePreview = stats.dialoguePreview.length > 0;
 
   return (
     <Paper className="session-detail-panel" radius="xl" p="lg" data-session-detail-panel>
@@ -406,6 +436,58 @@ function SessionDetailPanel({
         <DetailMetric label="原始会话" value={formatNumber(stats.rawSessionCount)} meta={`${formatNumber(rawIds.length)} 个 ID 可操作`} />
       </div>
 
+      <section className="session-detail-conversation">
+        <div className="session-detail-section-head session-detail-section-head--conversation">
+          <Text>对话内容</Text>
+          <div className="session-detail-conversation__head-actions">
+            <span>{stats.dialoguePreview.length ? `${formatNumber(stats.dialoguePreview.length)} 条片段` : "暂无片段"}</span>
+            <Button
+              variant="light"
+              radius="xl"
+              color="blue"
+              size="xs"
+              leftSection={<IconMessage2 size={15} />}
+              onClick={() => onOpenConversation?.(session || { sessionId: selectedSessionId, title })}
+            >
+              打开完整对话
+            </Button>
+            <Tooltip label={conversationCollapsed ? "展开对话内容" : "收起对话内容"} withArrow>
+              <ActionIcon
+                variant="subtle"
+                radius="xl"
+                color="gray"
+                aria-label={conversationCollapsed ? "展开会话内容" : "收起会话内容"}
+                className={`session-detail-conversation__toggle${conversationCollapsed ? "" : " is-open"}`}
+                disabled={!hasDialoguePreview && !loading}
+                onClick={() => setConversationCollapsed((current) => !current)}
+              >
+                <IconChevronRight size={16} />
+              </ActionIcon>
+            </Tooltip>
+          </div>
+        </div>
+        {conversationCollapsed ? (
+          <Text className="session-detail-empty session-detail-conversation__collapsed">对话内容已折叠</Text>
+        ) : hasDialoguePreview ? (
+          <div className="session-detail-conversation__list">
+            {stats.dialoguePreview.map((event, index) => (
+              <article
+                key={event.eventId || `${event.time}-${event.callType}-${index}`}
+                className={`session-detail-conversation__item session-detail-conversation__item--${event.callType === "Agent" ? "agent" : "user"}`}
+              >
+                <div>
+                  <span>{dialogueRoleLabel(event)}</span>
+                  <em>{formatDateTime(event.time)}</em>
+                </div>
+                <p>{readableEventSummary(event, 180)}</p>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <Text className="session-detail-empty">{loading ? "正在加载对话内容…" : "当前已加载事件中暂无用户或 Agent 内容"}</Text>
+        )}
+      </section>
+
       <div className="session-detail-token">
         <div className="session-detail-section-head">
           <Text>Token 构成</Text>
@@ -421,7 +503,7 @@ function SessionDetailPanel({
           ].map(([label, value, color]) => (
             <div key={label}>
               <span>{label}</span>
-              <Progress value={percentValue(value, inputSideTotal + stats.tokens.output + stats.tokens.reasoningOutput)} color="blue" size="xs" radius="xl" style={{ "--progress-section-color": color }} />
+              <Progress value={percentValue(value, label === "推理" ? stats.tokens.output : tokenCompositionTotal)} color="blue" size="xs" radius="xl" style={{ "--progress-section-color": color }} />
               <strong>{formatCompactNumber(value)}</strong>
             </div>
           ))}
@@ -474,9 +556,9 @@ function SessionDetailPanel({
         </div>
         {stats.recentEvents.length ? (
           <div className="session-detail-event-list">
-            {stats.recentEvents.map((event) => (
+            {stats.recentEvents.map((event, index) => (
               <button
-                key={`${event.time}-${event.callType}-${event.extra || ""}`}
+                key={event.eventId || `${event.time}-${event.callType}-${index}`}
                 type="button"
                 className="session-detail-event"
                 onClick={() => onOpenEvent?.(event)}

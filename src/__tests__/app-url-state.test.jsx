@@ -109,6 +109,99 @@ function mockFetchWithDelayedSearch() {
   return fetcher;
 }
 
+function mockFetchWithStreamSessionEvent() {
+  return vi.fn(async (input) => {
+    const url = String(input);
+
+    if (url.startsWith("/api/events") && url.includes("sessionId=sess-event")) {
+      return jsonResponse({
+        events: [
+          {
+            eventId: "detail-event",
+            time: "2026-04-20T10:10:00.000Z",
+            sessionId: "sess-event",
+            sessionTitle: "Incident triage",
+            sourceType: "codex",
+            model: "gpt-5.5",
+            callType: "Agent",
+            summary: "Agent answered the incident",
+            content: "Agent answered the incident",
+          },
+        ],
+        sessions: [],
+        meta: { models: [], types: [], platforms: [] },
+        totalVisible: 1,
+        totalMatching: 1,
+        page: { offset: 0, limit: 500, hasMore: false },
+        generatedAt: "2026-04-20T10:11:00.000Z",
+      });
+    }
+
+    if (url.startsWith("/api/events")) {
+      return jsonResponse({
+        events: [
+          {
+            eventId: "stream-event",
+            time: "2026-04-20T10:10:00.000Z",
+            sessionId: "sess-event",
+            sessionTitle: "Incident triage",
+            sourceType: "codex",
+            model: "gpt-5.5",
+            callType: "Agent",
+            summary: "Agent answered the incident",
+            content: "Agent answered the incident",
+          },
+        ],
+        sessions: [
+          {
+            sessionId: "sess-event",
+            sessionTitle: "Incident triage",
+            fallbackTitle: "Incident triage",
+            sourceType: "codex",
+            latest: "2026-04-20T10:10:00.000Z",
+            count: 1,
+            cwd: "/repo",
+            models: ["gpt-5.5"],
+          },
+        ],
+        meta: { models: ["gpt-5.5"], types: ["Agent"], platforms: ["codex"] },
+        totalVisible: 1,
+        totalMatching: 1,
+        page: { offset: 0, limit: 250, hasMore: false },
+        generatedAt: "2026-04-20T10:11:00.000Z",
+        codexVersion: "0.1.0",
+        claudeVersion: "1.0.0",
+      });
+    }
+
+    if (url.startsWith("/api/sessions")) {
+      return jsonResponse({
+        groups: {},
+        total: 0,
+        generatedAt: "2026-04-20T10:11:00.000Z",
+      });
+    }
+
+    if (url.startsWith("/api/observability")) {
+      return jsonResponse({
+        generatedAt: "2026-04-20T10:11:00.000Z",
+        summary: {
+          health: { eventsTotal: 1, sessionsTotal: 1, alertEvents: 0 },
+          tokens: {
+            effectiveTotal: 0,
+            windows: { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } },
+          },
+          alerts: { total: 0, recent: [], byType: [], byPlatform: [] },
+          tools: { totalCalls: 0, totalResults: 0, topTools: [] },
+          workspaces: { topWorkspaces: [] },
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+}
+
 function waitForStartupTimers() {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 220);
@@ -202,6 +295,28 @@ describe("App URL state", () => {
     await waitFor(() => {
       expect(screen.getByText("当前搜索：incident")).toBeInTheDocument();
     });
+  });
+
+  test("opens session details from a stream event with recent context first", async () => {
+    const eventFetch = mockFetchWithStreamSessionEvent();
+    vi.stubGlobal("fetch", eventFetch);
+
+    render(<App />);
+
+    expect(await screen.findByText("Agent answered the incident")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /查看会话详情 sess-eve/ }));
+
+    await waitFor(() => {
+      expect(fetchedEventUrls().some((url) => (
+        url.includes("sessionId=sess-event") &&
+        url.includes("order=desc") &&
+        url.includes("summary=0")
+      ))).toBe(true);
+    });
+
+    expect(await screen.findByRole("heading", { name: "Incident triage" })).toBeInTheDocument();
+    expect(screen.getByText("对话内容")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开完整对话" })).toBeInTheDocument();
   });
 
   test("clears the focused session from the sessions page", async () => {

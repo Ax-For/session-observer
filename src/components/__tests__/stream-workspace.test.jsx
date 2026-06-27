@@ -18,10 +18,11 @@ describe("StreamWorkspace", () => {
           }}
           summary={{
             totals: {
-              input: 2400,
+              input: 1200,
               output: 220,
               total: 2620,
               cachedInput: 1200,
+              cacheReadInput: 1200,
               reasoningOutput: 80,
             },
             tokenWindows: {
@@ -162,9 +163,9 @@ describe("StreamWorkspace", () => {
     expect(screen.getAllByText("Agent").length).toBeGreaterThan(0);
     expect(screen.getByText("我会优先展示对话内容")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /查看会话详情 Incident triage/ }));
-    expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    expect(onOpenSessionDetail).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: "sess-1" }), { order: "desc" });
     fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 sess-1/ })[0]);
-    expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
+    expect(onOpenSessionDetail).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: "sess-1" }), { order: "desc" });
     fireEvent.click(screen.getByText("Token usage · In 2.4k · Out 220 · Total 2.6k"));
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });

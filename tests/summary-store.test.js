@@ -47,7 +47,8 @@ test("summary store builds global dashboard data without retaining raw events", 
       sessionId: "may-session",
       title: "May work",
       cwd: "/repo-a",
-      model: "gpt-5",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
       content: "archived work",
       tokenUsage: { input: 100, output: 20, total: 120 },
     },
@@ -60,7 +61,8 @@ test("summary store builds global dashboard data without retaining raw events", 
       sessionId: "june-session",
       title: "June work",
       cwd: "/repo-b",
-      model: "gpt-5",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
       content: "latest work",
       tokenUsage: { input: 200, output: 50, total: 250 },
     },
@@ -74,11 +76,49 @@ test("summary store builds global dashboard data without retaining raw events", 
   assert.equal(summary.tokens.input, 300);
   assert.equal(summary.tokens.output, 70);
   assert.ok(summary.tokens.cost.estimatedUsd > 0);
-  assert.equal(summary.tokens.cost.byModel[0].model, "gpt-5");
+  assert.equal(summary.tokens.cost.byModel[0].model, "gpt-5.5");
+  assert.equal(summary.charts.daily.find((row) => row.label === "06/01").estimatedUsd, 0.0025);
+  assert.equal(summary.tokens.windows.week.estimatedUsd, 0.0025);
+  assert.equal(summary.tokens.windows.week.knownTokenTotal, 250);
+  assert.equal(summary.tokens.topSessions.find((row) => row.sessionId === "june-session").estimatedUsd, 0.0025);
+  assert.equal(summary.tokens.byWorkspace.find((row) => row.cwd === "/repo-b").estimatedUsd, 0.0025);
+  assert.equal(summary.charts.workspaceTokens.find((row) => row.cwd === "/repo-b").estimatedUsd, 0.0025);
   assert.equal(summary.sessions.groups.find((group) => group.sessionId === "may-session").startedAt, "2026-05-31T10:00:00.000Z");
   assert.deepEqual(summary.sessions.groups.map((group) => group.sessionId).sort(), ["june-session", "may-session"]);
   assert.ok(summary.charts.dailySessions.length >= 365);
   assert.equal(summary.memory.retainedRawEvents, 0);
+});
+
+test("summary store applies Codex fast pricing to event and model cost summaries", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "2026-06-01.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "fast",
+      time: "2026-06-01T11:00:00.000Z",
+      sessionId: "fast-session",
+      title: "Fast work",
+      cwd: "/repo-fast",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
+      content: "fast work",
+      tokenUsage: { input: 100, cacheReadInput: 100, output: 10, total: 210 },
+    },
+  ], Date.parse("2026-06-01T11:00:00.000Z"));
+
+  const store = createSummaryStore({
+    parsers: [parser],
+    costSpeedTier: "fast",
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+  });
+  const summary = store.getSummary({ files: [file] });
+
+  assert.equal(summary.tokens.cost.estimatedUsd, 0.002125);
+  assert.equal(summary.tokens.cost.speedTier, "fast");
+  assert.equal(summary.tokens.cost.byModel[0].estimatedUsd, 0.002125);
+  assert.equal(summary.tokens.topSessions.find((row) => row.sessionId === "fast-session").estimatedUsd, 0.002125);
+  assert.equal(summary.tokens.byWorkspace.find((row) => row.cwd === "/repo-fast").estimatedUsd, 0.002125);
 });
 
 test("summary store reuses unchanged daily archive summaries", () => {

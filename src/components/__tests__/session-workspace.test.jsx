@@ -219,10 +219,11 @@ describe("SessionWorkspace", () => {
 
   test("renders a rich selected session detail panel", () => {
     const onOpenEvent = vi.fn();
+    const onOpenConversation = vi.fn();
     const onFocusStreamSession = vi.fn();
     const onClearSessionFocus = vi.fn();
 
-    render(
+    const { container } = render(
       <MantineProvider>
         <SessionWorkspace
           selectedSessionId="sess-1"
@@ -246,6 +247,22 @@ describe("SessionWorkspace", () => {
               model: "gpt-5.4",
               sessionId: "sess-1",
               summary: "用户输入 · 改造详情页",
+            },
+            {
+              time: "2026-05-31T10:01:00.000Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "Agent 回复 · 已补充详情布局",
+            },
+            {
+              time: "2026-05-31T10:01:01.000Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              summary: "Agent 回复 · 已补充详情布局",
             },
             {
               time: "2026-05-31T10:02:00.000Z",
@@ -273,13 +290,13 @@ describe("SessionWorkspace", () => {
               },
             },
           ]}
-          detailPage={{ total: 3, hasMore: false, nextOffset: 3, limit: 500 }}
+          detailPage={{ total: 5, hasMore: false, nextOffset: 5, limit: 500 }}
           detailLoading={false}
           sections={[]}
           workspaceIndex={[]}
           selectedIds={[]}
           onToggleSelect={() => {}}
-          onOpenConversation={() => {}}
+          onOpenConversation={onOpenConversation}
           onOpenSessionDetail={() => {}}
           onFocusStreamSession={onFocusStreamSession}
           onClearSessionFocus={onClearSessionFocus}
@@ -297,8 +314,21 @@ describe("SessionWorkspace", () => {
     expect(screen.getByText("事件类型")).toBeInTheDocument();
     expect(screen.getByText("工具调用")).toBeInTheDocument();
     expect(screen.getByText("模型分布")).toBeInTheDocument();
+    expect(screen.getByText("对话内容")).toBeInTheDocument();
+    expect(screen.getAllByText(/用户输入 · 改造详情页/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Agent 回复 · 已补充详情布局/).length).toBeGreaterThan(0);
+    const previewTexts = [...container.querySelectorAll(".session-detail-conversation__item p")].map((node) => node.textContent);
+    expect(previewTexts.filter((text) => text.includes("Agent 回复 · 已补充详情布局"))).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "收起会话内容" }));
+    expect(container.querySelectorAll(".session-detail-conversation__item")).toHaveLength(0);
+    expect(screen.getByText("对话内容已折叠")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开完整对话" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开会话内容" }));
+    expect(container.querySelectorAll(".session-detail-conversation__item").length).toBeGreaterThan(0);
     expect(screen.getByText("最近事件")).toBeInTheDocument();
     expect(screen.getByText("exec_command")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开完整对话" }));
+    expect(onOpenConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
     fireEvent.click(screen.getByRole("button", { name: "在事件流聚焦当前会话" }));
     expect(onFocusStreamSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
     fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));

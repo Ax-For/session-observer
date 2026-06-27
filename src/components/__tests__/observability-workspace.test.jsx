@@ -66,6 +66,8 @@ const payload = {
       windows: {
         day: {
           total: 8000,
+          estimatedUsd: 0.018,
+          knownTokenTotal: 8000,
           rawTotal: 6000,
           input: 5000,
           inputTotal: 6800,
@@ -81,6 +83,8 @@ const payload = {
         },
         week: {
           total: 18_000,
+          estimatedUsd: 0.0525,
+          knownTokenTotal: 18_000,
           rawTotal: 12_000,
           input: 10_000,
           inputTotal: 16_000,
@@ -100,8 +104,8 @@ const payload = {
         { key: "claude-sonnet-4-6", total: 6000 },
       ],
       byWorkspace: [
-        { cwd: "/Users/me/code/session-observer", total: 14_000 },
-        { cwd: "/Users/me/docs", total: 4000 },
+        { cwd: "/Users/me/code/session-observer", total: 14_000, estimatedUsd: 0.041, knownTokenTotal: 14_000 },
+        { cwd: "/Users/me/docs", total: 4000, estimatedUsd: 0.0115, knownTokenTotal: 4000 },
       ],
       topSessions: [
         {
@@ -110,6 +114,8 @@ const payload = {
           sourceType: "codex",
           events: 20,
           tokens: 12_000,
+          estimatedUsd: 0.035,
+          knownTokenTotal: 12_000,
         },
       ],
     },
@@ -140,6 +146,8 @@ const payload = {
           events: 900,
           sessions: 12,
           tokens: 14_000,
+          estimatedUsd: 0.041,
+          knownTokenTotal: 14_000,
           alerts: 2,
         },
       ],
@@ -150,8 +158,8 @@ const payload = {
         { time: "2026-04-23T11:00:00.000Z", label: "11:00", events: 4, alerts: 1, tokens: 15000, platforms: [{ key: "codex", total: 9000 }, { key: "claude", total: 6000 }] },
       ],
       daily: [
-        { time: "2026-04-22T00:00:00.000Z", label: "04/22", events: 5, alerts: 0, tokens: 6000, platforms: [{ key: "claude", total: 6000 }] },
-        { time: "2026-04-23T00:00:00.000Z", label: "04/23", events: 6, alerts: 1, tokens: 12000, platforms: [{ key: "codex", total: 12000 }] },
+        { time: "2026-04-22T00:00:00.000Z", label: "04/22", events: 5, alerts: 0, tokens: 6000, estimatedUsd: 0.0175, knownTokenTotal: 6000, platforms: [{ key: "claude", total: 6000 }] },
+        { time: "2026-04-23T00:00:00.000Z", label: "04/23", events: 6, alerts: 1, tokens: 12000, estimatedUsd: 0.035, knownTokenTotal: 12000, platforms: [{ key: "codex", total: 12000 }] },
       ],
       dailySessions: [
         { time: "2026-04-22T00:00:00.000Z", label: "04/22", sessions: 1, events: 5, tokens: 6000, topWorkspace: { cwd: "/Users/me/docs" } },
@@ -306,10 +314,13 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("模型成本效率")).toBeInTheDocument();
     expect(screen.getAllByText((_, element) => element.textContent.includes("/M")).length).toBeGreaterThan(0);
     expect(screen.getByText("近 14 天 Token 消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("近 14 天金额花费趋势")).toBeInTheDocument();
     expect(screen.getByText("工作区消耗")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("token-cost-trend-chart")).toBeInTheDocument();
     expect(screen.getByText("时间窗口")).toBeInTheDocument();
     expect(screen.getByText("Codex 5,000 · Claude Code 3,000")).toBeInTheDocument();
+    expect(screen.getByText("估算 $0.0180")).toBeInTheDocument();
     expect(screen.getByText("输入侧 6,800")).toBeInTheDocument();
     expect(screen.getByText("非缓存 5,000")).toBeInTheDocument();
     expect(screen.getByText("命中 1,800")).toBeInTheDocument();
@@ -318,6 +329,7 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
     expect(screen.getByText("高消耗会话")).toBeInTheDocument();
     expect(screen.getByText("Investigate timeout")).toBeInTheDocument();
+    expect(screen.getAllByText("$0.0350").length).toBeGreaterThan(0);
     expect(screen.queryByText("平台占比")).not.toBeInTheDocument();
   });
 

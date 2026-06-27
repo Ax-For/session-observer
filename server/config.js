@@ -2,6 +2,7 @@
 /**
  * Environment configuration and constants for the Session Observer server.
  */
+const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
@@ -19,6 +20,7 @@ const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.home
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
 const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
+const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(os.homedir(), ".codex", "config.toml");
 
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1000;
@@ -35,6 +37,24 @@ function toNonNegativeInt(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.floor(parsed);
+}
+
+function normalizeCodexServiceTier(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "fast" || text === "priority") return "fast";
+  return "standard";
+}
+
+function readCodexServiceTier() {
+  const override = process.env.OBSERVER_CODEX_SERVICE_TIER || process.env.CODEX_SERVICE_TIER;
+  if (override) return normalizeCodexServiceTier(override);
+  try {
+    const content = fs.readFileSync(CODEX_CONFIG_FILE, "utf8");
+    const match = content.match(/^\s*service_tier\s*=\s*["']?([^"'\s#]+)/m);
+    return normalizeCodexServiceTier(match?.[1]);
+  } catch {
+    return "standard";
+  }
 }
 
 const INDEX_FILE_EVENT_CACHE_MAX_EVENTS = toNonNegativeInt(
@@ -61,6 +81,7 @@ const SOURCE_CHANGE_HEARTBEAT_MS = Math.max(5000, toNonNegativeInt(
   process.env.SOURCE_CHANGE_HEARTBEAT_MS,
   25000,
 ));
+const CODEX_SERVICE_TIER = readCodexServiceTier();
 
 /**
  * Resolve the static file root, triggering a frontend build if needed.
@@ -107,6 +128,8 @@ module.exports = {
   CLAUDE_SESSIONS_DIR,
   CODEX_SESSION_INDEX,
   STATE_DB,
+  CODEX_CONFIG_FILE,
+  CODEX_SERVICE_TIER,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   EVENT_CONTENT_PREVIEW_LENGTH,
