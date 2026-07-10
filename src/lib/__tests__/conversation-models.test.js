@@ -99,6 +99,67 @@ describe("conversation-models", () => {
     });
   });
 
+  test("buildConversationEntries removes duplicate semantic dialogue messages", () => {
+    const entries = buildConversationEntries([
+      {
+        time: "2026-04-19T10:00:00.000Z",
+        callType: "Prompt",
+        content: "帮我检查对话详情为什么重复",
+      },
+      {
+        time: "2026-04-19T10:00:01.000Z",
+        callType: "Agent",
+        content: "我会先检查完整对话的数据来源。",
+        extra: "type=event_msg",
+      },
+      {
+        time: "2026-04-19T10:00:01.500Z",
+        callType: "Agent",
+        content: "我会先检查完整对话的数据来源。",
+        extra: "role=assistant",
+      },
+      {
+        time: "2026-04-19T10:00:02.000Z",
+        callType: "Agent",
+        content: "[agent=planner]\n我会先检查完整对话的数据来源。",
+        extra: "role=assistant",
+      },
+    ]);
+
+    expect(entries.filter((entry) => entry.kind === "message" && entry.role === "agent")).toHaveLength(1);
+    expect(entries.map((entry) => entry.content)).toEqual([
+      "帮我检查对话详情为什么重复",
+      "我会先检查完整对话的数据来源。",
+    ]);
+  });
+
+  test("buildConversationEntries preserves repeated dialogue across separate turns", () => {
+    const entries = buildConversationEntries([
+      {
+        time: "2026-04-19T10:00:00.000Z",
+        callType: "Prompt",
+        content: "先总结当前问题",
+      },
+      {
+        time: "2026-04-19T10:00:01.000Z",
+        callType: "Agent",
+        content: "当前问题是对话详情重复。",
+      },
+      {
+        time: "2026-04-19T10:01:00.000Z",
+        callType: "Prompt",
+        content: "再总结一次当前问题",
+      },
+      {
+        time: "2026-04-19T10:01:01.000Z",
+        callType: "Agent",
+        content: "当前问题是对话详情重复。",
+      },
+    ]);
+
+    expect(entries.filter((entry) => entry.kind === "message" && entry.role === "agent")).toHaveLength(2);
+  });
+
   test("tool results stay collapsible when content merely mentions error handling", () => {
     const entries = buildConversationEntries([
       {

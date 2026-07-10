@@ -69,6 +69,55 @@ describe("ConversationDrawer", () => {
     expect(screen.queryByText(/environment_context/i)).not.toBeInTheDocument();
   });
 
+  test("renders duplicate semantic dialogue records only once", () => {
+    render(
+      <MantineProvider>
+        <ConversationDrawer
+          opened
+          onClose={() => {}}
+          session={{
+            sourceType: "codex",
+            models: ["gpt-5.4"],
+            title: "Duplicate detail check",
+            cwd: "/Users/me/code/session-observer",
+          }}
+          loading={false}
+          events={[
+            {
+              time: "2026-04-19T10:00:00.000Z",
+              callType: "Prompt",
+              content: "帮我检查对话详情为什么重复",
+            },
+            {
+              time: "2026-04-19T10:00:01.000Z",
+              callType: "Agent",
+              content: "我会先检查完整对话的数据来源。",
+              extra: "type=event_msg",
+            },
+            {
+              time: "2026-04-19T10:00:01.500Z",
+              callType: "Agent",
+              content: "我会先检查完整对话的数据来源。",
+              extra: "role=assistant",
+            },
+            {
+              time: "2026-04-19T10:00:02.000Z",
+              callType: "Agent",
+              content: "[agent=planner]\n我会先检查完整对话的数据来源。",
+              extra: "role=assistant",
+            },
+          ]}
+        />
+      </MantineProvider>,
+    );
+
+    const dialogs = screen.getAllByRole("dialog", { name: "会话对话" });
+    const dialog = dialogs[dialogs.length - 1];
+
+    expect(within(dialog).getByText("帮我检查对话详情为什么重复")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("我会先检查完整对话的数据来源。")).toHaveLength(1);
+  });
+
   test("shows progressive loading status and allows manual continuation", () => {
     const onLoadMore = vi.fn();
 

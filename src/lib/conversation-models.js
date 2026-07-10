@@ -211,6 +211,24 @@ function parseAgentPrefix(content) {
   };
 }
 
+function normalizeDialogueSignature(content) {
+  return String(content || "").trim().replace(/\s+/g, " ");
+}
+
+function hasDuplicateDialogueEntry(entries, role, content) {
+  const signature = normalizeDialogueSignature(content);
+  if (!signature) return false;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry.kind !== "message") continue;
+    if (entry.role !== role) return false;
+    if (normalizeDialogueSignature(entry.content) === signature) return true;
+  }
+
+  return false;
+}
+
 function parseToolInput(event) {
   const argsMatch = String(event.content || "").match(/args=(.+)$/m);
   if (argsMatch) {
@@ -411,6 +429,7 @@ export function buildConversationEntries(events) {
     const role = event.callType === "Prompt" || event.callType === "User" ? "user" : "agent";
     const parsed = role === "agent" ? parseAgentPrefix(event.content) : { agentPrefix: "", content: event.content };
     if (!parsed.content) return;
+    if (hasDuplicateDialogueEntry(entries, role, parsed.content)) return;
     const previous = entries[entries.length - 1];
     entries.push({
       id,
