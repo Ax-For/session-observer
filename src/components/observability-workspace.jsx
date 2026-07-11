@@ -14,6 +14,7 @@ import {
 } from "@mantine/core";
 import {
   IconActivityHeartbeat,
+  IconAlertTriangle,
   IconDatabase,
   IconGauge,
   IconRefresh,
@@ -1416,6 +1417,207 @@ function OverviewHealthBand({ runtime, sources, index, generatedAt, health }) {
         <span><i />摘要缓存</span>
         <strong>{index?.lastError ? "构建失败" : `${percentLabel(cacheReuse)} 复用`}</strong>
         <em>{formatNumber(cachedFiles)} 文件 · {index?.lastError || "增量读取正常"}</em>
+      </div>
+    </Paper>
+  );
+}
+
+const CODEX_PLAN_LABELS = {
+  free: "FREE",
+  go: "GO",
+  plus: "PLUS",
+  pro: "PRO",
+  prolite: "PRO LITE",
+  team: "TEAM",
+  self_serve_business_usage_based: "BUSINESS",
+  business: "BUSINESS",
+  enterprise_cbp_usage_based: "ENTERPRISE",
+  enterprise: "ENTERPRISE",
+  edu: "EDU",
+};
+
+function codexPlanLabel(value) {
+  return CODEX_PLAN_LABELS[String(value || "").toLowerCase()] || "CODEX";
+}
+
+function codexWindowLabel(window, fallback) {
+  const minutes = Number(window?.windowDurationMinutes);
+  if (minutes === 300) return "5 小时额度";
+  if (minutes === 10_080) return "每周额度";
+  if (Number.isFinite(minutes) && minutes > 0 && minutes % 60 === 0) {
+    return `${formatNumber(minutes / 60)} 小时额度`;
+  }
+  return fallback;
+}
+
+function codexQuotaTone(remainingPercent) {
+  const remaining = Number(remainingPercent);
+  if (!Number.isFinite(remaining)) return "neutral";
+  if (remaining <= 20) return "danger";
+  if (remaining <= 50) return "warning";
+  return "healthy";
+}
+
+const CODEX_RESET_EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
+
+function codexResetExpiryWarning(expiresAt, now = Date.now()) {
+  const expiresAtMs = new Date(expiresAt || "").getTime();
+  if (!Number.isFinite(expiresAtMs)) return null;
+  const remainingMs = expiresAtMs - now;
+  if (remainingMs > CODEX_RESET_EXPIRY_WARNING_MS) return null;
+  if (remainingMs <= 0) {
+    return {
+      label: "缓存中的重置机会已到期",
+      detail: "请重新查询额度",
+    };
+  }
+  const remainingHours = Math.max(1, Math.ceil(remainingMs / (60 * 60 * 1000)));
+  return {
+    label: remainingHours <= 24
+      ? `${formatNumber(remainingHours)} 小时内到期`
+      : `${formatNumber(Math.ceil(remainingHours / 24))} 天内到期`,
+    detail: formatDateTime(expiresAt),
+  };
+}
+
+function CodexQuotaWindow({ window, fallbackLabel }) {
+  if (!window) return null;
+  const remaining = Math.max(0, Math.min(100, Number(window.remainingPercent) || 0));
+  const tone = codexQuotaTone(remaining);
+
+  return (
+    <div className={`v5-codex-usage__window is-${tone}`}>
+      <div className="v5-codex-usage__window-head">
+        <span>{codexWindowLabel(window, fallbackLabel)}</span>
+        <strong>剩余 {percentLabel(remaining)}</strong>
+      </div>
+      <div
+        className="v5-codex-usage__meter"
+        role="progressbar"
+        aria-label={`${codexWindowLabel(window, fallbackLabel)}剩余额度`}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow={Math.round(remaining)}
+      >
+        <i style={{ width: `${remaining}%` }} />
+      </div>
+      <div className="v5-codex-usage__window-foot">
+        <em>已用 {percentLabel(window.usedPercent)}</em>
+        <span>{window.resetsAt ? `重置 ${formatDateTime(window.resetsAt)}` : "重置时间未提供"}</span>
+      </div>
+    </div>
+  );
+}
+
+function CodexUsageBand({ usage, codexVersion, onQuery }) {
+  const versionInstalled = Boolean(codexVersion && codexVersion !== "unknown");
+  if (usage?.installed === false || (!versionInstalled && usage?.installed !== true)) return null;
+
+  const status = usage?.status || "idle";
+  const loading = status === "loading";
+  const ready = status === "ready";
+  const unavailable = status === "unavailable";
+  const limits = Array.isArray(usage?.limits) ? usage.limits : [];
+  const primaryLimit = limits.find((limit) => limit.id === usage?.defaultLimitId) || limits[0] || null;
+  const extraLimits = limits.filter((limit) => limit.id !== primaryLimit?.id);
+  const resetCount = Number(usage?.resetCredits?.availableCount);
+  const hasResetCount = Number.isFinite(resetCount);
+  const upcomingResets = Array.isArray(usage?.resetCredits?.upcoming)
+    ? usage.resetCredits.upcoming.slice(0, 3)
+    : [];
+  const expiryWarning = codexResetExpiryWarning(upcomingResets[0]?.expiresAt);
+  const actionLabel = ready ? "重新查询 Codex 使用额度" : "查询 Codex 使用额度";
+  const displayVersion = usage?.version && usage.version !== "unknown"
+    ? usage.version
+    : codexVersion;
+
+  return (
+    <Paper className={`v5-codex-usage is-${status}`} radius="md" p={0} aria-label="Codex 使用额度">
+      <div className="v5-codex-usage__lead">
+        <div className="v5-codex-usage__identity">
+          <ThemeIcon size={30} radius="sm" variant="light" color="teal">
+            <IconGauge size={17} stroke={1.8} />
+          </ThemeIcon>
+          <div>
+            <span>ACCOUNT LIMITS</span>
+            <strong>Codex 使用额度</strong>
+          </div>
+        </div>
+        <div className="v5-codex-usage__lead-meta">
+          <Badge radius="sm" variant="light" color="teal">{codexPlanLabel(usage?.planType)}</Badge>
+          <span title={displayVersion}>{displayVersion}</span>
+        </div>
+      </div>
+
+      <div className="v5-codex-usage__content" aria-live="polite">
+        {ready && primaryLimit ? (
+          <div className="v5-codex-usage__windows">
+            <CodexQuotaWindow window={primaryLimit.primary} fallbackLabel="短周期额度" />
+            <CodexQuotaWindow window={primaryLimit.secondary} fallbackLabel="长周期额度" />
+          </div>
+        ) : (
+          <div className={`v5-codex-usage__state is-${status}`}>
+            <strong>{loading ? "正在查询账户额度" : unavailable ? "账户额度读取失败" : "尚未查询账户额度"}</strong>
+            <span>{loading
+              ? "正在连接本机 Codex"
+              : unavailable
+                ? usage?.error || "请稍后重新查询"
+                : "额度数据仅在手动查询时读取"}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="v5-codex-usage__aside">
+        <div className="v5-codex-usage__credit">
+          <div className="v5-codex-usage__credit-head">
+            <span>额度重置</span>
+            <strong>{hasResetCount ? `可用 ${formatNumber(resetCount)} 次` : ready ? "未提供" : "待查询"}</strong>
+          </div>
+          {ready && expiryWarning ? (
+            <div className="v5-codex-usage__expiry-alert" role="alert">
+              <IconAlertTriangle size={15} stroke={2} />
+              <div>
+                <strong>{expiryWarning.label}</strong>
+                <span>{expiryWarning.detail}</span>
+              </div>
+            </div>
+          ) : null}
+          {ready ? (
+            <div className="v5-codex-usage__expirations">
+              <span>最近三次到期</span>
+              {upcomingResets.length ? (
+                <ol>
+                  {upcomingResets.map((credit, index) => (
+                    <li key={`${credit.expiresAt}-${index}`}>
+                      <em>{String(index + 1).padStart(2, "0")}</em>
+                      <time dateTime={credit.expiresAt}>{formatDateTime(credit.expiresAt)}</time>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p>到期时间暂未提供</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+        <div className="v5-codex-usage__action">
+          <div className="v5-codex-usage__action-meta">
+            <span>{usage?.updatedAt ? `上次刷新 ${formatDateTime(usage.updatedAt)}` : "使用本机时区显示"}</span>
+            {extraLimits.length ? <em>{formatNumber(extraLimits.length)} 个模型额度</em> : null}
+          </div>
+          <Button
+            size="xs"
+            radius="sm"
+            color="teal"
+            loading={loading}
+            disabled={!onQuery}
+            leftSection={<IconRefresh size={14} />}
+            aria-label={actionLabel}
+            onClick={onQuery}
+          >
+            {ready || unavailable ? "重新查询" : "查询额度"}
+          </Button>
+        </div>
       </div>
     </Paper>
   );
@@ -2870,7 +3072,9 @@ export function ObservabilityWorkspace({
   payload,
   view,
   activeOverview,
+  codexUsagePayload,
   loading,
+  onQueryCodexUsage,
   onOpenConversation,
   onOpenSessionDetail,
 }) {
@@ -2964,6 +3168,12 @@ export function ObservabilityWorkspace({
             index={payload?.index}
             generatedAt={payload?.generatedAt}
             health={health}
+          />
+
+          <CodexUsageBand
+            usage={codexUsagePayload}
+            codexVersion={payload?.runtime?.versions?.codex}
+            onQuery={onQueryCodexUsage}
           />
 
           <div className="v3-section-caption">

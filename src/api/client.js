@@ -92,6 +92,16 @@ export const apiClient = {
     return request("/api/observability");
   },
 
+  fetchCodexUsage() {
+    return request("/api/codex-usage");
+  },
+
+  refreshCodexUsage() {
+    return request("/api/codex-usage/refresh", {
+      method: "POST",
+    });
+  },
+
   fetchIndexWindow() {
     return request("/api/index-window");
   },

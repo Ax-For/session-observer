@@ -1,7 +1,8 @@
 import { MantineProvider } from "@mantine/core";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { ObservabilityWorkspace } from "../observability-workspace";
+import { formatDateTime } from "../../lib/formatters";
 
 const payload = {
   generatedAt: "2026-04-23T12:00:00.000Z",
@@ -259,6 +260,53 @@ const activeOverview = {
   ],
 };
 
+const codexUsagePayload = {
+  status: "ready",
+  installed: true,
+  version: "codex-cli 0.142.3",
+  planType: "pro",
+  updatedAt: "2026-07-11T13:20:00.000Z",
+  defaultLimitId: "codex",
+  resetCredits: {
+    availableCount: 4,
+    upcoming: [
+      {
+        title: "Full reset (Weekly + 5 hr)",
+        grantedAt: "2026-06-12T01:13:49.745Z",
+        expiresAt: "2026-07-12T01:13:49.745Z",
+      },
+      {
+        title: "Full reset (Weekly + 5 hr)",
+        grantedAt: "2026-06-18T00:28:24.834Z",
+        expiresAt: "2026-07-18T00:28:24.834Z",
+      },
+      {
+        title: "Full reset (Weekly + 5 hr)",
+        grantedAt: "2026-06-26T23:06:47.568Z",
+        expiresAt: "2026-07-26T23:06:47.568Z",
+      },
+    ],
+  },
+  limits: [
+    {
+      id: "codex",
+      name: "Codex",
+      primary: {
+        usedPercent: 35,
+        remainingPercent: 65,
+        windowDurationMinutes: 300,
+        resetsAt: "2026-07-11T18:04:00.000Z",
+      },
+      secondary: {
+        usedPercent: 23,
+        remainingPercent: 77,
+        windowDurationMinutes: 10_080,
+        resetsAt: "2026-07-18T03:30:00.000Z",
+      },
+    },
+  ],
+};
+
 describe("ObservabilityWorkspace", () => {
   test.each([
     ["overview", "overview-pulse-v2"],
@@ -289,6 +337,8 @@ describe("ObservabilityWorkspace", () => {
           payload={payload}
           view="overview"
           activeOverview={activeOverview}
+          codexUsagePayload={codexUsagePayload}
+          onQueryCodexUsage={() => {}}
           loading={false}
           onRefresh={() => {}}
         />
@@ -298,6 +348,17 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByRole("region", { name: "运行总览工作台" })).toHaveAttribute("data-layout", "overview-pulse-v2");
     expect(screen.getByText("运行健康")).toBeInTheDocument();
     expect(screen.getByText("今日概览")).toBeInTheDocument();
+    expect(screen.getByText("Codex 使用额度")).toBeInTheDocument();
+    expect(screen.getByText("5 小时额度")).toBeInTheDocument();
+    expect(screen.getByText("剩余 65%")).toBeInTheDocument();
+    expect(screen.getByText(`重置 ${formatDateTime(codexUsagePayload.limits[0].primary.resetsAt)}`)).toBeInTheDocument();
+    expect(screen.getByText("可用 4 次")).toBeInTheDocument();
+    expect(screen.getByText("最近三次到期")).toBeInTheDocument();
+    expect(screen.getByText(`上次刷新 ${formatDateTime(codexUsagePayload.updatedAt)}`)).toBeInTheDocument();
+    for (const credit of codexUsagePayload.resetCredits.upcoming) {
+      expect(screen.getAllByText(formatDateTime(credit.expiresAt)).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByRole("button", { name: "重新查询 Codex 使用额度" })).toBeInTheDocument();
     expect(screen.getByText("今日会话")).toBeInTheDocument();
     expect(screen.getByText("当前活跃")).toBeInTheDocument();
     expect(screen.getByText("今日对话")).toBeInTheDocument();
@@ -339,6 +400,56 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.queryByText("Trace Span")).not.toBeInTheDocument();
     expect(screen.queryByText("观测覆盖")).not.toBeInTheDocument();
     expect(screen.queryByText("按天 Token 趋势")).not.toBeInTheDocument();
+  });
+
+  test("warns prominently when a reset credit expires within three days", () => {
+    const urgentExpiry = new Date(Date.now() + (36 * 60 * 60 * 1000)).toISOString();
+    const urgentPayload = {
+      ...codexUsagePayload,
+      resetCredits: {
+        ...codexUsagePayload.resetCredits,
+        upcoming: [
+          { ...codexUsagePayload.resetCredits.upcoming[0], expiresAt: urgentExpiry },
+          ...codexUsagePayload.resetCredits.upcoming.slice(1),
+        ],
+      },
+    };
+
+    render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={payload}
+          view="overview"
+          activeOverview={activeOverview}
+          codexUsagePayload={urgentPayload}
+          onQueryCodexUsage={() => {}}
+          loading={false}
+          onRefresh={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("2 天内到期");
+    expect(screen.getByRole("alert")).toHaveTextContent(formatDateTime(urgentExpiry));
+  });
+
+  test("keeps Codex account usage idle until the query button is pressed", () => {
+    const onQueryCodexUsage = vi.fn();
+    render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={payload}
+          view="overview"
+          activeOverview={activeOverview}
+          codexUsagePayload={{ status: "idle", installed: null, limits: [] }}
+          onQueryCodexUsage={onQueryCodexUsage}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText("尚未查询账户额度")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查询 Codex 使用额度" }));
+    expect(onQueryCodexUsage).toHaveBeenCalledTimes(1);
   });
 
   test("switches the daily session heatmap color metric", () => {

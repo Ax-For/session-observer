@@ -14,6 +14,8 @@ const DIST_ROOT = path.join(ROOT, "dist");
 const DIST_INDEX = path.join(DIST_ROOT, "index.html");
 const RUNTIME_DIR = process.env.OBSERVER_RUNTIME_DIR || path.join(ROOT, ".runtime");
 const SUMMARY_CACHE_FILE = process.env.OBSERVER_SUMMARY_CACHE_FILE || path.join(RUNTIME_DIR, "summary-cache.json");
+const CODEX_USAGE_CACHE_FILE = process.env.OBSERVER_CODEX_USAGE_CACHE_FILE
+  || path.join(RUNTIME_DIR, "codex-usage.json");
 const SESSION_TITLE_OVERRIDES_FILE = process.env.OBSERVER_SESSION_TITLE_OVERRIDES_FILE
   || path.join(RUNTIME_DIR, "session-title-overrides.json");
 
@@ -122,6 +124,7 @@ module.exports = {
   ROOT,
   RUNTIME_DIR,
   SUMMARY_CACHE_FILE,
+  CODEX_USAGE_CACHE_FILE,
   SESSION_TITLE_OVERRIDES_FILE,
   STATIC_ROOT,
   ensureFrontendBuild,

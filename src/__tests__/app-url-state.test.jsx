@@ -73,6 +73,22 @@ function mockFetch() {
       });
     }
 
+    if (url.startsWith("/api/codex-usage/refresh")) {
+      return jsonResponse({
+        status: "not-installed",
+        installed: false,
+        limits: [],
+      });
+    }
+
+    if (url === "/api/codex-usage") {
+      return jsonResponse({
+        status: "idle",
+        installed: null,
+        limits: [],
+      });
+    }
+
     throw new Error(`Unexpected fetch: ${url}`);
   });
 }
@@ -355,7 +371,7 @@ describe("App URL state", () => {
     });
   });
 
-  test("loads only observability data when refreshing directly into overview", async () => {
+  test("loads observability and the local Codex usage snapshot in overview", async () => {
     window.history.replaceState(null, "", "/?tab=overview");
 
     render(<App />);
@@ -363,7 +379,7 @@ describe("App URL state", () => {
     expect(await screen.findByRole("heading", { name: "运行总览" })).toBeInTheDocument();
     await waitForStartupTimers();
 
-    expect(fetchedUrls()).toEqual(["/api/observability"]);
+    expect(fetchedUrls().sort()).toEqual(["/api/codex-usage", "/api/observability"]);
   });
 
   test("loads only session data when refreshing directly into sessions", async () => {

@@ -12,6 +12,7 @@ const routes = require("./server/routes");
 const sessionOps = require("./server/session-ops");
 const { createSourceChangeBus } = require("./server/source-change-bus");
 const { createSummaryStore } = require("./server/summary-store");
+const { createCodexUsageService } = require("./server/codex-usage");
 
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
@@ -43,6 +44,10 @@ const summaryStore = createSummaryStore({
 });
 const sourceChangeBus = createSourceChangeBus({
   debounceMs: config.SOURCE_CHANGE_DEBOUNCE_MS,
+});
+const codexUsageService = createCodexUsageService({
+  version: require("./server/versions").codexVersion,
+  cacheFile: config.CODEX_USAGE_CACHE_FILE,
 });
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
@@ -180,6 +185,23 @@ const server = http.createServer((req, res) => {
     if (u.pathname === "/api/observability" && req.method === "GET") {
       sendJson(req, res, 200, routes.queryObservability());
       indexManager.trimHeapSoon();
+      return;
+    }
+
+    if (u.pathname === "/api/codex-usage" && req.method === "GET") {
+      codexUsageService.getSnapshot()
+        .then((payload) => sendJson(req, res, 200, payload))
+        .catch(() => sendJson(req, res, 200, { status: "idle" }));
+      return;
+    }
+
+    if (u.pathname === "/api/codex-usage/refresh" && req.method === "POST") {
+      codexUsageService.refresh()
+        .then((payload) => sendJson(req, res, 200, payload))
+        .catch((error) => {
+          console.error("[server] Failed to read Codex usage:", error);
+          sendJson(req, res, 500, { error: "Codex usage request failed" });
+        });
       return;
     }
 

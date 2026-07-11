@@ -57,6 +57,7 @@ import {
   buildStreamScope,
 } from "./lib/workspace-models";
 import { useConversationData } from "./hooks/use-conversation-data";
+import { useCodexUsage } from "./hooks/use-codex-usage";
 import { useObservabilityData } from "./hooks/use-observability-data";
 import { useSessionActions } from "./hooks/use-session-actions";
 import { useSessionData } from "./hooks/use-session-data";
@@ -277,6 +278,9 @@ export function App() {
     localEvents,
     notify,
     enabled: isObservabilityTab,
+  });
+  const { codexUsagePayload, queryCodexUsage } = useCodexUsage({
+    enabled: dataSource === "server" && tab === "overview",
   });
   const {
     selectedSessionIds,
@@ -871,6 +875,8 @@ export function App() {
                     payload={observabilityPayload}
                     view={tab}
                     activeOverview={activeSessionOverview}
+                    codexUsagePayload={codexUsagePayload}
+                    onQueryCodexUsage={queryCodexUsage}
                     loading={loadingObservability}
                     onRefresh={loadObservability}
                     onOpenConversation={openConversation}
