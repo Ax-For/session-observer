@@ -32,6 +32,10 @@ describe("conversation-models", () => {
         callType: "Token_Usage",
         content: "token_count",
       },
+      {
+        callType: "Prompt",
+        content: "<turn_aborted>\nThe user interrupted the previous turn on purpose.\n</turn_aborted>",
+      },
     ]);
 
     expect(prepared).toHaveLength(3);
@@ -301,6 +305,13 @@ describe("conversation-models", () => {
       },
     });
     expect(turns[0].toolEntries.map((entry) => entry.toolName)).toEqual(["Read", "Tool"]);
+    expect(turns[0].entries.map((entry) => entry.kind)).toEqual([
+      "message",
+      "message",
+      "tool",
+      "tool",
+      "thinking",
+    ]);
     expect(turns[1]).toMatchObject({
       index: 2,
       userMessages: [expect.objectContaining({ content: "第二轮问题" })],

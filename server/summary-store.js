@@ -14,13 +14,29 @@ const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 7;
+const SUMMARY_CACHE_VERSION = 9;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SESSION_MESSAGE_LENGTH = 320;
 const MAX_SESSION_TOOLS = 24;
 const MAX_SESSION_FILES = 16;
 const MAX_MODEL_TRANSITIONS = 16;
+const LOW_SIGNAL_TOPIC_PATTERN = /^(?:好|好的|可以|可以了|继续|继续吧|收到|明白|没问题|行|ok|okay|done|提交(?:并)?推送|推送更新|提交更新)[。.!！,，\s]*$/i;
+const INTERNAL_MESSAGE_PREFIXES = [
+  "[text omitted for summary",
+  "large user content omitted from event stream",
+  "the user interrupted the previous turn on purpose",
+  "this session is being continued from a previous",
+  "you are chatgpt",
+  "you are codex",
+  "# agents.md",
+  "## memory writing agent",
+  "<environment_context>",
+  "<turn_aborted>",
+  "<permissions instructions>",
+  "<app-context>",
+  "<skills_instructions>",
+];
 
 function emptyUsage() {
   return {
@@ -148,6 +164,8 @@ function createSessionSummary(sessionId, sourceType) {
     firstUserMessageTime: "",
     latestUserMessage: "",
     latestUserMessageTime: "",
+    currentTopic: "",
+    currentTopicTime: "",
     latestAgentMessage: "",
     latestAgentMessageTime: "",
     toolNames: new Map(),
@@ -162,19 +180,91 @@ function createSessionSummary(sessionId, sourceType) {
 }
 
 function compactSessionMessage(event, limit = MAX_SESSION_MESSAGE_LENGTH) {
-  let text = String(event?.content || event?.summary || "")
+  let text = String(event?.content || event?.summary || "").trim();
+  const requestBlock = text.match(/(?:^|\n)#{1,3}\s*My request for Codex:\s*([\s\S]*)$/i);
+  if (requestBlock?.[1]) text = requestBlock[1];
+  const normalizedPrefix = text.trim().toLowerCase();
+  if (INTERNAL_MESSAGE_PREFIXES.some((prefix) => normalizedPrefix.startsWith(prefix))) return "";
+  if (/^\/\S.*\b(?:zsh|bash|fish)\b\s+\d{4}-\d{2}-\d{2}\b/i.test(text)) return "";
+  text = text
+    .replace(/<environment_context>[\s\S]*?(?:<\/environment_context>|$)/gi, " ")
+    .replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi, " ")
+    .replace(/#\s*Files mentioned by the user:[\s\S]*?(?=#\s*My request for Codex:|$)/gi, " ")
     .replace(/<[^>]+>/g, " ")
+    .replace(/^#{1,6}\s*/gm, "")
     .replace(/\s+/g, " ")
     .trim();
   if (
     !text
-    || text.startsWith("# AGENTS.md")
-    || text.startsWith("environment_context")
-    || text.startsWith("[text omitted for summary")
-    || text.startsWith("You are ChatGPT")
-    || text.startsWith("You are Codex")
+    || INTERNAL_MESSAGE_PREFIXES.some((prefix) => text.toLowerCase().startsWith(prefix))
   ) return "";
   return ObserverCore.clip(text, limit);
+}
+
+function isUsefulTopicMessage(value) {
+  const text = String(value || "").trim();
+  return text.length >= 8 && !LOW_SIGNAL_TOPIC_PATTERN.test(text);
+}
+
+function topicTitleFromMessage(value) {
+  let text = String(value || "").trim().replace(/\s+/g, " ");
+  text = text
+    .replace(/^(?:现在)?(?:还有?|有)(?:一个)?问题[是：:,，\s]*/i, "")
+    .replace(/^(?:我希望(?:你)?(?:可以)?|请(?:你)?|麻烦(?:你)?|你来)[，,\s]*/i, "")
+    .trim();
+  const numberedClauses = text
+    .split(/[，,；;]\s*(?=\d+(?:是|[、.]))/)
+    .map((clause) => clause.replace(/^\d+(?:是|[、.])\s*/, "").trim())
+    .filter(Boolean);
+  if (numberedClauses.length > 1) {
+    const compacted = numberedClauses.slice(0, 3).map((clause) => clause
+      .replace(/具体的?\s*ui\s*设计.*$/i, "")
+      .replace(/可以参考.*$/i, "")
+      .replace(/显示的会话名称不太准确/i, "优化会话名称准确性")
+      .replace(/会话详情.*?(?:希望(?:可以)?|需要)有聊天窗口.*$/i, "会话详情增加聊天窗口")
+      .replace(/(.{2,18})不太准确$/i, "优化$1准确性")
+      .replace(/^(?:我希望(?:你)?(?:可以)?|请(?:你)?|麻烦(?:你)?|你来)[，,\s]*/i, "")
+      .trim())
+      .filter(Boolean);
+    if (compacted.length > 1) return ObserverCore.clip(compacted.join(" · "), 52);
+  }
+  return ObserverCore.clip(text, 52);
+}
+
+function titleSignalTokens(value) {
+  const text = String(value || "").toLowerCase();
+  const tokens = new Set(text.match(/[a-z0-9][a-z0-9._+-]{2,}/g) || []);
+  for (const chunk of text.match(/[\u3400-\u9fff]{2,}/g) || []) {
+    for (let index = 0; index < chunk.length - 1; index += 1) tokens.add(chunk.slice(index, index + 2));
+  }
+  return tokens;
+}
+
+function titlesShareTopic(title, message) {
+  const titleTokens = titleSignalTokens(title);
+  const messageTokens = titleSignalTokens(message);
+  if (!titleTokens.size || !messageTokens.size) return false;
+  let overlap = 0;
+  for (const token of titleTokens) if (messageTokens.has(token)) overlap += 1;
+  return overlap >= Math.min(2, titleTokens.size);
+}
+
+function resolveSessionDisplayTitle(session, meta) {
+  const metaTitle = String(meta?.title || "").trim();
+  const eventTitle = String(session?.sessionTitle || "").trim();
+  const currentTopic = String(session?.currentTopic || "").trim();
+  const firstMessage = String(session?.firstUserMessage || "").trim();
+  const fallbackTitle = String(session?.fallbackTitle || "").trim();
+  if (meta?.explicitTitle && metaTitle) return { title: metaTitle, source: "custom" };
+  const sourceTitle = metaTitle || eventTitle;
+  if (sourceTitle && (titlesShareTopic(sourceTitle, currentTopic) || titlesShareTopic(sourceTitle, firstMessage))) {
+    return { title: sourceTitle, source: "source" };
+  }
+  if (isUsefulTopicMessage(currentTopic)) return { title: topicTitleFromMessage(currentTopic), source: "current-topic" };
+  if (isUsefulTopicMessage(firstMessage)) return { title: topicTitleFromMessage(firstMessage), source: "first-message" };
+  if (sourceTitle) return { title: ObserverCore.clip(sourceTitle, 52), source: "source" };
+  if (fallbackTitle) return { title: ObserverCore.clip(fallbackTitle, 52), source: "fallback" };
+  return { title: "未命名会话", source: "empty" };
 }
 
 function eventDetailText(event) {
@@ -231,14 +321,11 @@ function mergeModelTimeline(target, source) {
 
 function deriveFallbackTitle(event) {
   if (!event || (event.callType !== "Prompt" && event.callType !== "User")) return "";
-  let text = String(event.content || "").trim().replace(/\s+/g, " ");
-  text = text.replace(/<[^>]+>/g, "").trim();
-  if (!text || text.startsWith("# AGENTS.md") || text.startsWith("<environment_context>")) return "";
-  return ObserverCore.clip(text, 36);
+  return ObserverCore.clip(compactSessionMessage(event, 120), 36);
 }
 
 function sessionDisplayTitle(session) {
-  return session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话";
+  return session?.displayTitle?.trim() || session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话";
 }
 
 function addUsageTotals(target, tokenUsage, sourceType) {
@@ -356,7 +443,6 @@ function touchSession(summary, event, costEstimate) {
   if (event?.time && (!session.startedAt || event.time < session.startedAt)) session.startedAt = event.time;
   if (event?.time && (!session.latest || event.time > session.latest)) session.latest = event.time;
   if (event?.sessionTitle) session.sessionTitle = event.sessionTitle;
-  if (!session.fallbackTitle) session.fallbackTitle = deriveFallbackTitle(event);
   if (event?.cwd) session.cwd = event.cwd;
   if (event?.model && event.model !== "unknown") session.models.add(event.model);
   if (event?.sourceFile) session.sourceFiles.add(event.sourceFile);
@@ -373,6 +459,7 @@ function touchSession(summary, event, costEstimate) {
   else if (event?.callType === "Agent") session.agent += 1;
   else session.tool += 1;
   const message = compactSessionMessage(event);
+  if (!session.fallbackTitle) session.fallbackTitle = deriveFallbackTitle(event);
   if ((event?.callType === "Prompt" || event?.callType === "User") && message) {
     if (!session.firstUserMessageTime || String(event.time || "").localeCompare(session.firstUserMessageTime) < 0) {
       session.firstUserMessage = ObserverCore.clip(message, 240);
@@ -381,6 +468,12 @@ function touchSession(summary, event, costEstimate) {
     if (!session.latestUserMessageTime || String(event.time || "").localeCompare(session.latestUserMessageTime) >= 0) {
       session.latestUserMessage = message;
       session.latestUserMessageTime = event.time || "";
+    }
+    if (isUsefulTopicMessage(message) && (
+      !session.currentTopicTime || String(event.time || "").localeCompare(session.currentTopicTime) >= 0
+    )) {
+      session.currentTopic = message;
+      session.currentTopicTime = event.time || "";
     }
   }
   if (event?.callType === "Agent" && message && (
@@ -609,6 +702,12 @@ function mergeSession(target, source) {
   )) {
     target.latestUserMessage = source.latestUserMessage;
     target.latestUserMessageTime = source.latestUserMessageTime || "";
+  }
+  if (source.currentTopic && (
+    !target.currentTopicTime || String(source.currentTopicTime || "").localeCompare(target.currentTopicTime) >= 0
+  )) {
+    target.currentTopic = source.currentTopic;
+    target.currentTopicTime = source.currentTopicTime || "";
   }
   if (source.latestAgentMessage && (
     !target.latestAgentMessageTime || String(source.latestAgentMessageTime || "").localeCompare(target.latestAgentMessageTime) >= 0
@@ -924,9 +1023,12 @@ function serializeSession(session, threadMeta) {
     metaTitle &&
     (session.sourceType === "codex" || meta?.explicitTitle || !String(session.sessionTitle || "").trim()),
   );
+  const resolvedTitle = resolveSessionDisplayTitle(session, meta);
   return {
     sessionId: session.sessionId,
     sessionTitle: shouldUseMetaTitle ? metaTitle : session.sessionTitle,
+    displayTitle: resolvedTitle.title,
+    titleSource: resolvedTitle.source,
     fallbackTitle: session.fallbackTitle,
     cwd: session.cwd || metaCwd,
     latestToken: session.latestToken,
@@ -944,6 +1046,7 @@ function serializeSession(session, threadMeta) {
     toolResults: session.toolResults,
     firstUserMessage: session.firstUserMessage,
     latestUserMessage: session.latestUserMessage,
+    currentTopic: session.currentTopic,
     latestAgentMessage: session.latestAgentMessage,
     topTools: sortedValueEntries(session.toolNames, "calls").slice(0, 8),
     editedFiles: [...session.editedFiles].slice(0, MAX_SESSION_FILES),

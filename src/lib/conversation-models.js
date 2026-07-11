@@ -30,6 +30,7 @@
  * @property {ConversationEntry[]} assistantMessages
  * @property {ConversationEntry[]} toolEntries
  * @property {ConversationEntry[]} thinkingEntries
+ * @property {ConversationEntry[]} entries
  * @property {ToolSummary} toolSummary
  */
 
@@ -43,6 +44,8 @@ const INTERNAL_CONTENT_MARKERS = [
   "<task-notification>",
   "<local-command-caveat>",
   "<environment_context>",
+  "<turn_aborted>",
+  "The user interrupted the previous turn on purpose",
   "Caveat:",
   "This session is being continued from a previous",
   "[Request interrupted",
@@ -455,6 +458,7 @@ function createConversationTurn(index, entry) {
     assistantMessages: [],
     thinkingEntries: [],
     toolEntries: [],
+    entries: [],
     toolSummary: {
       total: 0,
       errors: 0,
@@ -486,6 +490,7 @@ export function buildConversationTurns(events) {
     if (entry.kind === "message" && entry.role === "user") {
       currentTurn = createConversationTurn(turns.length + 1, entry);
       currentTurn.userMessages.push(entry);
+      currentTurn.entries.push(entry);
       turns.push(currentTurn);
       return;
     }
@@ -494,6 +499,8 @@ export function buildConversationTurns(events) {
       currentTurn = createConversationTurn(turns.length + 1, entry);
       turns.push(currentTurn);
     }
+
+    currentTurn.entries.push(entry);
 
     if (entry.kind === "message" && entry.role === "agent") {
       currentTurn.assistantMessages.push(entry);

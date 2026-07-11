@@ -722,6 +722,20 @@ test("mergeSessionMetaRecords keeps explicit title overrides while preserving ex
   });
 });
 
+test("mergeSessionMetaRecords preserves the explicit title marker", () => {
+  const merged = mergeSessionMetaRecords(
+    { title: "Generated title", cwd: "/tmp/workspace", updatedAtMs: 1000 },
+    { title: "Renamed by user", updatedAtMs: 2000, explicitTitle: true },
+  );
+
+  assert.deepEqual(merged, {
+    title: "Renamed by user",
+    cwd: "/tmp/workspace",
+    updatedAtMs: 2000,
+    explicitTitle: true,
+  });
+});
+
 test("eventMatchesMode hides raw and sidechain events in observe mode", () => {
   assert.equal(eventMatchesMode({ callType: "Raw", extra: "" }, "observe"), false);
   assert.equal(eventMatchesMode({ callType: "Agent", extra: "sidechain/assistant" }, "observe"), false);

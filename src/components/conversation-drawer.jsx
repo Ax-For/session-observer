@@ -625,7 +625,7 @@ export function ConversationTurn({ turn, searchMatch, setTurnRef, hideHeader = f
   );
 }
 
-function ConversationEntry({ entry, highlightQuery = "" }) {
+export function ConversationEntry({ entry, highlightQuery = "" }) {
   if (entry.kind === "tool") {
     return (
       <div className={`conv-row conv-row--tool conv-row--${entry.category} ${entry.isError ? "is-error" : ""}`}>
@@ -665,13 +665,16 @@ function ConversationEntry({ entry, highlightQuery = "" }) {
     <div className={`conv-row conv-row--message conv-row--${entry.role} ${entry.grouped ? "is-grouped" : ""}`}>
       <div className={`conv-avatar conv-avatar--${entry.role}`}>{entry.role === "user" ? "U" : "A"}</div>
       <div className={`conv-surface conv-surface--${entry.role}`}>
+        <div className="conv-message-head">
+          <Text className="conv-role-label">{entry.role === "user" ? "你" : "Agent"}</Text>
+          <Text className="conv-meta">{formatFullDateTime(entry.time)}</Text>
+        </div>
         {entry.agentPrefix ? (
           <Text className="conv-agent-prefix">[agent={entry.agentPrefix}]</Text>
         ) : null}
         <div className="conv-message-body">
           <MarkdownOrPlainText content={entry.content} highlightQuery={highlightQuery} />
         </div>
-        <Text className="conv-meta">{formatFullDateTime(entry.time)}</Text>
       </div>
     </div>
   );

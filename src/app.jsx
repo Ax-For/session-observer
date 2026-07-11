@@ -127,7 +127,7 @@ function buildSessionDetailSeed(target) {
   return {
     ...target,
     sessionId,
-    title: target.title || target.sessionTitle || target.fallbackTitle || target.summary || "未命名会话",
+    title: target.displayTitle || target.title || target.sessionTitle || target.fallbackTitle || target.summary || "未命名会话",
     sessionTitle: target.sessionTitle || target.title || target.fallbackTitle || target.summary || "",
     fallbackTitle: target.fallbackTitle || target.title || target.summary || "",
     latest: target.latest || target.time || "",
@@ -161,6 +161,14 @@ function createSessionDetailPage() {
     hasMore: false,
     nextOffset: 0,
   };
+}
+
+function hasVisibleConversationBoundary(events) {
+  return (events || []).some((event) => {
+    if (!["Prompt", "User"].includes(event?.callType)) return false;
+    const content = String(event?.content || event?.summary || "");
+    return content && !/<turn_aborted>|the user interrupted the previous turn on purpose/i.test(content);
+  });
 }
 
 export function App() {
@@ -417,20 +425,31 @@ export function App() {
       if (requestId !== sessionDetailRequestId.current) return;
       let nextEvents = payload.events || [];
       let total = Number(payload.totalMatching) || nextEvents.length;
-      const initialOffset = offset + nextEvents.length;
-      const hasTurnBoundary = nextEvents.some((event) => ["Prompt", "User"].includes(event.callType));
-      if (!append && order === "desc" && initialOffset < total && !hasTurnBoundary) {
+      let hasTurnBoundary = hasVisibleConversationBoundary(nextEvents);
+      let boundaryAttempts = 0;
+      let boundaryPageHasMore = Boolean(payload.page?.hasMore);
+      while (!append && order === "desc" && !hasTurnBoundary && boundaryAttempts < 4) {
+        const boundaryOffset = offset + nextEvents.length;
         const boundaryPayload = await apiClient.fetchEvents({
           sessionId,
           order,
-          limit: Math.min(80, total - initialOffset),
-          offset: initialOffset,
+          limit: 160,
+          offset: boundaryOffset,
           mode: "raw",
           summary: 0,
         });
         if (requestId !== sessionDetailRequestId.current) return;
-        nextEvents = [...nextEvents, ...(boundaryPayload.events || [])];
-        total = Math.max(total, Number(boundaryPayload.totalMatching) || 0);
+        const boundaryEvents = boundaryPayload.events || [];
+        if (!boundaryEvents.length) break;
+        nextEvents = [...nextEvents, ...boundaryEvents];
+        hasTurnBoundary = hasVisibleConversationBoundary(boundaryEvents);
+        boundaryPageHasMore = Boolean(boundaryPayload.page?.hasMore);
+        total = Math.max(
+          total,
+          Number(boundaryPayload.totalMatching) || 0,
+          boundaryOffset + boundaryEvents.length + (boundaryPageHasMore ? 1 : 0),
+        );
+        boundaryAttempts += 1;
       }
       const nextOffset = offset + nextEvents.length;
       setSessionDetailEvents((current) => (append ? [...current, ...nextEvents] : nextEvents)
@@ -440,7 +459,7 @@ export function App() {
         offset,
         limit,
         order,
-        hasMore: nextOffset < total,
+        hasMore: boundaryPageHasMore || nextOffset < total,
         nextOffset,
       });
     } catch (error) {

@@ -7,6 +7,48 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const config = require("./config");
 
+function loadSessionTitleOverrides() {
+  try {
+    const payload = JSON.parse(fs.readFileSync(config.SESSION_TITLE_OVERRIDES_FILE, "utf8"));
+    const titles = payload?.titles && typeof payload.titles === "object" ? payload.titles : {};
+    return new Map(Object.entries(titles).flatMap(([sessionId, value]) => {
+      const title = typeof value === "string" ? value.trim() : String(value?.title || "").trim();
+      if (!sessionId || !title) return [];
+      return [[sessionId, {
+        title,
+        updatedAtMs: Number(value?.updatedAtMs) || 0,
+        explicitTitle: true,
+      }]];
+    }));
+  } catch {
+    return new Map();
+  }
+}
+
+function writeSessionTitleOverrides(overrides) {
+  fs.mkdirSync(path.dirname(config.SESSION_TITLE_OVERRIDES_FILE), { recursive: true });
+  const titles = Object.fromEntries([...overrides.entries()].map(([sessionId, value]) => [sessionId, value]));
+  const payload = JSON.stringify({ version: 1, titles }, null, 2);
+  const temporaryFile = `${config.SESSION_TITLE_OVERRIDES_FILE}.tmp`;
+  fs.writeFileSync(temporaryFile, `${payload}\n`, "utf8");
+  fs.renameSync(temporaryFile, config.SESSION_TITLE_OVERRIDES_FILE);
+}
+
+function markSessionTitleOverride(sessionId, title) {
+  const normalizedTitle = String(title || "").trim();
+  if (!sessionId || !normalizedTitle) return;
+  const overrides = loadSessionTitleOverrides();
+  overrides.set(sessionId, { title: normalizedTitle, updatedAtMs: Date.now() });
+  writeSessionTitleOverrides(overrides);
+}
+
+function removeSessionTitleOverride(sessionId) {
+  if (!sessionId) return;
+  const overrides = loadSessionTitleOverrides();
+  if (!overrides.delete(sessionId)) return;
+  writeSessionTitleOverrides(overrides);
+}
+
 /**
  * Load Codex thread metadata from the state SQLite database.
  */
@@ -109,6 +151,9 @@ function loadMergedThreadMetadata(mergeSessionMetaRecordsCore) {
   const threadMeta = loadCodexSessionMeta(mergeSessionMetaRecordsCore);
   const claudeMeta = loadClaudeCodeSessionMeta();
   for (const [id, meta] of claudeMeta) {
+    threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
+  }
+  for (const [id, meta] of loadSessionTitleOverrides()) {
     threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
   }
   return threadMeta;
@@ -214,6 +259,9 @@ module.exports = {
   loadCodexSessionMeta,
   loadMergedThreadMetadata,
   loadClaudeSessionIndex,
+  loadSessionTitleOverrides,
+  markSessionTitleOverride,
+  removeSessionTitleOverride,
   findClaudeSessionFile,
   findClaudeTranscriptFiles,
   findCodexSessionFiles,

@@ -6349,6 +6349,24 @@ button.mc-active-cost-row:focus-visible {
   min-width: 0;
 }
 
+.conv-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.conv-message-head .conv-meta {
+  margin-top: 0;
+}
+
+.conv-role-label {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
 .conv-message-preview {
   min-width: 0;
 }

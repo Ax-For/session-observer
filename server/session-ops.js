@@ -144,6 +144,7 @@ function renameSession(sessionId, newName, scheduleIndexRefresh) {
     const data = JSON.parse(fs.readFileSync(claudeFile, "utf8"));
     data.name = newName;
     fs.writeFileSync(claudeFile, JSON.stringify(data), "utf8");
+    sessionMeta.markSessionTitleOverride(sessionId, newName);
     scheduleIndexRefresh("session-renamed");
     return { success: true, sessionId, name: newName, platform: "claude" };
   }
@@ -152,6 +153,7 @@ function renameSession(sessionId, newName, scheduleIndexRefresh) {
   const codexDbUpdated = updateCodexThreadTitle(sessionId, newName);
   const codexIndexUpdated = updateCodexSessionIndex(sessionId, newName);
   if (codexDbUpdated || codexIndexUpdated) {
+    sessionMeta.markSessionTitleOverride(sessionId, newName);
     scheduleIndexRefresh("session-renamed");
     return { success: true, sessionId, name: newName, platform: "codex" };
   }
@@ -170,6 +172,7 @@ function deleteSession(sessionId, scheduleIndexRefresh) {
   if (claudeFile || claudeTranscripts.length > 0) {
     if (claudeFile && fs.existsSync(claudeFile)) fs.unlinkSync(claudeFile);
     deleteClaudeSessionFiles(sessionId);
+    sessionMeta.removeSessionTitleOverride(sessionId);
     scheduleIndexRefresh("session-deleted");
     return { success: true, sessionId, platform: "claude" };
   }
@@ -181,6 +184,7 @@ function deleteSession(sessionId, scheduleIndexRefresh) {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     }
     removeCodexSessionFromIndex(sessionId);
+    sessionMeta.removeSessionTitleOverride(sessionId);
     scheduleIndexRefresh("session-deleted");
     return { success: true, sessionId, platform: "codex" };
   }

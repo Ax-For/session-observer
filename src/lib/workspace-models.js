@@ -107,7 +107,10 @@ function buildSessionActivity(session, activeWindowMs) {
 function normalizeSessionForWorkspace(session) {
   return {
     ...session,
-    title: session?.sessionTitle?.trim() || session?.fallbackTitle?.trim() || "未命名会话",
+    title: session?.displayTitle?.trim()
+      || session?.sessionTitle?.trim()
+      || session?.fallbackTitle?.trim()
+      || "未命名会话",
     totalTokens: toFiniteNumber(session?.aggregateToken?.total),
     hasTokenData: sessionHasTokenData(session),
     sourceFiles: mergeUniqueValues(session?.sourceFiles, session?.sourceFile ? [session.sourceFile] : []),
@@ -124,8 +127,12 @@ function matchesSessionBaseFilters(session, filters = {}) {
 
   if (!query) return true;
   const haystack = [
+    session?.displayTitle,
     session?.sessionTitle,
     session?.fallbackTitle,
+    session?.currentTopic,
+    session?.firstUserMessage,
+    session?.latestUserMessage,
     session?.cwd,
     session?.sessionId,
     ...(session?.sourceFiles || []),
@@ -231,7 +238,10 @@ export function buildStreamSessionRailItems(sessions) {
   const groups = new Map();
 
   for (const session of sessions || []) {
-    const title = session.sessionTitle?.trim() || session.fallbackTitle?.trim() || "未命名会话";
+    const title = session.displayTitle?.trim()
+      || session.sessionTitle?.trim()
+      || session.fallbackTitle?.trim()
+      || "未命名会话";
     const key = [
       session.sourceType || "unknown",
       title,
@@ -639,7 +649,8 @@ export function buildStreamScope({
   mode,
 }) {
   const activeSession = flattenSessions(sessions).find((session) => session?.sessionId === selectedSessionId) || null;
-  const title = activeSession?.sessionTitle?.trim()
+  const title = activeSession?.displayTitle?.trim()
+    || activeSession?.sessionTitle?.trim()
     || activeSession?.fallbackTitle?.trim()
     || "全部会话";
   const scopePlatform = activeSession?.sourceType || platform || "";

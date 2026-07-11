@@ -340,7 +340,7 @@
     const leftUpdatedAtMs = Number.isFinite(Number(left.updatedAtMs)) ? Number(left.updatedAtMs) : 0;
     const rightUpdatedAtMs = Number.isFinite(Number(right.updatedAtMs)) ? Number(right.updatedAtMs) : 0;
 
-    return {
+    const merged = {
       title:
         (typeof right.title === "string" && right.title.trim()) ||
         (typeof left.title === "string" && left.title.trim()) ||
@@ -351,6 +351,8 @@
         "",
       updatedAtMs: Math.max(leftUpdatedAtMs, rightUpdatedAtMs),
     };
+    if (left.explicitTitle || right.explicitTitle) merged.explicitTitle = true;
+    return merged;
   }
 
   function applyEventSessionMeta(event, meta, options = {}) {

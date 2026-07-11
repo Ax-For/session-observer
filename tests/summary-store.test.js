@@ -348,6 +348,71 @@ test("summary store reuses file summaries when metadata signature changes and ov
   assert.equal(summary.sessions.groups[0].sessionTitle, "New title");
 });
 
+test("summary store derives an accurate current topic and ignores internal title placeholders", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "title-quality.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "internal",
+      time: "2026-06-01T00:00:00.000Z",
+      sessionId: "title-session",
+      cwd: "/repo/session-observer",
+      callType: "Prompt",
+      content: "[text omitted for summary: 9692 chars]",
+    },
+    {
+      id: "first-user",
+      time: "2026-06-01T00:01:00.000Z",
+      sessionId: "title-session",
+      cwd: "/repo/session-observer",
+      callType: "Prompt",
+      content: "为当前项目建立活跃会话面板",
+    },
+    {
+      id: "current-topic",
+      time: "2026-06-01T00:02:00.000Z",
+      sessionId: "title-session",
+      cwd: "/repo/session-observer",
+      callType: "Prompt",
+      content: "我希望会话详情可以用聊天窗口查看完整对话过程",
+    },
+    {
+      id: "low-signal",
+      time: "2026-06-01T00:03:00.000Z",
+      sessionId: "title-session",
+      cwd: "/repo/session-observer",
+      callType: "Prompt",
+      content: "继续吧",
+    },
+  ], Date.parse("2026-06-01T00:03:00.000Z"));
+
+  const store = createSummaryStore({ parsers: [parser], now: () => Date.parse("2026-06-06T00:00:00.000Z") });
+  const summary = store.getSummary({
+    files: [file],
+    threadMeta: new Map([["title-session", { title: "session-observer 管理", cwd: "/repo/session-observer" }]]),
+  });
+  const session = summary.sessions.groups[0];
+
+  assert.equal(session.fallbackTitle, "为当前项目建立活跃会话面板");
+  assert.equal(session.firstUserMessage, "为当前项目建立活跃会话面板");
+  assert.equal(session.latestUserMessage, "继续吧");
+  assert.equal(session.currentTopic, "我希望会话详情可以用聊天窗口查看完整对话过程");
+  assert.equal(session.displayTitle, "会话详情可以用聊天窗口查看完整对话过程");
+  assert.equal(session.titleSource, "current-topic");
+
+  const renamed = store.getSummary({
+    files: [file],
+    threadMeta: new Map([["title-session", {
+      title: "手动命名的会话",
+      cwd: "/repo/session-observer",
+      explicitTitle: true,
+    }]]),
+  }).sessions.groups[0];
+  assert.equal(renamed.displayTitle, "手动命名的会话");
+  assert.equal(renamed.titleSource, "custom");
+});
+
 test("summary store parses only appended lines for a growing current file", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "current.jsonl");

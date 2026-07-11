@@ -79,7 +79,7 @@ function createRun(event, session) {
     id: `${event?.sessionId || "unknown"}:${event?.eventId || event?.id || event?.time || "event"}`,
     sessionId: event?.sessionId || "unknown",
     sourceType: event?.sourceType || session?.sourceType || "unknown",
-    title: session?.title || session?.sessionTitle || session?.fallbackTitle || "未命名会话",
+    title: session?.displayTitle || session?.title || session?.sessionTitle || session?.fallbackTitle || "未命名会话",
     cwd: event?.cwd || session?.cwd || "",
     startedAt: event?.time || "",
     endedAt: event?.time || "",

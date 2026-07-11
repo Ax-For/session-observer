@@ -338,25 +338,29 @@ describe("SessionWorkspace", () => {
     );
 
     expect(screen.getByText("Session detail work")).toBeInTheDocument();
-    expect(screen.getByText("完整会话 Token")).toBeInTheDocument();
+    expect(screen.getByText("会话目标")).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: "会话聊天记录" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("你")).toBeInTheDocument();
+    expect(screen.getByText("Agent")).toBeInTheDocument();
     expect(screen.getAllByText(/用户输入 · 改造详情页/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Agent 回复 · 已补充详情布局/).length).toBeGreaterThan(0);
-    expect([...container.querySelectorAll(".conversation-turn .conv-message-body")]
+    expect([...container.querySelectorAll(".session-chat-turn .conv-message-body")]
       .filter((node) => node.textContent.includes("Agent 回复 · 已补充详情布局"))).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: /第 1 轮/ }));
-    expect(container.querySelector(".conversation-turn")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /第 1 轮/ }));
-    expect(container.querySelector(".conversation-turn")).toBeInTheDocument();
+    expect(screen.getByText("运行过程")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /用户输入 · 改造详情页/ }));
+    expect(container.querySelector(".session-chat-turn__body")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /用户输入 · 改造详情页/ }));
+    expect(container.querySelector(".session-chat-turn__body")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "用量" }));
     expect(screen.getByText("完整会话 Token 构成")).toBeInTheDocument();
     expect(screen.getByText("模型")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "文件与工具" }));
+    fireEvent.click(screen.getByRole("tab", { name: "产物" }));
     expect(screen.getByText("exec_command")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "在事件流聚焦当前会话" }));
     expect(onFocusStreamSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
-    fireEvent.click(screen.getByRole("tab", { name: "原始" }));
-    fireEvent.click(screen.getByRole("button", { name: /Token usage/ }));
+    fireEvent.click(screen.getByRole("tab", { name: "运行" }));
+    fireEvent.click(container.querySelector(".session-detail-run-list button"));
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
     fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));
     expect(onClearSessionFocus).toHaveBeenCalledOnce();
@@ -397,7 +401,7 @@ describe("SessionWorkspace", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getAllByText("开始时间").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("开始").length).toBeGreaterThan(0);
     expect(screen.getByText(formatDateTime("2026-05-30T08:15:00.000Z"))).toBeInTheDocument();
   });
 });

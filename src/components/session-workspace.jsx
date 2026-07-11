@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   IconArrowRight,
+  IconArrowDown,
   IconActivity,
   IconChevronRight,
   IconCopy,
@@ -56,7 +57,7 @@ import {
   buildSessionPresentation,
 } from "../lib/activity-models";
 import { buildConversationTurns } from "../lib/conversation-models";
-import { ConversationTurn } from "./conversation-drawer";
+import { ConversationEntry } from "./conversation-drawer";
 
 const SESSION_VIRTUAL_THRESHOLD = 24;
 const SESSION_ROW_HEIGHT = 84;
@@ -182,7 +183,12 @@ function sessionMatchesId(session, selectedSessionId) {
 }
 
 function getSessionTitle(session, selectedSessionId) {
-  return session?.title || session?.sessionTitle || session?.fallbackTitle || shortSessionId(selectedSessionId) || "未选择会话";
+  return session?.displayTitle
+    || session?.title
+    || session?.sessionTitle
+    || session?.fallbackTitle
+    || shortSessionId(selectedSessionId)
+    || "未选择会话";
 }
 
 function buildSessionDetailStats(session, events) {
@@ -325,16 +331,6 @@ function ActiveSessionsPanel({ overview, onOpenSessionDetail }) {
   );
 }
 
-function DetailMetric({ label, value, meta }) {
-  return (
-    <div className="session-detail-metric">
-      <Text>{label}</Text>
-      <strong>{value}</strong>
-      <span>{meta}</span>
-    </div>
-  );
-}
-
 function DetailRankRows({ rows, total, valueFormatter = formatNumber, emptyLabel = "暂无数据" }) {
   const peak = Math.max(1, ...rows.map((row) => toFiniteNumber(row.value)));
   if (!rows.length) return <Text className="session-detail-empty">{emptyLabel}</Text>;
@@ -361,20 +357,98 @@ function conversationTurnText(turn) {
   ].join(" ").toLocaleLowerCase();
 }
 
-function CollapsibleSessionTurn({ turn, defaultOpen }) {
+function groupTurnEntries(turn) {
+  const source = turn?.entries?.length
+    ? turn.entries
+    : [
+        ...(turn?.userMessages || []),
+        ...(turn?.assistantMessages || []),
+        ...(turn?.toolEntries || []),
+        ...(turn?.thinkingEntries || []),
+      ];
+  const groups = [];
+  for (const entry of source) {
+    const isProcess = entry.kind === "tool" || entry.kind === "thinking";
+    const previous = groups.at(-1);
+    if (isProcess && previous?.type === "process") {
+      previous.entries.push(entry);
+      continue;
+    }
+    groups.push(isProcess
+      ? { type: "process", entries: [entry] }
+      : { type: "message", entry });
+  }
+  return groups;
+}
+
+function SessionChatProcess({ entries, query }) {
+  const [opened, setOpened] = useState(false);
+  const toolEntries = entries.filter((entry) => entry.kind === "tool");
+  const thinkingEntries = entries.filter((entry) => entry.kind === "thinking");
+  const errors = toolEntries.filter((entry) => entry.isError).length;
+  const toolNames = [...new Set(toolEntries.map((entry) => entry.toolName).filter(Boolean))];
+  const label = [
+    toolEntries.length ? `${formatNumber(toolEntries.length)} 项工具活动` : "",
+    thinkingEntries.length ? `${formatNumber(thinkingEntries.length)} 条思考` : "",
+  ].filter(Boolean).join(" · ");
+
+  useEffect(() => {
+    const normalizedQuery = String(query || "").trim().toLocaleLowerCase();
+    if (!normalizedQuery) return;
+    const processText = entries.map((entry) => `${entry.toolName || ""} ${entry.content || ""} ${JSON.stringify(entry.display || {})}`)
+      .join(" ")
+      .toLocaleLowerCase();
+    if (processText.includes(normalizedQuery)) setOpened(true);
+  }, [entries, query]);
+
+  return (
+    <details className={`session-chat-process${errors ? " is-error" : ""}`} open={opened}>
+      <summary onClick={(event) => {
+        event.preventDefault();
+        setOpened((current) => !current);
+      }}>
+        <span><IconTerminal2 size={14} />运行过程</span>
+        <em>{label}{toolNames.length ? ` · ${toolNames.slice(0, 3).join(" / ")}` : ""}{errors ? ` · ${formatNumber(errors)} 错误` : ""}</em>
+        <IconChevronRight size={14} aria-hidden="true" />
+      </summary>
+      {opened ? (
+        <div className="session-chat-process__entries">
+          {entries.map((entry) => (
+            <ConversationEntry key={entry.id} entry={entry} highlightQuery={query} />
+          ))}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function SessionChatTurn({ turn, defaultOpen, query }) {
   const [opened, setOpened] = useState(defaultOpen);
   const prompt = turn.userMessages?.[0]?.content || turn.assistantMessages?.[0]?.content || "无对话摘要";
+  const groups = groupTurnEntries(turn);
+
+  useEffect(() => {
+    if (String(query || "").trim()) setOpened(true);
+  }, [query]);
   return (
-    <section className={`session-turn-disclosure${opened ? " is-open" : ""}`}>
-      <button type="button" onClick={() => setOpened((current) => !current)} aria-expanded={opened}>
-        <span>
-          <strong>第 {formatNumber(turn.index)} 轮</strong>
-          <em>{clipText(prompt, 72)}</em>
+    <section className={`session-chat-turn${opened ? " is-open" : ""}`} aria-label={`第 ${turn.index} 轮对话`}>
+      <button className="session-chat-turn__toggle" type="button" onClick={() => setOpened((current) => !current)} aria-expanded={opened}>
+        <span className="session-chat-turn__number">{String(turn.index).padStart(2, "0")}</span>
+        <span className="session-chat-turn__summary">
+          <strong>{clipText(prompt, 92)}</strong>
+          <em>{formatDateTime(turn.startedAt)}{turn.toolSummary?.total ? ` · ${formatNumber(turn.toolSummary.total)} 项运行步骤` : ""}</em>
         </span>
-        <span>{formatDateTime(turn.startedAt)} · 工具 {formatNumber(turn.toolSummary?.total || 0)}</span>
         <IconChevronRight size={16} aria-hidden="true" />
       </button>
-      {opened ? <ConversationTurn turn={turn} hideHeader /> : null}
+      {opened ? (
+        <div className="session-chat-turn__body">
+          {groups.map((group, index) => group.type === "message" ? (
+            <ConversationEntry key={group.entry.id} entry={group.entry} highlightQuery={query} />
+          ) : (
+            <SessionChatProcess key={`${turn.id}-process-${index}`} entries={group.entries} query={query} />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -394,6 +468,10 @@ function SessionDetailPanel({
   const [detailTab, setDetailTab] = useState("conversation");
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationLimit, setConversationLimit] = useState(8);
+  const [chatAwayFromLatest, setChatAwayFromLatest] = useState(false);
+  const chatScrollRef = useRef(null);
+  const chatSessionRef = useRef("");
+  const latestConversationTimeRef = useRef("");
   const presentation = useMemo(() => buildSessionPresentation(session, events, page), [events, page, session]);
   const artifacts = useMemo(() => buildSessionArtifacts(session, events), [events, session]);
   const turns = useMemo(() => buildConversationTurns(events), [events]);
@@ -404,12 +482,40 @@ function SessionDetailPanel({
     [normalizedQuery, turns],
   );
   const visibleTurns = matchingTurns.slice(-conversationLimit);
+  const latestConversationTime = turns.at(-1)?.endedAt || turns.at(-1)?.startedAt || "";
+
+  function scrollChatToLatest(behavior = "smooth") {
+    const viewport = chatScrollRef.current;
+    if (!viewport) return;
+    if (typeof viewport.scrollTo === "function") {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+    } else {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+    setChatAwayFromLatest(false);
+  }
 
   useEffect(() => {
     setDetailTab("conversation");
     setConversationQuery("");
     setConversationLimit(8);
+    setChatAwayFromLatest(false);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (detailTab !== "conversation") return undefined;
+    const sessionChanged = chatSessionRef.current !== selectedSessionId;
+    const previousLatestTime = latestConversationTimeRef.current;
+    const latestChanged = previousLatestTime !== latestConversationTime;
+    const initialConversationLoad = !previousLatestTime && Boolean(latestConversationTime);
+    const viewport = chatScrollRef.current;
+    const wasNearLatest = !viewport || viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120;
+    chatSessionRef.current = selectedSessionId;
+    latestConversationTimeRef.current = latestConversationTime;
+    if (!sessionChanged && (!latestChanged || (!wasNearLatest && !initialConversationLoad))) return undefined;
+    const frame = window.requestAnimationFrame(() => scrollChatToLatest("auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [detailTab, latestConversationTime, selectedSessionId]);
 
   if (!selectedSessionId) {
     return (
@@ -418,7 +524,7 @@ function SessionDetailPanel({
         <div>
           <Text className="eyebrow">会话工作台</Text>
           <Title order={3}>选择会话查看完整上下文</Title>
-          <Text className="session-detail-empty__copy">对话、活动、用量和文件变更会集中在同一个详情面板中。</Text>
+          <Text className="session-detail-empty__copy">对话、运行、用量和文件变更会集中在同一个详情面板中。</Text>
         </div>
       </Paper>
     );
@@ -426,7 +532,6 @@ function SessionDetailPanel({
 
   const title = getSessionTitle(session, selectedSessionId);
   const tokenTotal = presentation.tokens.total || toFiniteNumber(session?.totalTokens || session?.tokens);
-  const rawIds = getSessionIds({ ...session, sessionId: selectedSessionId });
   const loadedLabel = page?.total
     ? `最近载入 ${formatNumber(presentation.loadedEventCount)} / ${formatNumber(page.total)} 条原始事件`
     : `${formatNumber(presentation.loadedEventCount)} 条原始事件`;
@@ -444,8 +549,14 @@ function SessionDetailPanel({
     <Paper className="session-detail-panel session-detail-workbench" radius="md" p="md" data-session-detail-panel>
       <div className="session-detail-head">
         <div className="session-detail-head__copy">
-          <Text className="eyebrow">会话工作台</Text>
-          <Title order={3} className="session-detail-title">{clipText(title, 78)}</Title>
+          <Text className="eyebrow">{session?.titleSource === "custom" ? "自定义名称" : "当前主题"}</Text>
+          <Title
+            order={3}
+            className="session-detail-title"
+            title={session?.sessionTitle && session.sessionTitle !== title ? `原始名称：${session.sessionTitle}` : title}
+          >
+            {clipText(title, 92)}
+          </Title>
           <Text className="session-detail-subline">
             {platformLabel(session?.sourceType)} · {shortSessionId(selectedSessionId)} · {loadedLabel}
           </Text>
@@ -469,40 +580,30 @@ function SessionDetailPanel({
         </Group>
       </div>
 
-      <div className="session-detail-metrics">
-        <DetailMetric label="完整会话事件" value={formatNumber(presentation.eventCount)} meta={`已载入 ${formatNumber(presentation.loadedEventCount)}`} />
-        <DetailMetric label="完整会话 Token" value={formatTokenText(tokenTotal, Boolean(tokenTotal || session?.hasTokenData))} meta={`估算 $${toFiniteNumber(presentation.estimatedUsd).toFixed(2)}`} />
-        <DetailMetric label="持续时间" value={formatDurationText(presentation.first, presentation.latest)} meta={`${formatDateTime(presentation.first)} 开始`} />
-        <DetailMetric label="问答" value={formatNumber(interactionTotal)} meta={`${formatNumber(presentation.userEvents)} 用户 · ${formatNumber(presentation.agentEvents)} Agent`} />
-      </div>
-      <div className="session-detail-time-range">
-        <span>开始时间 <strong>{presentation.first ? formatDateTime(presentation.first) : "-"}</strong></span>
-        <span>最近活动 <strong>{presentation.latest ? formatDateTime(presentation.latest) : "-"}</strong></span>
-      </div>
-
-      {(artifacts.goal || artifacts.outcome) ? (
-        <div className="session-detail-brief">
-          <div>
-            <span>目标</span>
-            <p>{artifacts.goal || "未提取到明确目标"}</p>
-          </div>
-          <div>
-            <span>最近结果</span>
-            <p>{artifacts.outcome || "当前加载范围尚无 Agent 结论"}</p>
-          </div>
+      <div className="session-detail-context">
+        <div className="session-detail-context__topic">
+          <span>会话目标</span>
+          <p title={session?.currentTopic || artifacts.goal || ""}>
+            {session?.currentTopic || artifacts.goal || "尚未提取到明确目标"}
+          </p>
         </div>
-      ) : null}
+        <div className="session-detail-context__facts">
+          <div><span>开始</span><strong>{presentation.first ? formatDateTime(presentation.first) : "-"}</strong></div>
+          <div><span>持续</span><strong>{formatDurationText(presentation.first, presentation.latest)}</strong></div>
+          <div><span>问答</span><strong>{formatNumber(interactionTotal)}</strong></div>
+          <div><span>Token</span><strong>{formatTokenText(tokenTotal, Boolean(tokenTotal || session?.hasTokenData))}</strong></div>
+        </div>
+      </div>
 
       <Tabs value={detailTab} onChange={setDetailTab} className="session-detail-tabs" keepMounted={false}>
         <Tabs.List>
           <Tabs.Tab value="conversation" leftSection={<IconMessage2 size={14} />}>对话</Tabs.Tab>
-          <Tabs.Tab value="timeline" leftSection={<IconHistory size={14} />}>活动</Tabs.Tab>
+          <Tabs.Tab value="timeline" leftSection={<IconHistory size={14} />}>运行</Tabs.Tab>
           <Tabs.Tab value="usage" leftSection={<IconCoin size={14} />}>用量</Tabs.Tab>
-          <Tabs.Tab value="artifacts" leftSection={<IconTools size={14} />}>文件与工具</Tabs.Tab>
-          <Tabs.Tab value="raw" leftSection={<IconTerminal2 size={14} />}>原始</Tabs.Tab>
+          <Tabs.Tab value="artifacts" leftSection={<IconTools size={14} />}>产物</Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="conversation" className="session-detail-tab-panel">
+        <Tabs.Panel value="conversation" className="session-detail-tab-panel session-detail-tab-panel--chat">
           <div className="session-detail-tab-toolbar">
             <TextInput
               leftSection={<IconSearch size={14} />}
@@ -512,27 +613,52 @@ function SessionDetailPanel({
               size="xs"
               aria-label="搜索当前已载入对话"
             />
-            <span>{formatNumber(matchingTurns.length)} 轮 · {loadedLabel}</span>
+            <span>{formatNumber(matchingTurns.length)} 轮 · {formatNumber(presentation.userEvents)} 次提问</span>
           </div>
-          {page?.hasMore ? (
-            <Button variant="subtle" size="xs" color="gray" loading={loading} onClick={onLoadMore} className="session-detail-load-earlier">
-              加载更早内容
-            </Button>
-          ) : null}
-          <div className="session-detail-turns">
+          <div
+            ref={chatScrollRef}
+            className="session-chat-scroll"
+            role="log"
+            aria-label="会话聊天记录"
+            onScroll={(event) => {
+              const viewport = event.currentTarget;
+              setChatAwayFromLatest(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight > 180);
+            }}
+          >
+            <div className="session-chat-boundary">
+              {conversationLimit < matchingTurns.length ? (
+                <Button variant="subtle" size="xs" color="gray" onClick={() => setConversationLimit((current) => current + 8)}>
+                  显示更早的 {formatNumber(Math.min(8, matchingTurns.length - conversationLimit))} 轮
+                </Button>
+              ) : page?.hasMore ? (
+                <Button variant="subtle" size="xs" color="gray" loading={loading} onClick={onLoadMore}>
+                  从文件读取更早记录
+                </Button>
+              ) : (
+                <span>会话开始 · {presentation.first ? formatDateTime(presentation.first) : "时间未知"}</span>
+              )}
+            </div>
             {visibleTurns.map((turn, index) => (
-              <CollapsibleSessionTurn
+              <SessionChatTurn
                 key={turn.id}
                 turn={turn}
-                defaultOpen={index >= visibleTurns.length - 2}
+                defaultOpen={index >= visibleTurns.length - 3}
+                query={conversationQuery}
               />
             ))}
             {!loading && !visibleTurns.length ? <Text className="session-detail-empty">当前加载范围没有可显示的问答。</Text> : null}
             {loading && !visibleTurns.length ? <Text className="session-detail-empty">正在加载最近对话...</Text> : null}
+            {visibleTurns.length ? <div className="session-chat-latest-marker">最近活动 · {formatDateTime(presentation.latest)}</div> : null}
           </div>
-          {conversationLimit < matchingTurns.length ? (
-            <Button variant="subtle" size="xs" color="gray" onClick={() => setConversationLimit((current) => current + 8)}>
-              显示更早回合
+          {chatAwayFromLatest ? (
+            <Button
+              className="session-chat-jump-latest"
+              variant="filled"
+              size="xs"
+              leftSection={<IconArrowDown size={14} />}
+              onClick={() => scrollChatToLatest()}
+            >
+              回到最新
             </Button>
           ) : null}
         </Tabs.Panel>
@@ -618,29 +744,6 @@ function SessionDetailPanel({
           ) : null}
         </Tabs.Panel>
 
-        <Tabs.Panel value="raw" className="session-detail-tab-panel">
-          <div className="session-detail-section-head"><Text>最近原始事件</Text><span>{loadedLabel}</span></div>
-          <div className="session-detail-event-list">
-            {presentation.recentEvents.slice(0, 30).map((event, index) => (
-              <button
-                key={event.eventId || `${event.time}-${event.callType}-${index}`}
-                type="button"
-                className="session-detail-event"
-                onClick={() => onOpenEvent?.(event)}
-                aria-label={readableEventSummary(event, 96)}
-              >
-                <span>{callTypeLabel(event.callType)}</span>
-                <strong>{readableEventSummary(event, 96)}</strong>
-                <em>{formatDateTime(event.time)}</em>
-              </button>
-            ))}
-          </div>
-          {page?.hasMore ? <Button variant="light" size="xs" loading={loading} onClick={onLoadMore}>加载更早事件</Button> : null}
-          <section className="session-detail-meta">
-            <div><Text>工作目录</Text><strong title={session?.cwd || ""}>{session?.cwd || "无目录信息"}</strong></div>
-            <div><Text>会话 ID</Text><strong title={rawIds.join("\n")}>{rawIds.map(shortSessionId).join(" · ")}</strong></div>
-          </section>
-        </Tabs.Panel>
       </Tabs>
     </Paper>
   );

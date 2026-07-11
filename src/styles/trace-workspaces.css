@@ -561,8 +561,9 @@
 
 .session-detail-workbench {
   display: flex;
+  overflow: hidden !important;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .session-detail-head {
@@ -578,97 +579,77 @@
 }
 
 .session-detail-title {
-  font-size: 0.95rem !important;
-}
-
-.session-detail-metrics {
-  display: grid !important;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-  gap: 0 !important;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel-soft);
-  flex: 0 0 auto;
-  margin-top: 0 !important;
-}
-
-.session-detail-metric {
-  min-width: 0;
-  min-height: 64px;
-  padding: 8px 10px !important;
-  border: 0 !important;
-  border-right: 1px solid var(--line) !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-}
-
-.session-detail-metric:last-child {
-  border-right: 0 !important;
-}
-
-.session-detail-metric strong {
   overflow: hidden;
-  margin-top: 3px !important;
-  font-size: 0.82rem !important;
+  font-size: 0.98rem !important;
+  line-height: 1.25 !important;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-detail-metric span,
-.session-detail-metric p {
-  font-size: 0.54rem !important;
-}
-
-.session-detail-time-range {
-  display: flex;
-  justify-content: space-between;
-  margin-top: -4px;
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.55rem;
-  flex: 0 0 auto;
-}
-
-.session-detail-time-range strong {
-  color: var(--text-soft);
-  font-weight: 600;
-}
-
-.session-detail-brief {
+.session-detail-context {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(210px, 1.2fr) minmax(300px, 1fr);
+  min-height: 60px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 4px;
+  background: var(--panel-soft);
   flex: 0 0 auto;
 }
 
-.session-detail-brief > div {
+.session-detail-context__topic {
   min-width: 0;
-  padding: 8px 10px;
+  padding: 9px 11px;
+  border-right: 1px solid var(--line);
 }
 
-.session-detail-brief > div + div {
-  border-left: 1px solid var(--line);
-}
-
-.session-detail-brief span,
-.session-detail-section-head span,
-.session-detail-tab-toolbar > span {
+.session-detail-context__topic span,
+.session-detail-context__facts span {
   color: var(--text-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.55rem;
+  font-size: 0.52rem;
+  text-transform: uppercase;
 }
 
-.session-detail-brief p {
-  display: -webkit-box;
+.session-detail-context__topic p {
   overflow: hidden;
   margin: 4px 0 0;
   color: var(--text-soft);
   font-size: 0.65rem;
-  line-height: 1.42;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-detail-context__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.session-detail-context__facts > div {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+  padding: 8px;
+  border-right: 1px solid var(--line);
+}
+
+.session-detail-context__facts > div:nth-child(2n) {
+  border-right: 0;
+}
+
+.session-detail-context__facts > div:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--line);
+}
+
+.session-detail-context__facts strong {
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-detail-tabs {
@@ -686,7 +667,7 @@
 
 .session-detail-tabs .mantine-Tabs-tab {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 112px;
   padding: 7px 5px;
   color: var(--text-faint);
   font-size: 0.6rem;
@@ -697,8 +678,18 @@
 }
 
 .session-detail-tab-panel {
+  position: relative;
   min-height: 0;
   padding-top: 10px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+}
+
+.session-detail-tab-panel--chat {
+  display: flex !important;
+  overflow: hidden;
+  flex-direction: column;
 }
 
 .session-detail-tab-toolbar {
@@ -707,80 +698,233 @@
   align-items: end;
   gap: 8px;
   margin-bottom: 8px;
+  flex: 0 0 auto;
 }
 
-.session-detail-load-earlier {
-  width: 100%;
-  margin-bottom: 7px;
-  border: 1px dashed var(--line) !important;
+.session-detail-section-head span,
+.session-detail-tab-toolbar > span {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
 }
 
-.session-detail-turns {
-  display: grid;
-  gap: 6px;
-}
-
-.session-turn-disclosure {
-  overflow: hidden;
+.session-chat-scroll {
+  min-height: 0;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--trace-row);
+  background: var(--panel-soft);
+  flex: 1 1 auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
-.session-turn-disclosure > button {
+.session-chat-boundary,
+.session-chat-latest-marker {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.53rem;
+}
+
+.session-chat-boundary {
+  border-bottom: 1px solid var(--line);
+}
+
+.session-chat-latest-marker {
+  border-top: 1px solid var(--line);
+}
+
+.session-chat-turn {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.session-chat-turn__toggle {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 16px;
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
   width: 100%;
   align-items: center;
-  gap: 8px;
-  padding: 8px 9px;
+  gap: 9px;
+  min-height: 46px;
+  padding: 7px 10px;
   border: 0;
-  background: transparent;
+  background: var(--panel);
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.session-turn-disclosure > button > span:first-child {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 8px;
+.session-chat-turn__toggle:hover {
+  background: var(--trace-hover);
 }
 
-.session-turn-disclosure > button strong {
+.session-chat-turn__number {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
   color: var(--accent-strong);
-  font-size: 0.62rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.56rem;
+}
+
+.session-chat-turn__summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.session-chat-turn__summary strong,
+.session-chat-turn__summary em {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-turn-disclosure > button em {
-  overflow: hidden;
-  color: var(--text-soft);
+.session-chat-turn__summary strong {
   font-size: 0.64rem;
+  font-weight: 650;
+}
+
+.session-chat-turn__summary em {
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.54rem;
+  font-style: normal;
+}
+
+.session-chat-turn__toggle > svg,
+.session-chat-process summary > svg:last-child {
+  transition: transform 140ms ease;
+}
+
+.session-chat-turn.is-open > .session-chat-turn__toggle > svg,
+.session-chat-process[open] summary > svg:last-child {
+  transform: rotate(90deg);
+}
+
+.session-chat-turn__body {
+  display: grid;
+  gap: 12px;
+  padding: 12px 11px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.session-chat-turn__body .conv-row {
+  gap: 9px;
+}
+
+.session-chat-turn__body .conv-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  flex-basis: 28px;
+  font-size: 0.62rem;
+}
+
+.session-chat-turn__body .conv-surface--agent {
+  width: min(100%, 48rem);
+  max-width: calc(100% - 38px);
+  padding: 1px 2px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.session-chat-turn__body .conv-surface--user {
+  max-width: min(82%, 42rem);
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  box-shadow: none;
+}
+
+.session-chat-turn__body .conv-message-head {
+  margin-bottom: 5px;
+}
+
+.session-chat-turn__body .conv-message-plain,
+.session-chat-turn__body .markdown-content {
+  font-size: 0.67rem;
+  line-height: 1.58;
+}
+
+.session-chat-process {
+  overflow: hidden;
+  margin-left: 37px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--trace-row);
+}
+
+.session-chat-process summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 14px;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.session-chat-process summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-chat-process summary span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 0.59rem;
+  font-weight: 650;
+}
+
+.session-chat-process summary em {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.51rem;
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-turn-disclosure > button > span:nth-child(2) {
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.54rem;
-  white-space: nowrap;
+.session-chat-process.is-error summary span {
+  color: var(--danger);
 }
 
-.session-turn-disclosure > button svg {
-  transition: transform 140ms ease;
+.session-chat-process__entries {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
 }
 
-.session-turn-disclosure.is-open > button svg {
-  transform: rotate(90deg);
+.session-chat-process__entries .conv-surface--tool,
+.session-chat-process__entries .conv-surface--thinking {
+  width: calc(100% - 38px);
+  border-radius: 4px;
+  box-shadow: none;
 }
 
-.session-turn-disclosure .conversation-turn {
-  margin: 0 7px 7px;
-  border-radius: 4px !important;
+.session-chat-jump-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 3;
+  box-shadow: var(--shadow-md);
 }
 
 .session-detail-run-list {
