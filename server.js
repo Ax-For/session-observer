@@ -6,6 +6,7 @@
 const http = require("http");
 const ObserverCore = require("./shared/observer-core");
 const config = require("./server/config");
+config.ensureFrontendBuild();
 const indexManager = require("./server/index-manager");
 const routes = require("./server/routes");
 const sessionOps = require("./server/session-ops");

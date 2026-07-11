@@ -83,13 +83,15 @@ const SOURCE_CHANGE_HEARTBEAT_MS = Math.max(5000, toNonNegativeInt(
 ));
 const CODEX_SERVICE_TIER = readCodexServiceTier();
 
+const HAS_PROJECT_PACKAGE = fs.existsSync(path.join(ROOT, "package.json"));
+const STATIC_ROOT = HAS_PROJECT_PACKAGE ? DIST_ROOT : ROOT;
+
 /**
- * Resolve the static file root, triggering a frontend build if needed.
+ * Build the frontend for an actual server launch. Keeping this explicit avoids
+ * parallel test workers racing to rebuild the same dist directory on import.
  */
-function resolveStaticRoot() {
-  const fs = require("fs");
-  if (!fs.existsSync(path.join(ROOT, "package.json"))) return ROOT;
-  if (fs.existsSync(DIST_INDEX)) return DIST_ROOT;
+function ensureFrontendBuild() {
+  if (!HAS_PROJECT_PACKAGE || fs.existsSync(DIST_INDEX)) return STATIC_ROOT;
 
   console.log("[frontend] dist not found, running npm build...");
   const { spawnSync } = require("child_process");
@@ -102,10 +104,8 @@ function resolveStaticRoot() {
   if (proc.status !== 0 || !fs.existsSync(DIST_INDEX)) {
     throw new Error("Frontend build failed; dist/index.html is missing.");
   }
-  return DIST_ROOT;
+  return STATIC_ROOT;
 }
-
-const STATIC_ROOT = resolveStaticRoot();
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -121,6 +121,7 @@ module.exports = {
   RUNTIME_DIR,
   SUMMARY_CACHE_FILE,
   STATIC_ROOT,
+  ensureFrontendBuild,
   DIST_ROOT,
   DIST_INDEX,
   SESSIONS_DIR,
