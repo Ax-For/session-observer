@@ -14,9 +14,13 @@ const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 4;
+const SUMMARY_CACHE_VERSION = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const MAX_SESSION_MESSAGE_LENGTH = 320;
+const MAX_SESSION_TOOLS = 24;
+const MAX_SESSION_FILES = 16;
+const MAX_MODEL_TRANSITIONS = 16;
 
 function emptyUsage() {
   return {
@@ -138,9 +142,91 @@ function createSessionSummary(sessionId, sourceType) {
     prompt: 0,
     agent: 0,
     tool: 0,
+    toolCalls: 0,
+    toolResults: 0,
+    firstUserMessage: "",
+    firstUserMessageTime: "",
+    latestUserMessage: "",
+    latestUserMessageTime: "",
+    latestAgentMessage: "",
+    latestAgentMessageTime: "",
+    toolNames: new Map(),
+    editedFiles: new Set(),
+    toolErrors: 0,
+    compactions: 0,
+    modelTimeline: [],
+    lastModel: "",
     sourceType: sourceType || "unknown",
     sourceFiles: new Set(),
   };
+}
+
+function compactSessionMessage(event, limit = MAX_SESSION_MESSAGE_LENGTH) {
+  let text = String(event?.content || event?.summary || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    !text
+    || text.startsWith("# AGENTS.md")
+    || text.startsWith("environment_context")
+    || text.startsWith("[text omitted for summary")
+    || text.startsWith("You are ChatGPT")
+    || text.startsWith("You are Codex")
+  ) return "";
+  return ObserverCore.clip(text, limit);
+}
+
+function eventDetailText(event) {
+  const extra = typeof event?.extra === "string" ? event.extra : JSON.stringify(event?.extra || "");
+  return `${event?.content || ""} ${event?.summary || ""} ${extra}`;
+}
+
+function extractToolArguments(event) {
+  if (event?.extra && typeof event.extra === "object") return event.extra;
+  const text = String(event?.content || event?.summary || "");
+  const argsIndex = text.indexOf("args=");
+  if (argsIndex >= 0) {
+    try {
+      return JSON.parse(text.slice(argsIndex + 5));
+    } catch {
+      // Fall through to the bounded regex extraction below.
+    }
+  }
+  return null;
+}
+
+function extractEditedFile(event) {
+  if (event?.callType !== "Tool_Call") return "";
+  const toolName = String(event?.toolName || "").toLowerCase();
+  if (!/(apply_patch|edit|write|multi_edit|create_file)/.test(toolName)) return "";
+  const args = extractToolArguments(event);
+  const directPath = args?.file_path || args?.path || args?.filePath || args?.target;
+  if (typeof directPath === "string" && directPath.trim()) return ObserverCore.clip(directPath.trim(), 360);
+  const match = eventDetailText(event).match(/["'](?:file_path|filePath|path)["']\s*:\s*["']([^"']+)["']/);
+  return match ? ObserverCore.clip(match[1], 360) : "";
+}
+
+function appendModelTransition(session, event) {
+  const model = String(event?.model || "").trim();
+  if (!model || model === "unknown" || model === session.lastModel) return;
+  session.lastModel = model;
+  session.modelTimeline.push({ model, time: event?.time || "" });
+  if (session.modelTimeline.length > MAX_MODEL_TRANSITIONS) {
+    session.modelTimeline.splice(0, session.modelTimeline.length - MAX_MODEL_TRANSITIONS);
+  }
+}
+
+function mergeModelTimeline(target, source) {
+  const merged = [...(target.modelTimeline || []), ...(source.modelTimeline || [])]
+    .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || "")));
+  const compacted = [];
+  for (const item of merged) {
+    if (!item?.model || compacted.at(-1)?.model === item.model) continue;
+    compacted.push({ model: item.model, time: item.time || "" });
+  }
+  target.modelTimeline = compacted.slice(-MAX_MODEL_TRANSITIONS);
+  target.lastModel = target.modelTimeline.at(-1)?.model || target.lastModel || "";
 }
 
 function deriveFallbackTitle(event) {
@@ -174,12 +260,29 @@ function createDailyBucket() {
   return {
     events: 0,
     alerts: 0,
+    prompts: 0,
+    agentMessages: 0,
+    toolCalls: 0,
     tokens: 0,
     usage: emptyUsage(),
     ...emptyCost(),
     sessions: new Set(),
     platforms: new Map(),
     workspaces: new Map(),
+  };
+}
+
+function createHourlyBucket() {
+  return {
+    events: 0,
+    alerts: 0,
+    prompts: 0,
+    agentMessages: 0,
+    toolCalls: 0,
+    tokens: 0,
+    ...emptyCost(),
+    sessions: new Set(),
+    platforms: new Map(),
   };
 }
 
@@ -269,6 +372,42 @@ function touchSession(summary, event, costEstimate) {
   if (event?.callType === "Prompt" || event?.callType === "User") session.prompt += 1;
   else if (event?.callType === "Agent") session.agent += 1;
   else session.tool += 1;
+  const message = compactSessionMessage(event);
+  if ((event?.callType === "Prompt" || event?.callType === "User") && message) {
+    if (!session.firstUserMessageTime || String(event.time || "").localeCompare(session.firstUserMessageTime) < 0) {
+      session.firstUserMessage = ObserverCore.clip(message, 240);
+      session.firstUserMessageTime = event.time || "";
+    }
+    if (!session.latestUserMessageTime || String(event.time || "").localeCompare(session.latestUserMessageTime) >= 0) {
+      session.latestUserMessage = message;
+      session.latestUserMessageTime = event.time || "";
+    }
+  }
+  if (event?.callType === "Agent" && message && (
+    !session.latestAgentMessageTime || String(event.time || "").localeCompare(session.latestAgentMessageTime) >= 0
+  )) {
+    session.latestAgentMessage = message;
+    session.latestAgentMessageTime = event.time || "";
+  }
+  if (event?.callType === "Tool_Call") {
+    session.toolCalls += 1;
+    const toolName = String(event?.toolName || "unknown").trim() || "unknown";
+    if (session.toolNames.has(toolName) || session.toolNames.size < MAX_SESSION_TOOLS) {
+      session.toolNames.set(toolName, (session.toolNames.get(toolName) || 0) + 1);
+    }
+    const editedFile = extractEditedFile(event);
+    if (editedFile && (session.editedFiles.has(editedFile) || session.editedFiles.size < MAX_SESSION_FILES)) {
+      session.editedFiles.add(editedFile);
+    }
+  }
+  if (event?.callType === "Tool_Result") {
+    session.toolResults += 1;
+    if (/\b(error|failed|failure|exception)\b/i.test(eventDetailText(event))) session.toolErrors += 1;
+  }
+  if (/\b(context[_ -]?compact(?:ed|ion)?|compact(?:ed|ion)? context)\b/i.test(eventDetailText(event))) {
+    session.compactions += 1;
+  }
+  appendModelTransition(session, event);
   summary.sessions.set(sessionId, session);
   return session;
 }
@@ -293,6 +432,9 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate) 
 
   bucket.events += 1;
   if (isAlert) bucket.alerts += 1;
+  if (event?.callType === "Prompt" || event?.callType === "User") bucket.prompts += 1;
+  if (event?.callType === "Agent") bucket.agentMessages += 1;
+  if (event?.callType === "Tool_Call") bucket.toolCalls += 1;
   bucket.tokens += tokenTotal;
   addCostEstimate(bucket, costEstimate);
   workspace.events += 1;
@@ -313,15 +455,13 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate) 
 
 function touchHourly(summary, event, eventMs, tokenTotal, isAlert, costEstimate) {
   const key = hourKeyFromMs(eventMs);
-  const bucket = summary.hourly.get(key) || {
-    events: 0,
-    alerts: 0,
-    tokens: 0,
-    ...emptyCost(),
-    platforms: new Map(),
-  };
+  const bucket = summary.hourly.get(key) || createHourlyBucket();
   bucket.events += 1;
   if (isAlert) bucket.alerts += 1;
+  if (event?.callType === "Prompt" || event?.callType === "User") bucket.prompts += 1;
+  if (event?.callType === "Agent") bucket.agentMessages += 1;
+  if (event?.callType === "Tool_Call") bucket.toolCalls += 1;
+  if (event?.sessionId && event.sessionId !== "unknown") bucket.sessions.add(event.sessionId);
   bucket.tokens += tokenTotal;
   addCostEstimate(bucket, costEstimate);
   if (tokenTotal > 0) addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
@@ -422,6 +562,9 @@ function mergeWorkspace(target, source) {
 function mergeDailyBucket(target, source) {
   target.events += source.events || 0;
   target.alerts += source.alerts || 0;
+  target.prompts += source.prompts || 0;
+  target.agentMessages += source.agentMessages || 0;
+  target.toolCalls += source.toolCalls || 0;
   target.tokens += source.tokens || 0;
   mergeCost(target, source);
   mergeUsage(target.usage, source.usage);
@@ -453,6 +596,37 @@ function mergeSession(target, source) {
   target.prompt += source.prompt || 0;
   target.agent += source.agent || 0;
   target.tool += source.tool || 0;
+  target.toolCalls += source.toolCalls || 0;
+  target.toolResults += source.toolResults || 0;
+  if (source.firstUserMessage && (
+    !target.firstUserMessageTime || String(source.firstUserMessageTime || "").localeCompare(target.firstUserMessageTime) < 0
+  )) {
+    target.firstUserMessage = source.firstUserMessage;
+    target.firstUserMessageTime = source.firstUserMessageTime || "";
+  }
+  if (source.latestUserMessage && (
+    !target.latestUserMessageTime || String(source.latestUserMessageTime || "").localeCompare(target.latestUserMessageTime) >= 0
+  )) {
+    target.latestUserMessage = source.latestUserMessage;
+    target.latestUserMessageTime = source.latestUserMessageTime || "";
+  }
+  if (source.latestAgentMessage && (
+    !target.latestAgentMessageTime || String(source.latestAgentMessageTime || "").localeCompare(target.latestAgentMessageTime) >= 0
+  )) {
+    target.latestAgentMessage = source.latestAgentMessage;
+    target.latestAgentMessageTime = source.latestAgentMessageTime || "";
+  }
+  for (const [toolName, calls] of source.toolNames || []) {
+    if (target.toolNames.has(toolName) || target.toolNames.size < MAX_SESSION_TOOLS) {
+      target.toolNames.set(toolName, (target.toolNames.get(toolName) || 0) + (Number(calls) || 0));
+    }
+  }
+  for (const file of source.editedFiles || []) {
+    if (target.editedFiles.has(file) || target.editedFiles.size < MAX_SESSION_FILES) target.editedFiles.add(file);
+  }
+  target.toolErrors += source.toolErrors || 0;
+  target.compactions += source.compactions || 0;
+  mergeModelTimeline(target, source);
 }
 
 function mergeSummary(target, source) {
@@ -498,11 +672,15 @@ function mergeSummary(target, source) {
     target.daily.set(key, bucket);
   }
   for (const [key, sourceBucket] of source.hourly || []) {
-    const bucket = target.hourly.get(key) || { events: 0, alerts: 0, tokens: 0, ...emptyCost(), platforms: new Map() };
+    const bucket = target.hourly.get(key) || createHourlyBucket();
     bucket.events += sourceBucket.events || 0;
     bucket.alerts += sourceBucket.alerts || 0;
+    bucket.prompts += sourceBucket.prompts || 0;
+    bucket.agentMessages += sourceBucket.agentMessages || 0;
+    bucket.toolCalls += sourceBucket.toolCalls || 0;
     bucket.tokens += sourceBucket.tokens || 0;
     mergeCost(bucket, sourceBucket);
+    for (const sessionId of sourceBucket.sessions || []) bucket.sessions.add(sessionId);
     mergeMapTotals(bucket.platforms, sourceBucket.platforms);
     target.hourly.set(key, bucket);
   }
@@ -762,6 +940,16 @@ function serializeSession(session, threadMeta) {
     prompt: session.prompt,
     agent: session.agent,
     tool: session.tool,
+    toolCalls: session.toolCalls,
+    toolResults: session.toolResults,
+    firstUserMessage: session.firstUserMessage,
+    latestUserMessage: session.latestUserMessage,
+    latestAgentMessage: session.latestAgentMessage,
+    topTools: sortedValueEntries(session.toolNames, "calls").slice(0, 8),
+    editedFiles: [...session.editedFiles].slice(0, MAX_SESSION_FILES),
+    toolErrors: session.toolErrors,
+    compactions: session.compactions,
+    modelTimeline: session.modelTimeline.slice(-MAX_MODEL_TRANSITIONS),
     sourceType: session.sourceType,
     sourceFiles: [...session.sourceFiles].sort(),
   };
@@ -792,6 +980,11 @@ function buildHourlyChart(summary, nowMs, bucketCount = 24) {
       label: formatHourLabel(bucketMs),
       events: bucket?.events || 0,
       alerts: bucket?.alerts || 0,
+      prompts: bucket?.prompts || 0,
+      agentMessages: bucket?.agentMessages || 0,
+      interactions: (bucket?.prompts || 0) + (bucket?.agentMessages || 0),
+      toolCalls: bucket?.toolCalls || 0,
+      sessions: bucket?.sessions?.size || 0,
       tokens: bucket?.tokens || 0,
       estimatedUsd: bucket?.estimatedUsd || 0,
       knownTokenTotal: bucket?.knownTokenTotal || 0,
@@ -829,6 +1022,11 @@ function buildDailyChart(summary, nowMs, bucketCount = 30) {
       label: formatDayLabel(bucketMs),
       events: bucket?.events || 0,
       alerts: bucket?.alerts || 0,
+      prompts: bucket?.prompts || 0,
+      agentMessages: bucket?.agentMessages || 0,
+      interactions: (bucket?.prompts || 0) + (bucket?.agentMessages || 0),
+      toolCalls: bucket?.toolCalls || 0,
+      sessions: bucket?.sessions?.size || 0,
       tokens: bucket?.tokens || 0,
       estimatedUsd: bucket?.estimatedUsd || 0,
       knownTokenTotal: bucket?.knownTokenTotal || 0,
@@ -848,6 +1046,10 @@ function buildDailySessionHeatmap(summary, nowMs, bucketCount = 365) {
       label: formatDayLabel(bucketMs),
       sessions: bucket?.sessions?.size || 0,
       events: bucket?.events || 0,
+      prompts: bucket?.prompts || 0,
+      agentMessages: bucket?.agentMessages || 0,
+      interactions: (bucket?.prompts || 0) + (bucket?.agentMessages || 0),
+      toolCalls: bucket?.toolCalls || 0,
       tokens: bucket?.tokens || 0,
       estimatedUsd: bucket?.estimatedUsd || 0,
       knownTokenTotal: bucket?.knownTokenTotal || 0,
@@ -971,6 +1173,36 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
     }));
 
   const costSummary = buildCostSummary(summary);
+  const toolCategories = ObserverCore.buildToolCategories(topTools);
+  const usageStats = ObserverCore.buildUsageStatistics({
+    sessions: sessions.groups,
+    daily: [...summary.daily.entries()].map(([key, bucket]) => ({
+      time: new Date(Number(key)).toISOString(),
+      sessions: bucket?.sessions?.size || 0,
+      sessionIds: [...(bucket?.sessions || new Set())],
+      events: bucket?.events || 0,
+      prompts: bucket?.prompts || 0,
+      agentMessages: bucket?.agentMessages || 0,
+      interactions: (bucket?.prompts || 0) + (bucket?.agentMessages || 0),
+      toolCalls: bucket?.toolCalls || 0,
+      tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+    })),
+    hourly: [...summary.hourly.entries()].map(([key, bucket]) => ({
+      time: new Date(Number(key)).toISOString(),
+      sessions: bucket?.sessions?.size || 0,
+      sessionIds: [...(bucket?.sessions || new Set())],
+      events: bucket?.events || 0,
+      prompts: bucket?.prompts || 0,
+      agentMessages: bucket?.agentMessages || 0,
+      interactions: (bucket?.prompts || 0) + (bucket?.agentMessages || 0),
+      toolCalls: bucket?.toolCalls || 0,
+      tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+    })),
+    totalTokens: summary.usage.effectiveTotal,
+    totalEvents: summary.eventsTotal,
+  }, { nowMs });
 
   return {
     health: {
@@ -1010,6 +1242,7 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       totalCalls: totalToolCalls,
       totalResults: totalToolResults,
       topTools: topTools.slice(0, 20),
+      categories: toolCategories,
     },
     workspaces: {
       total: summary.workspaces.size,
@@ -1033,6 +1266,7 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       thinkingSpans: summary.traces.thinkingSpans,
       maxDepth: summary.traces.maxDepth,
     },
+    usageStats,
     sessions,
     meta: {
       models: [...summary.models].sort(),

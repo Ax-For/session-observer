@@ -19,7 +19,7 @@ export const DEFAULT_SESSION_FILTERS = {
 };
 
 export const DEFAULT_TOKEN_THRESHOLD = "20000";
-export const APP_TABS = ["overview", "tokens", "insights", "stream", "sessions"];
+export const APP_TABS = ["overview", "tokens", "stream", "sessions"];
 
 function cleanSearch(search = "") {
   return String(search).replace(/^\?/, "");
@@ -30,7 +30,7 @@ function pickEnum(value, allowed, fallback) {
 }
 
 function normalizeTab(value) {
-  if (value === "alerts") return "insights";
+  if (value === "alerts" || value === "insights") return "overview";
   return pickEnum(value, APP_TABS, "stream");
 }
 
@@ -53,7 +53,7 @@ export function parseUrlState(search = "") {
     tab: normalizeTab(params.get("tab")),
     selectedSessionId: normalizeText(params.get("session")),
     mode: pickEnum(params.get("mode"), ["observe", "raw"], "observe"),
-    quickFilter: pickEnum(params.get("qf"), ["all", "alert", "high_token"], "all"),
+    quickFilter: pickEnum(params.get("qf"), ["all", "high_token"], "all"),
     tokenThreshold: normalizeThreshold(params.get("tt")),
     streamFilters: {
       ...DEFAULT_STREAM_FILTERS,
@@ -82,7 +82,7 @@ export function buildUrlSearch(state = {}) {
   const params = new URLSearchParams();
   const tab = normalizeTab(state.tab);
   const mode = pickEnum(state.mode, ["observe", "raw"], "observe");
-  const quickFilter = pickEnum(state.quickFilter, ["all", "alert", "high_token"], "all");
+  const quickFilter = pickEnum(state.quickFilter, ["all", "high_token"], "all");
   const tokenThreshold = normalizeThreshold(state.tokenThreshold);
   const streamFilters = {
     ...DEFAULT_STREAM_FILTERS,

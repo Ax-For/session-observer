@@ -299,6 +299,8 @@
         prompt: 0,
         agent: 0,
         tool: 0,
+        toolCalls: 0,
+        toolResults: 0,
         sourceType: event.sourceType || "unknown",
         sourceFiles: new Set(),
       };
@@ -317,6 +319,8 @@
       if (event.callType === "Prompt" || event.callType === "User") group.prompt += 1;
       else if (event.callType === "Agent") group.agent += 1;
       else group.tool += 1;
+      if (event.callType === "Tool_Call") group.toolCalls += 1;
+      if (event.callType === "Tool_Result") group.toolResults += 1;
       groups.set(event.sessionId, group);
     }
 
@@ -596,6 +600,217 @@
     map.set(normalizedKey, (map.get(normalizedKey) || 0) + amount);
   }
 
+  const TOOL_CATEGORY_DEFINITIONS = [
+    { key: "terminal", label: "终端执行", pattern: /(exec|bash|shell|terminal|command|write_stdin|run_command)/i },
+    { key: "browser", label: "浏览器", pattern: /(browser|chrome|playwright|navigate|click|screenshot|evaluate_script|devtools|web__)/i },
+    { key: "code", label: "代码修改", pattern: /(apply_patch|edit|write|create_file|replace|notebook)/i },
+    { key: "search", label: "检索", pattern: /(search|grep|find|glob|ripgrep|query)/i },
+    { key: "files", label: "文件读取", pattern: /(read|view|list|tree|stat|file)/i },
+  ];
+
+  function classifyToolName(name) {
+    const value = String(name || "").trim();
+    return TOOL_CATEGORY_DEFINITIONS.find((category) => category.pattern.test(value)) || {
+      key: "other",
+      label: "其他工具",
+    };
+  }
+
+  function buildToolCategories(tools = []) {
+    const categories = new Map();
+    for (const tool of tools || []) {
+      const calls = Number(tool?.calls) || 0;
+      if (calls <= 0) continue;
+      const category = classifyToolName(tool?.key);
+      const current = categories.get(category.key) || { key: category.key, label: category.label, calls: 0, tools: 0 };
+      current.calls += calls;
+      current.tools += 1;
+      categories.set(category.key, current);
+    }
+    return [...categories.values()].sort((left, right) => right.calls - left.calls || left.label.localeCompare(right.label, "zh-CN"));
+  }
+
+  function percentageChange(current, previous) {
+    const currentValue = Number(current) || 0;
+    const previousValue = Number(previous) || 0;
+    if (previousValue <= 0) return currentValue > 0 ? null : 0;
+    return ((currentValue - previousValue) / previousValue) * 100;
+  }
+
+  function medianValue(values) {
+    const rows = (values || []).filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
+    if (!rows.length) return 0;
+    const middle = Math.floor(rows.length / 2);
+    return rows.length % 2 ? rows[middle] : (rows[middle - 1] + rows[middle]) / 2;
+  }
+
+  function usageRowTime(row) {
+    return toTimeMs(row?.time);
+  }
+
+  function summarizeUsageWindow(rows, startMs, endMs) {
+    const result = {
+      activeDays: 0,
+      sessions: 0,
+      events: 0,
+      prompts: 0,
+      agentMessages: 0,
+      interactions: 0,
+      toolCalls: 0,
+      tokens: 0,
+      estimatedUsd: 0,
+    };
+    const sessionIds = new Set();
+    let fallbackSessions = 0;
+    let hasSessionIds = false;
+
+    for (const row of rows || []) {
+      const rowMs = usageRowTime(row);
+      if (rowMs == null || rowMs < startMs || rowMs > endMs) continue;
+      const events = Number(row?.events) || 0;
+      const prompts = Number(row?.prompts) || 0;
+      const agentMessages = Number(row?.agentMessages) || 0;
+      const interactions = Number.isFinite(Number(row?.interactions))
+        ? Number(row.interactions)
+        : prompts + agentMessages;
+      if (events > 0 || interactions > 0 || Number(row?.sessions) > 0) result.activeDays += 1;
+      result.events += events;
+      result.prompts += prompts;
+      result.agentMessages += agentMessages;
+      result.interactions += interactions;
+      result.toolCalls += Number(row?.toolCalls) || 0;
+      result.tokens += Number(row?.tokens) || 0;
+      result.estimatedUsd += Number(row?.estimatedUsd) || 0;
+      if (Array.isArray(row?.sessionIds)) {
+        hasSessionIds = true;
+        for (const sessionId of row.sessionIds) if (sessionId) sessionIds.add(sessionId);
+      } else {
+        fallbackSessions += Number(row?.sessions) || 0;
+      }
+    }
+    result.sessions = hasSessionIds ? sessionIds.size : fallbackSessions;
+    return result;
+  }
+
+  function buildUsageStatistics(input = {}, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const now = new Date(nowMs);
+    const dayStart = new Date(nowMs);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayStartMs = dayStart.getTime();
+    const recent7StartMs = dayStartMs - 6 * 24 * 60 * 60 * 1000;
+    const previous7StartMs = recent7StartMs - 7 * 24 * 60 * 60 * 1000;
+    const recent30StartMs = dayStartMs - 29 * 24 * 60 * 60 * 1000;
+    const monthStartMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const currentHour = new Date(nowMs);
+    currentHour.setMinutes(0, 0, 0);
+    const fiveHourStartMs = currentHour.getTime() - 4 * 60 * 60 * 1000;
+    const sessions = (input.sessions || []).filter((session) => session?.sessionId && session.sessionId !== "unknown");
+    const daily = input.daily || [];
+    const hourly = input.hourly || [];
+    const sessionCount = sessions.length;
+    const prompts = sessions.reduce((total, session) => total + (Number(session.prompt) || 0), 0);
+    const agentMessages = sessions.reduce((total, session) => total + (Number(session.agent) || 0), 0);
+    const toolCalls = sessions.reduce((total, session) => total + (Number(session.toolCalls) || 0), 0);
+    const toolResults = sessions.reduce((total, session) => total + (Number(session.toolResults) || 0), 0);
+    const durationRows = sessions
+      .map((session) => {
+        const startedAtMs = toTimeMs(session.startedAt);
+        const latestMs = toTimeMs(session.latest);
+        return startedAtMs != null && latestMs != null ? Math.max(0, latestMs - startedAtMs) : 0;
+      })
+      .filter((durationMs) => durationMs > 0);
+    const longestSession = sessions
+      .map((session) => {
+        const startedAtMs = toTimeMs(session.startedAt);
+        const latestMs = toTimeMs(session.latest);
+        return {
+          sessionId: session.sessionId,
+          title: sessionDisplayTitle(session),
+          sourceType: session.sourceType || "unknown",
+          cwd: session.cwd || "unknown",
+          durationMs: startedAtMs != null && latestMs != null ? Math.max(0, latestMs - startedAtMs) : 0,
+          prompts: Number(session.prompt) || 0,
+          toolCalls: Number(session.toolCalls) || 0,
+          tokens: Number(session.tokens) || tokenCountedTotal(session.aggregateToken, session.sourceType),
+        };
+      })
+      .sort((left, right) => right.durationMs - left.durationMs)[0] || null;
+    const today = summarizeUsageWindow(daily, dayStartMs, nowMs);
+    const recent7 = summarizeUsageWindow(daily, recent7StartMs, nowMs);
+    const previous7 = summarizeUsageWindow(daily, previous7StartMs, recent7StartMs - 1);
+    const recent30 = summarizeUsageWindow(daily, recent30StartMs, nowMs);
+    const currentMonth = summarizeUsageWindow(daily, monthStartMs, nowMs);
+    const recentFiveHours = summarizeUsageWindow(hourly, fiveHourStartMs, nowMs);
+    const hourProfile = new Map();
+
+    for (const row of hourly) {
+      const rowMs = usageRowTime(row);
+      if (rowMs == null) continue;
+      const hour = new Date(rowMs).getHours();
+      const profile = hourProfile.get(hour) || { hour, events: 0, interactions: 0, tokens: 0 };
+      profile.events += Number(row.events) || 0;
+      profile.interactions += Number(row.interactions) || 0;
+      profile.tokens += Number(row.tokens) || 0;
+      hourProfile.set(hour, profile);
+    }
+    const busiestHour = [...hourProfile.values()]
+      .sort((left, right) => right.interactions - left.interactions || right.events - left.events || right.tokens - left.tokens)[0] || null;
+    if (busiestHour) busiestHour.label = `${String(busiestHour.hour).padStart(2, "0")}:00`;
+
+    const monthCost = currentMonth.estimatedUsd;
+    const monthTokens = currentMonth.tokens;
+    const dailyAverageCost = monthCost / Math.max(1, dayOfMonth);
+    const dailyAverageTokens = monthTokens / Math.max(1, dayOfMonth);
+
+    return {
+      today,
+      interactions: {
+        prompts,
+        agentMessages,
+        toolCalls,
+        toolResults,
+        messages: prompts + agentMessages,
+        repliesPerPrompt: agentMessages / Math.max(1, prompts),
+        toolCallsPerPrompt: toolCalls / Math.max(1, prompts),
+        tokensPerPrompt: (Number(input.totalTokens) || 0) / Math.max(1, prompts),
+      },
+      sessions: {
+        total: sessionCount,
+        measuredDurationSessions: durationRows.length,
+        averageDurationMs: durationRows.reduce((total, value) => total + value, 0) / Math.max(1, durationRows.length),
+        medianDurationMs: medianValue(durationRows),
+        averagePrompts: prompts / Math.max(1, sessionCount),
+        averageToolCalls: toolCalls / Math.max(1, sessionCount),
+        averageEvents: (Number(input.totalEvents) || 0) / Math.max(1, sessionCount),
+        longest: longestSession,
+      },
+      cadence: {
+        activeDays7: recent7.activeDays,
+        activeDays30: recent30.activeDays,
+        recent7,
+        previous7,
+        sessionChangePercent: percentageChange(recent7.sessions, previous7.sessions),
+        interactionChangePercent: percentageChange(recent7.interactions, previous7.interactions),
+        tokenChangePercent: percentageChange(recent7.tokens, previous7.tokens),
+        costChangePercent: percentageChange(recent7.estimatedUsd, previous7.estimatedUsd),
+        busiestHour,
+        recentFiveHours,
+      },
+      forecast: {
+        monthCost,
+        projectedMonthCost: dailyAverageCost * daysInMonth,
+        dailyAverageCost,
+        monthTokens,
+        projectedMonthTokens: dailyAverageTokens * daysInMonth,
+        dayOfMonth,
+        daysInMonth,
+      },
+    };
+  }
+
   function buildHourlyChart(events, options = {}) {
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
     const timezoneOffsetMinutes = getTimezoneOffsetMinutes(nowMs, options.timezoneOffsetMinutes);
@@ -609,7 +824,13 @@
       label: formatHourLabel(firstBucketMs + index * 60 * 60 * 1000, timezoneOffsetMinutes),
       events: 0,
       alerts: 0,
+      prompts: 0,
+      agentMessages: 0,
+      toolCalls: 0,
       tokens: 0,
+      estimatedUsd: 0,
+      knownTokenTotal: 0,
+      sessionSet: new Set(),
       platformMap: new Map(),
     }));
 
@@ -621,9 +842,20 @@
       if (!bucket) continue;
       bucket.events += 1;
       if (isAlertEvent(event)) bucket.alerts += 1;
+      if (event?.callType === "Prompt" || event?.callType === "User") bucket.prompts += 1;
+      if (event?.callType === "Agent") bucket.agentMessages += 1;
+      if (event?.callType === "Tool_Call") bucket.toolCalls += 1;
+      if (event?.sessionId && event.sessionId !== "unknown") bucket.sessionSet.add(event.sessionId);
       const tokenTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
       if (tokenTotal <= 0) continue;
       bucket.tokens += tokenTotal;
+      const estimate = tokenPricingApi?.estimateTokenCost
+        ? tokenPricingApi.estimateTokenCost(event?.tokenUsage, event?.model, event?.sourceType === "codex" ? { speed: options.costSpeedTier } : {})
+        : null;
+      if (estimate?.known) {
+        bucket.estimatedUsd += Number(estimate.estimatedUsd) || 0;
+        bucket.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+      }
       addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
     }
 
@@ -632,7 +864,14 @@
       label: bucket.label,
       events: bucket.events,
       alerts: bucket.alerts,
+      prompts: bucket.prompts,
+      agentMessages: bucket.agentMessages,
+      interactions: bucket.prompts + bucket.agentMessages,
+      toolCalls: bucket.toolCalls,
+      sessions: bucket.sessionSet.size,
       tokens: bucket.tokens,
+      estimatedUsd: bucket.estimatedUsd,
+      knownTokenTotal: bucket.knownTokenTotal,
       platforms: mapTotalsToSortedEntries(bucket.platformMap),
     }));
   }
@@ -650,7 +889,13 @@
       label: formatDayLabel(firstBucketMs + index * 24 * 60 * 60 * 1000, timezoneOffsetMinutes),
       events: 0,
       alerts: 0,
+      prompts: 0,
+      agentMessages: 0,
+      toolCalls: 0,
       tokens: 0,
+      estimatedUsd: 0,
+      knownTokenTotal: 0,
+      sessionSet: new Set(),
       platformMap: new Map(),
     }));
 
@@ -662,9 +907,20 @@
       if (!bucket) continue;
       bucket.events += 1;
       if (isAlertEvent(event)) bucket.alerts += 1;
+      if (event?.callType === "Prompt" || event?.callType === "User") bucket.prompts += 1;
+      if (event?.callType === "Agent") bucket.agentMessages += 1;
+      if (event?.callType === "Tool_Call") bucket.toolCalls += 1;
+      if (event?.sessionId && event.sessionId !== "unknown") bucket.sessionSet.add(event.sessionId);
       const tokenTotal = tokenCountedTotal(event?.tokenUsage, event?.sourceType);
       if (tokenTotal <= 0) continue;
       bucket.tokens += tokenTotal;
+      const estimate = tokenPricingApi?.estimateTokenCost
+        ? tokenPricingApi.estimateTokenCost(event?.tokenUsage, event?.model, event?.sourceType === "codex" ? { speed: options.costSpeedTier } : {})
+        : null;
+      if (estimate?.known) {
+        bucket.estimatedUsd += Number(estimate.estimatedUsd) || 0;
+        bucket.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+      }
       addMapValue(bucket.platformMap, event?.sourceType, tokenTotal);
     }
 
@@ -673,7 +929,14 @@
       label: bucket.label,
       events: bucket.events,
       alerts: bucket.alerts,
+      prompts: bucket.prompts,
+      agentMessages: bucket.agentMessages,
+      interactions: bucket.prompts + bucket.agentMessages,
+      toolCalls: bucket.toolCalls,
+      sessions: bucket.sessionSet.size,
       tokens: bucket.tokens,
+      estimatedUsd: bucket.estimatedUsd,
+      knownTokenTotal: bucket.knownTokenTotal,
       platforms: mapTotalsToSortedEntries(bucket.platformMap),
     }));
   }
@@ -690,7 +953,12 @@
       time: new Date(firstBucketMs + index * 24 * 60 * 60 * 1000).toISOString(),
       label: formatDayLabel(firstBucketMs + index * 24 * 60 * 60 * 1000, timezoneOffsetMinutes),
       events: 0,
+      prompts: 0,
+      agentMessages: 0,
+      toolCalls: 0,
       tokens: 0,
+      estimatedUsd: 0,
+      knownTokenTotal: 0,
       sessionSet: new Set(),
       workspaceMap: new Map(),
     }));
@@ -713,6 +981,9 @@
       };
 
       bucket.events += 1;
+      if (event?.callType === "Prompt" || event?.callType === "User") bucket.prompts += 1;
+      if (event?.callType === "Agent") bucket.agentMessages += 1;
+      if (event?.callType === "Tool_Call") bucket.toolCalls += 1;
       if (sessionId) {
         bucket.sessionSet.add(sessionId);
         workspace.sessionSet.add(sessionId);
@@ -720,6 +991,13 @@
       if (tokenTotal > 0) {
         bucket.tokens += tokenTotal;
         workspace.tokens += tokenTotal;
+        const estimate = tokenPricingApi?.estimateTokenCost
+          ? tokenPricingApi.estimateTokenCost(event?.tokenUsage, event?.model, event?.sourceType === "codex" ? { speed: options.costSpeedTier } : {})
+          : null;
+        if (estimate?.known) {
+          bucket.estimatedUsd += Number(estimate.estimatedUsd) || 0;
+          bucket.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+        }
       }
       workspace.events += 1;
       bucket.workspaceMap.set(cwd, workspace);
@@ -745,7 +1023,13 @@
         label: bucket.label,
         sessions: bucket.sessionSet.size,
         events: bucket.events,
+        prompts: bucket.prompts,
+        agentMessages: bucket.agentMessages,
+        interactions: bucket.prompts + bucket.agentMessages,
+        toolCalls: bucket.toolCalls,
         tokens: bucket.tokens,
+        estimatedUsd: bucket.estimatedUsd,
+        knownTokenTotal: bucket.knownTokenTotal,
         topWorkspace,
       };
     });
@@ -907,6 +1191,16 @@
       if (right.alerts !== left.alerts) return right.alerts - left.alerts;
       return String(left.key).localeCompare(String(right.key), "zh-CN");
     });
+    const hourlyChart = buildHourlyChart(eventList, options);
+    const dailyChart = buildDailyChart(eventList, options);
+    const dailySessionChart = buildDailySessionHeatmap(eventList, options);
+    const usageStats = buildUsageStatistics({
+      sessions,
+      daily: dailySessionChart,
+      hourly: hourlyChart,
+      totalTokens: effectiveTotal,
+      totalEvents: eventList.length,
+    }, options);
 
     return {
       health: {
@@ -939,21 +1233,23 @@
         totalCalls: totalToolCalls,
         totalResults: totalToolResults,
         topTools: topTools.slice(0, 20),
+        categories: buildToolCategories(topTools),
       },
       workspaces: {
         total: workspaceStats.size,
         topWorkspaces: workspaceChart.slice(0, 20),
       },
       charts: {
-        hourly: buildHourlyChart(eventList, options),
-        daily: buildDailyChart(eventList, options),
-        dailySessions: buildDailySessionHeatmap(eventList, options),
+        hourly: hourlyChart,
+        daily: dailyChart,
+        dailySessions: dailySessionChart,
         platformShare: tokenPlatformShare,
         modelTokens: tokenModelChart,
         workspaceTokens: workspaceChart,
         alertTypes: alertTypeChart,
       },
       traces: traceSummary,
+      usageStats,
     };
   }
 
@@ -1567,7 +1863,9 @@
     addTokenUsage,
     applySessionTitleOverrides,
     buildObservabilitySummary,
+    buildToolCategories,
     buildTokenUsageWindows,
+    buildUsageStatistics,
     buildSessionGroups,
     clip,
     collectMeta,

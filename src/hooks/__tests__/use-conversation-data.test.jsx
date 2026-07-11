@@ -61,9 +61,9 @@ describe("useConversationData", () => {
   test("does not preload entire large server conversations in the background", async () => {
     const notify = vi.fn();
     const fetchMock = vi.fn(async () => jsonResponse({
-      events: buildLocalEvents(1000).map((event) => ({ ...event, sessionId: "sess-server" })),
+      events: buildLocalEvents(400).map((event) => ({ ...event, sessionId: "sess-server" })),
       totalMatching: 5000,
-      page: { offset: 0, limit: 1000, hasMore: true },
+      page: { offset: 0, limit: 400, hasMore: true },
     }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -78,15 +78,17 @@ describe("useConversationData", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.conversationEvents).toHaveLength(1000);
+      expect(result.current.conversationEvents).toHaveLength(400);
     });
     expect(result.current.conversationPage).toEqual({
       total: 5000,
-      loaded: 1000,
-      nextOffset: 1000,
+      loaded: 400,
+      nextOffset: 400,
       hasMore: true,
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain("summary=0");
+    expect(fetchMock.mock.calls[0][0]).toContain("order=desc");
+    expect(fetchMock.mock.calls[0][0]).toContain("limit=400");
   });
 });

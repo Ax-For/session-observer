@@ -1,4 +1,4 @@
-export const CONVERSATION_PAGE_LIMIT = 1000;
+export const CONVERSATION_PAGE_LIMIT = 400;
 
 export function createEmptyConversationPage() {
   return {
@@ -29,7 +29,8 @@ export function sliceConversationPage(allEvents = [], offset = 0, limit = CONVER
 
 export function mergeConversationPage(currentEvents = [], currentPage = createEmptyConversationPage(), incomingEvents = [], options = {}) {
   const { total, replace = false } = options;
-  const events = replace ? [...incomingEvents] : [...currentEvents, ...incomingEvents];
+  const events = (replace ? [...incomingEvents] : [...currentEvents, ...incomingEvents])
+    .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || "")));
   const fallbackTotal = Number(currentPage?.total) || 0;
   const normalizedTotal = Number.isFinite(Number(total))
     ? Math.max(events.length, Number(total))

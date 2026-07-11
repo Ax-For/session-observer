@@ -148,8 +148,8 @@ describe("ConversationDrawer", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText("已加载 100 / 共 480 · 向下滚动加载更多")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "继续加载" }));
+    expect(screen.getByText("当前仅载入最近 100 / 480 条事件")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "加载更早内容" }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 
@@ -184,7 +184,7 @@ describe("ConversationDrawer", () => {
     const dialog = dialogs[dialogs.length - 1];
 
     expect(within(dialog).getByText("会话进度")).toBeInTheDocument();
-    expect(within(dialog).getByText("已加载 100 / 共 480 条事件")).toBeInTheDocument();
+    expect(within(dialog).getByText("已载入最近 100 / 共 480 条事件")).toBeInTheDocument();
   });
 
   test("renders conversation content inside a dedicated fixed-height scroll shell", () => {
@@ -342,8 +342,8 @@ describe("ConversationDrawer", () => {
 
     expect(within(dialog).getByText("回合导航")).toBeInTheDocument();
     expect(within(dialog).getByRole("combobox", { name: "回合导航" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "上一轮" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "下一轮" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "上一轮" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "下一轮" })).toBeDisabled();
     expect(within(dialog).getByText("已渲染 2 / 2 轮")).toBeInTheDocument();
     expect(within(dialog).getByText("拖动定位回合")).toBeInTheDocument();
     expect(within(dialog).getByRole("slider", { name: "拖动定位回合" })).toBeInTheDocument();
@@ -381,11 +381,11 @@ describe("ConversationDrawer", () => {
     const dialog = dialogs[dialogs.length - 1];
 
     expect(within(dialog).getByText(/已渲染 8 \/ 12 轮/)).toBeInTheDocument();
-    expect(within(dialog).getByText("第 8 轮问题")).toBeInTheDocument();
-    expect(within(dialog).queryByText("第 9 轮问题")).not.toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "显示更多回合" }));
     expect(within(dialog).getByText("第 12 轮问题")).toBeInTheDocument();
+    expect(within(dialog).queryByText("第 4 轮问题")).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "显示更早回合" }));
+    expect(within(dialog).getByText("第 1 轮问题")).toBeInTheDocument();
     expect(within(dialog).getByText(/已渲染 12 \/ 12 轮/)).toBeInTheDocument();
   });
 
@@ -416,22 +416,22 @@ describe("ConversationDrawer", () => {
 
     const dialogs = screen.getAllByRole("dialog", { name: "会话对话" });
     const dialog = dialogs[dialogs.length - 1];
-    const nextButton = within(dialog).getByRole("button", { name: "下一轮" });
+    const previousButton = within(dialog).getByRole("button", { name: "上一轮" });
 
     for (let index = 0; index < 11; index += 1) {
-      fireEvent.click(nextButton);
+      fireEvent.click(previousButton);
     }
 
-    expect(within(dialog).getByText("第 12 轮问题")).toBeInTheDocument();
+    expect(within(dialog).getByText("第 1 轮问题")).toBeInTheDocument();
     expect(dialog.querySelectorAll(".conversation-turn")).toHaveLength(8);
-    expect(within(dialog).getByText(/当前范围 5-12/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/当前范围 1-8/)).toBeInTheDocument();
   });
 
   test("searches conversation content and jumps to the matched turn window", () => {
     const events = Array.from({ length: 12 }, (_, index) => ({
       time: `2026-04-19T10:${String(index).padStart(2, "0")}:00.000Z`,
       callType: "Prompt",
-      content: index === 9 ? "第 10 轮问题，包含特殊答案" : `第 ${index + 1} 轮问题`,
+      content: index === 1 ? "第 2 轮问题，包含特殊答案" : `第 ${index + 1} 轮问题`,
     }));
 
     render(
@@ -455,16 +455,16 @@ describe("ConversationDrawer", () => {
     const dialogs = screen.getAllByRole("dialog", { name: "会话对话" });
     const dialog = dialogs[dialogs.length - 1];
 
-    expect(within(dialog).queryByText("第 10 轮问题，包含特殊答案")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("第 2 轮问题，包含特殊答案")).not.toBeInTheDocument();
     fireEvent.change(within(dialog).getByRole("textbox", { name: "搜索对话内容或回合" }), {
       target: { value: "特殊答案" },
     });
 
-    expect(within(dialog).getByText("命中 1 / 1 · 第 10 轮 · 用户")).toBeInTheDocument();
-    expect(within(dialog).getAllByText("第 10 轮问题，包含特殊答案").length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getByText("命中 1 / 1 · 第 2 轮 · 用户")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("第 2 轮问题，包含特殊答案").length).toBeGreaterThanOrEqual(1);
     expect(dialog.querySelector(".conversation-highlight")).toHaveTextContent("特殊答案");
     expect(dialog.querySelectorAll(".conversation-turn")).toHaveLength(8);
-    expect(within(dialog).getByText(/当前范围 5-12/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/当前范围 1-8/)).toBeInTheDocument();
   });
 
   test("keeps search controls in place when moving between matches", () => {

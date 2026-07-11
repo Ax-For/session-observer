@@ -21,12 +21,16 @@ import {
 import { Notifications, notifications } from "@mantine/notifications";
 import { useLocalStorage } from "@mantine/hooks";
 import {
+  IconActivity,
   IconAdjustmentsHorizontal,
   IconAlertCircle,
-  IconBulb,
+  IconChartBar,
+  IconClock,
+  IconMessageCircle,
   IconMoon,
   IconRefresh,
   IconSearch,
+  IconStack2,
   IconSun,
   IconX,
 } from "@tabler/icons-react";
@@ -62,6 +66,19 @@ import { useUrlStateSync } from "./hooks/use-url-state-sync";
 
 const DATA_SOURCE = "server";
 const EMPTY_LOCAL_EVENTS = [];
+const NAV_ITEMS = [
+  { value: "overview", label: "总览", detail: "实时态势", shortcut: "1", icon: IconActivity },
+  { value: "tokens", label: "Token", detail: "用量与成本", shortcut: "2", icon: IconChartBar },
+  { value: "stream", label: "事件流", detail: "检索与追踪", shortcut: "3", icon: IconClock },
+  { value: "sessions", label: "会话", detail: "归档与详情", shortcut: "4", icon: IconMessageCircle },
+];
+
+const VIEW_META = {
+  overview: { eyebrow: "01 / PULSE", title: "运行总览", description: "活跃会话、使用节奏与服务状态" },
+  tokens: { eyebrow: "02 / LEDGER", title: "Token 账本", description: "用量构成、趋势与成本归因" },
+  stream: { eyebrow: "03 / LIVE", title: "事件流", description: "最近事件、搜索与会话上下文" },
+  sessions: { eyebrow: "04 / LIBRARY", title: "会话管理", description: "检索、分组与完整对话" },
+};
 
 const StreamWorkspace = lazy(() => import("./components/stream-workspace").then((module) => ({
   default: module.StreamWorkspace,
@@ -80,8 +97,8 @@ const ConversationDrawer = lazy(() => import("./components/conversation-drawer")
 })));
 
 const theme = createTheme({
-  primaryColor: "blue",
-  defaultRadius: "xl",
+  primaryColor: "teal",
+  defaultRadius: "md",
   fontFamily: "Manrope, PingFang SC, Hiragino Sans GB, sans-serif",
   headings: {
     fontFamily: "Sora, Manrope, PingFang SC, sans-serif",
@@ -139,8 +156,8 @@ function createSessionDetailPage() {
   return {
     total: 0,
     offset: 0,
-    limit: 500,
-    order: "asc",
+    limit: 400,
+    order: "desc",
     hasMore: false,
     nextOffset: 0,
   };
@@ -156,12 +173,11 @@ export function App() {
     key: "observer-theme-mode",
     defaultValue: "dark",
   });
-  const [density, setDensity] = useLocalStorage({
-    key: "observer-density-mode",
-    defaultValue: "cozy",
-  });
   const [mode, setMode] = useState(initialUrlState.mode);
   const [quickFilter, setQuickFilter] = useState(initialUrlState.quickFilter);
+  const [streamView, setStreamView] = useState(
+    initialUrlState.mode === "raw" ? "raw" : initialUrlState.quickFilter === "high_token" ? "usage" : "activity",
+  );
   const [tokenThreshold, setTokenThreshold] = useState(initialUrlState.tokenThreshold || DEFAULT_TOKEN_THRESHOLD);
   const [streamFilters, setStreamFilters] = useState(initialUrlState.streamFilters || DEFAULT_STREAM_FILTERS);
   const [sessionFilters, setSessionFilters] = useState(initialUrlState.sessionFilters || DEFAULT_SESSION_FILTERS);
@@ -169,13 +185,14 @@ export function App() {
   const dataSource = DATA_SOURCE;
   const localEvents = EMPTY_LOCAL_EVENTS;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sessionFiltersOpen, setSessionFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailEvent, setDetailEvent] = useState(null);
   const [sessionDetailSeed, setSessionDetailSeed] = useState(null);
   const [sessionDetailEvents, setSessionDetailEvents] = useState([]);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
-  const [sessionDetailOrder, setSessionDetailOrder] = useState("asc");
+  const [sessionDetailOrder, setSessionDetailOrder] = useState("desc");
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
   const sessionDetailRequestId = useRef(0);
   const [streamSearchDraft, setStreamSearchDraft] = useState(initialUrlState.streamFilters?.query || "");
@@ -184,7 +201,7 @@ export function App() {
   const normalizedStreamSearchDraft = streamSearchDraft.trim();
   const streamSearchDirty = normalizedStreamSearchDraft !== submittedStreamQuery.trim();
   const notify = useCallback((options) => notifications.show(options), []);
-  const isObservabilityTab = tab === "overview" || tab === "tokens" || tab === "insights";
+  const isObservabilityTab = tab === "overview" || tab === "tokens";
   const { streamPayload, loadingEvents, loadEvents } = useStreamData({
     dataSource,
     enabled: tab === "stream",
@@ -364,8 +381,8 @@ export function App() {
     }
 
     const append = Boolean(options.append);
-    const order = options.order || (append ? sessionDetailPage.order : sessionDetailOrder) || "asc";
-    const limit = sessionDetailPage.limit || 500;
+    const order = options.order || (append ? sessionDetailPage.order : sessionDetailOrder) || "desc";
+    const limit = sessionDetailPage.limit || 400;
     const offset = append ? sessionDetailPage.nextOffset : 0;
     const requestId = ++sessionDetailRequestId.current;
     setSessionDetailLoading(true);
@@ -398,16 +415,32 @@ export function App() {
         summary: 0,
       });
       if (requestId !== sessionDetailRequestId.current) return;
-      const nextEvents = payload.events || [];
-      const total = Number(payload.totalMatching) || nextEvents.length;
+      let nextEvents = payload.events || [];
+      let total = Number(payload.totalMatching) || nextEvents.length;
+      const initialOffset = offset + nextEvents.length;
+      const hasTurnBoundary = nextEvents.some((event) => ["Prompt", "User"].includes(event.callType));
+      if (!append && order === "desc" && initialOffset < total && !hasTurnBoundary) {
+        const boundaryPayload = await apiClient.fetchEvents({
+          sessionId,
+          order,
+          limit: Math.min(80, total - initialOffset),
+          offset: initialOffset,
+          mode: "raw",
+          summary: 0,
+        });
+        if (requestId !== sessionDetailRequestId.current) return;
+        nextEvents = [...nextEvents, ...(boundaryPayload.events || [])];
+        total = Math.max(total, Number(boundaryPayload.totalMatching) || 0);
+      }
       const nextOffset = offset + nextEvents.length;
-      setSessionDetailEvents((current) => (append ? [...current, ...nextEvents] : nextEvents));
+      setSessionDetailEvents((current) => (append ? [...current, ...nextEvents] : nextEvents)
+        .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || ""))));
       setSessionDetailPage({
         total,
         offset,
         limit,
         order,
-        hasMore: Boolean(payload.page?.hasMore) || nextOffset < total,
+        hasMore: nextOffset < total,
         nextOffset,
       });
     } catch (error) {
@@ -475,7 +508,7 @@ export function App() {
       }
       if (event.key === "r" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
-        if (tab === "overview" || tab === "tokens" || tab === "insights") {
+        if (tab === "overview" || tab === "tokens") {
           loadObservability();
         } else if (tab === "sessions") {
           loadSessions();
@@ -493,6 +526,7 @@ export function App() {
       }
       if (event.key === "Escape") {
         setFiltersOpen(false);
+        setSessionFiltersOpen(false);
         setHelpOpen(false);
         setDetailEvent(null);
         closeConversation();
@@ -509,10 +543,6 @@ export function App() {
     setThemeMode((value) => (value === "dark" ? "light" : "dark"));
   }
 
-  function toggleDensity() {
-    setDensity((value) => (value === "compact" ? "cozy" : "compact"));
-  }
-
   function selectSession(sessionId) {
     setSelectedSessionId((current) => (current === sessionId ? "" : sessionId));
   }
@@ -526,7 +556,7 @@ export function App() {
   }
 
   function refreshCurrentView() {
-    if (tab === "overview" || tab === "tokens" || tab === "insights") {
+    if (tab === "overview" || tab === "tokens") {
       loadObservability();
       return;
     }
@@ -581,7 +611,7 @@ export function App() {
     const sessionId = getNavigationSessionId(target);
     if (!sessionId) return;
     const seed = buildSessionDetailSeed(target);
-    const preferredOrder = options.order || (target?.time ? "desc" : "asc");
+    const preferredOrder = options.order || "desc";
     setSessionDetailSeed(seed);
     setSessionDetailOrder(preferredOrder);
     setSelectedSessionId(sessionId);
@@ -680,7 +710,7 @@ export function App() {
     } : null,
     quickFilter !== "all" ? {
       key: "quick",
-      label: quickFilter === "alert" ? "异常" : "高 Token",
+      label: "高 Token",
       clear: () => setQuickFilter("all"),
     } : null,
     selectedSessionId ? {
@@ -725,59 +755,75 @@ export function App() {
     }
   }
 
+  const currentView = VIEW_META[tab] || VIEW_META.overview;
+
   return (
     <MantineProvider theme={theme} forceColorScheme={themeMode}>
       <Notifications position="top-right" />
-      <div className={`observer-root theme-${themeMode} density-${density}`}>
-        <AppShell header={{ height: { base: 72, sm: 72 } }} padding="md">
-          <AppShell.Header className="shell-header">
-            <div className="shell-header__inner">
-              <div className="shell-header__grid">
-                <div className="shell-header__brand">
-                  <div className="brand-mark">SO</div>
-                  <div className="shell-header__brand-copy">
-                    <Title order={3}>Session Observer</Title>
-                    <Text className="header-status">{headerMetrics.status}</Text>
+      <div className={`observer-root theme-${themeMode} density-compact`}>
+        <AppShell
+          layout="alt"
+          header={{ height: 68 }}
+          navbar={{ width: 76, breakpoint: 0 }}
+          padding={0}
+        >
+          <AppShell.Navbar className="instrument-rail" data-testid="instrument-rail" aria-label="主导航">
+            <div className="instrument-rail__brand" title="Session Observer">
+              <span className="instrument-rail__brand-mark">SO</span>
+              <span className="instrument-rail__brand-line" />
+            </div>
+
+            <div className="instrument-rail__nav" aria-label="主视图" role="radiogroup">
+              {NAV_ITEMS.map(({ value, label, detail, shortcut, icon: Icon }) => {
+                const active = tab === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    aria-label={label}
+                    title={`${label} · ${detail}`}
+                    className={`instrument-nav${active ? " is-active" : ""}`}
+                    onClick={() => setTab(value)}
+                  >
+                    <span className="instrument-nav__index" aria-hidden="true">{shortcut}</span>
+                    <Icon size={21} stroke={1.7} aria-hidden="true" />
+                    <span className="instrument-nav__label">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="instrument-rail__footer" title={refreshStatus.title}>
+              <span className={`instrument-rail__signal is-${refreshStatus.tone}`} />
+              <IconStack2 size={17} stroke={1.7} aria-hidden="true" />
+              <strong>{formatNumber(cachedFileCount)}</strong>
+              <small>files</small>
+            </div>
+          </AppShell.Navbar>
+
+          <AppShell.Header className="command-header">
+            <div className="command-header__inner">
+              <div className="command-header__identity">
+                <div className="command-header__product">
+                  <Text>SESSION OBSERVER</Text>
+                  <span>LOCAL AGENT TELEMETRY</span>
+                </div>
+                <span className="command-header__divider" />
+                <div className="command-header__view">
+                  <Text className="command-header__eyebrow">{currentView.eyebrow}</Text>
+                  <div className="command-header__title-line">
+                    <Title order={1} className="command-header__view-title">{currentView.title}</Title>
+                    <Text>{currentView.description}</Text>
                   </div>
                 </div>
+              </div>
 
-                <SegmentedControl
-                  radius="xl"
-                  value={tab}
-                  onChange={setTab}
-                  className="shell-tabs"
-                  data={[
-                    { label: "总览", value: "overview" },
-                    { label: "Token", value: "tokens" },
-                    { label: "洞察", value: "insights" },
-                    { label: "事件流", value: "stream" },
-                    { label: "会话", value: "sessions" },
-                  ]}
-                />
-
-                <Group gap={6} className="shell-header__metrics" wrap="nowrap">
-                  <Badge radius="xl" variant="light" color="blue">
-                    按需流
-                  </Badge>
-                  <Badge radius="xl" variant="light" color="gray">
-                    {`${formatNumber(cachedFileCount)} 文件`}
-                  </Badge>
-                  <Badge radius="xl" variant="light" color="teal">
-                    不驻留
-                  </Badge>
-                  <Badge radius="xl" variant="light" color="gray">
-                    {tab === "sessions"
-                      ? `会话 ${formatNumber(sessionSections.reduce((sum, section) => sum + section.total, 0))}`
-                      : tab === "stream"
-                        ? `匹配 ${formatNumber(headerMetrics.matching)}`
-                        : `活跃 ${formatNumber(activeSessionOverview.total || 0)}`}
-                  </Badge>
-                </Group>
-
-                <Group gap="xs" align="center" className="header-actions" wrap="nowrap">
+                <Group gap={6} align="center" className="command-header__actions" wrap="nowrap">
                   <Badge
-                    radius="xl"
-                    variant="light"
+                    radius="sm"
+                    variant="outline"
                     color={refreshStatus.color}
                     title={refreshStatus.title}
                     className="refresh-status-badge"
@@ -785,26 +831,22 @@ export function App() {
                   >
                     {refreshStatus.label}
                   </Badge>
-                  <ActionIcon radius="xl" variant="light" color="blue" size="lg" onClick={refreshCurrentView}>
+                  <ActionIcon aria-label="刷新当前视图" title="刷新当前视图" radius="sm" variant="subtle" color="teal" size="lg" onClick={refreshCurrentView}>
                     <IconRefresh size={18} />
                   </ActionIcon>
-                  <ActionIcon radius="xl" variant="light" color="gray" size="lg" onClick={toggleTheme}>
+                  <ActionIcon aria-label="切换主题" title="切换主题" radius="sm" variant="subtle" color="gray" size="lg" onClick={toggleTheme}>
                     {themeMode === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}
                   </ActionIcon>
-                  <ActionIcon radius="xl" variant="light" color="gray" size="lg" onClick={toggleDensity}>
-                    <IconBulb size={18} />
-                  </ActionIcon>
-                  <ActionIcon radius="xl" variant="light" color="gray" size="lg" onClick={() => setHelpOpen(true)}>
+                  <ActionIcon aria-label="打开帮助" title="打开帮助" radius="sm" variant="subtle" color="gray" size="lg" onClick={() => setHelpOpen(true)}>
                     <IconAlertCircle size={18} />
                   </ActionIcon>
                 </Group>
-              </div>
             </div>
           </AppShell.Header>
 
-          <AppShell.Main>
-            <Stack gap="lg" className="app-main">
-              {tab === "overview" || tab === "tokens" || tab === "insights" ? (
+          <AppShell.Main className="workspace-canvas" data-testid="workspace-canvas" data-workbench-view={tab}>
+            <Stack gap="md" className="app-main">
+              {tab === "overview" || tab === "tokens" ? (
                 <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
                   <ObservabilityWorkspace
                     payload={observabilityPayload}
@@ -818,40 +860,27 @@ export function App() {
                 </Suspense>
               ) : tab === "stream" ? (
                 <>
-                  <Paper className="control-shelf" radius="xl" p="md">
-                    <div className="stream-control-header">
-                      <Group gap="sm" wrap="wrap">
+                  <Paper component="section" aria-label="事件查询" className="control-shelf command-deck command-deck--stream" radius="md" p="md">
+                    <div className="stream-query-grid">
+                      <div className="command-deck__modes">
                         <SegmentedControl
-                          radius="xl"
-                          value={mode}
-                          onChange={setMode}
+                          size="xs"
+                          radius="sm"
+                          value={streamView}
+                          onChange={(value) => {
+                            setStreamView(value);
+                            setMode(value === "raw" ? "raw" : "observe");
+                            setQuickFilter("all");
+                          }}
                           data={[
-                            { label: "观测", value: "observe" },
+                            { label: "活动", value: "activity" },
+                            { label: "问答", value: "dialogue" },
+                            { label: "工具", value: "tools" },
+                            { label: "用量", value: "usage" },
                             { label: "原始", value: "raw" },
                           ]}
                         />
-                        <SegmentedControl
-                          radius="xl"
-                          value={quickFilter}
-                          onChange={setQuickFilter}
-                          data={[
-                            { label: "全部", value: "all" },
-                            { label: "异常", value: "alert" },
-                            { label: "高 Token", value: "high_token" },
-                          ]}
-                        />
-                      </Group>
-                      <Button
-                        variant="subtle"
-                        radius="xl"
-                        color="gray"
-                        leftSection={<IconAdjustmentsHorizontal size={16} />}
-                        onClick={() => setFiltersOpen(true)}
-                      >
-                        高级筛选
-                      </Button>
-                    </div>
-                    <div className="stream-filter-grid">
+                      </div>
                       <form className="stream-search-form" onSubmit={submitStreamSearch}>
                         <TextInput
                           ref={searchRef}
@@ -868,8 +897,8 @@ export function App() {
                         <Button
                           type="submit"
                           variant={streamSearchDirty ? "filled" : "light"}
-                          radius="xl"
-                          color="blue"
+                          radius="sm"
+                          color="teal"
                           leftSection={<IconSearch size={15} />}
                           loading={dataSource === "server" && loadingEvents}
                         >
@@ -879,7 +908,7 @@ export function App() {
                           <Button
                             type="button"
                             variant="subtle"
-                            radius="xl"
+                            radius="sm"
                             color="gray"
                             onClick={clearStreamSearch}
                             disabled={dataSource === "server" && loadingEvents}
@@ -887,9 +916,6 @@ export function App() {
                             清除
                           </Button>
                         ) : null}
-                        <Text id="stream-search-status" className="stream-search-form__status" aria-live="polite">
-                          {streamSearchStatus}
-                        </Text>
                       </form>
                       <Select
                         label="模型"
@@ -921,7 +947,20 @@ export function App() {
                         clearable
                         className="control-field stream-filter-field"
                       />
+                      <Button
+                        variant="subtle"
+                        radius="sm"
+                        color="gray"
+                        leftSection={<IconAdjustmentsHorizontal size={15} />}
+                        onClick={() => setFiltersOpen(true)}
+                        className="stream-query-grid__advanced"
+                      >
+                        更多条件
+                      </Button>
                     </div>
+                    <Text id="stream-search-status" className="stream-search-form__status" aria-live="polite">
+                      {streamSearchStatus}
+                    </Text>
                     {activeStreamFilters.length ? (
                       <Group gap="xs" className="active-filter-bar">
                         <Text className="active-filter-bar__label">当前筛选</Text>
@@ -930,7 +969,7 @@ export function App() {
                             key={filter.key}
                             variant="light"
                             color="gray"
-                            radius="xl"
+                            radius="sm"
                             size="xs"
                             rightSection={<IconX size={13} />}
                             onClick={filter.clear}
@@ -941,7 +980,7 @@ export function App() {
                         <Button
                           variant="subtle"
                           color="gray"
-                          radius="xl"
+                          radius="sm"
                           size="xs"
                           onClick={() => {
                             setStreamSearchDraft("");
@@ -973,13 +1012,14 @@ export function App() {
                       loading={loadingEvents}
                       generatedAt={currentStream.generatedAt}
                       searchQuery={deferredQuery}
+                      viewMode={streamView}
                     />
                   </Suspense>
                 </>
               ) : (
                 <>
-                  <Paper className="control-shelf" radius="xl" p="md">
-                    <Group wrap="wrap" align="flex-end">
+                  <Paper component="section" aria-label="会话查询" className="control-shelf command-deck command-deck--sessions" radius="md" p="md">
+                    <Group wrap="nowrap" align="flex-end" className="session-command-fields session-command-fields--primary">
                       <TextInput
                         label="搜索会话"
                         placeholder="会话名 / cwd / session ID"
@@ -1015,68 +1055,40 @@ export function App() {
                         onChange={(value) => setSessionFilters((current) => ({ ...current, groupBy: value || "cwd" }))}
                         className="control-field"
                       />
-                      <TextInput
-                        label="Token 下限"
-                        placeholder="例如 1000"
-                        value={sessionFilters.tokenMin}
-                        onChange={(event) => {
-                          const tokenMin = event.currentTarget.value;
-                          setSessionFilters((current) => ({ ...current, tokenMin }));
-                        }}
-                        className="control-field control-field--small"
-                      />
-                      <TextInput
-                        label="Token 上限"
-                        placeholder="低内容可填 1000"
-                        value={sessionFilters.tokenMax}
-                        onChange={(event) => {
-                          const tokenMax = event.currentTarget.value;
-                          setSessionFilters((current) => ({ ...current, tokenMax }));
-                        }}
-                        className="control-field control-field--small"
-                      />
-                      <TextInput
-                        label="最大事件数"
-                        placeholder="例如 6"
-                        value={sessionFilters.maxEvents}
-                        onChange={(event) => {
-                          const maxEvents = event.currentTarget.value;
-                          setSessionFilters((current) => ({ ...current, maxEvents }));
-                        }}
-                        className="control-field control-field--small"
-                      />
-                      <Checkbox
-                        label="仅显示已命名"
-                        checked={sessionFilters.namedOnly}
-                        onChange={(event) => {
-                          const namedOnly = event.currentTarget.checked;
-                          setSessionFilters((current) => ({ ...current, namedOnly }));
-                        }}
-                        mb={10}
-                      />
-                      <Button variant="light" radius="xl" color="gray" onClick={loadSessions}>
-                        刷新列表
-                      </Button>
-                      <Button variant="light" radius="xl" color="orange" onClick={selectLowContentSessions}>
-                        选中低内容
-                      </Button>
-                      {selectedSessionId ? (
+                      <Group gap="xs" wrap="nowrap" className="session-query-actions">
+                        <Text className="command-deck__summary">
+                          {formatNumber(sessionsPayload.total || sessionSections.reduce((sum, section) => sum + section.total, 0))} 会话
+                        </Text>
                         <Button
-                          variant="light"
-                          radius="xl"
+                          variant="subtle"
+                          radius="sm"
                           color="gray"
-                          leftSection={<IconX size={14} />}
-                          onClick={clearSessionFocus}
+                          leftSection={<IconAdjustmentsHorizontal size={15} />}
+                          onClick={() => setSessionFiltersOpen(true)}
                         >
-                          取消聚焦会话 {selectedSessionId.slice(0, 8)}
+                          更多条件
                         </Button>
-                      ) : null}
-                      {selectedSessionIds.length > 0 ? (
-                        <Button variant="light" radius="xl" color="red" onClick={batchDelete} disabled={!canMutateSessions}>
-                          批量删除 {formatNumber(selectedSessionIds.length)} 个原始会话
-                        </Button>
-                      ) : null}
+                        {selectedSessionId ? (
+                          <Button
+                            variant="light"
+                            radius="sm"
+                            color="gray"
+                            leftSection={<IconX size={14} />}
+                            onClick={clearSessionFocus}
+                          >
+                            取消聚焦 {selectedSessionId.slice(0, 8)}
+                          </Button>
+                        ) : null}
+                      </Group>
                     </Group>
+                    {selectedSessionIds.length > 0 ? (
+                      <div className="session-selection-bar">
+                        <Text>已选择 {formatNumber(selectedSessionIds.length)} 个原始会话</Text>
+                        <Button variant="light" radius="sm" color="red" size="xs" onClick={batchDelete} disabled={!canMutateSessions}>
+                          批量删除
+                        </Button>
+                      </div>
+                    ) : null}
                   </Paper>
 
                   <Suspense fallback={<WorkspaceFallback label="正在加载会话列表…" />}>
@@ -1162,6 +1174,55 @@ export function App() {
                 重置
               </Button>
               <Button onClick={() => setFiltersOpen(false)}>完成</Button>
+            </Group>
+          </Stack>
+        </Modal>
+
+        <Modal opened={sessionFiltersOpen} onClose={() => setSessionFiltersOpen(false)} title="会话高级筛选" centered>
+          <Stack>
+            <Group grow align="flex-start">
+              <TextInput
+                label="Token 下限"
+                placeholder="例如 1000"
+                value={sessionFilters.tokenMin}
+                onChange={(event) => setSessionFilters((current) => ({ ...current, tokenMin: event.currentTarget.value }))}
+              />
+              <TextInput
+                label="Token 上限"
+                placeholder="例如 100000"
+                value={sessionFilters.tokenMax}
+                onChange={(event) => setSessionFilters((current) => ({ ...current, tokenMax: event.currentTarget.value }))}
+              />
+            </Group>
+            <TextInput
+              label="最大事件数"
+              placeholder="例如 6"
+              value={sessionFilters.maxEvents}
+              onChange={(event) => setSessionFilters((current) => ({ ...current, maxEvents: event.currentTarget.value }))}
+            />
+            <Checkbox
+              label="仅显示已命名"
+              checked={sessionFilters.namedOnly}
+              onChange={(event) => setSessionFilters((current) => ({ ...current, namedOnly: event.currentTarget.checked }))}
+            />
+            <Divider />
+            <Group justify="space-between">
+              <Button variant="subtle" color="gray" onClick={selectLowContentSessions}>选中低内容会话</Button>
+              <Group gap="xs">
+                <Button
+                  variant="subtle"
+                  color="gray"
+                  onClick={() => setSessionFilters((current) => ({
+                    ...DEFAULT_SESSION_FILTERS,
+                    query: current.query,
+                    platform: current.platform,
+                    groupBy: current.groupBy,
+                  }))}
+                >
+                  重置条件
+                </Button>
+                <Button onClick={() => setSessionFiltersOpen(false)}>完成</Button>
+              </Group>
             </Group>
           </Stack>
         </Modal>

@@ -8,6 +8,8 @@ const payload = {
   index: {
     lastBuiltAt: "2026-04-23T11:59:00.000Z",
     lastError: "",
+    cachedFiles: 20,
+    reusedFiles: 18,
   },
   runtime: {
     uptimeSeconds: 120,
@@ -138,6 +140,7 @@ const payload = {
       totalCalls: 9,
       totalResults: 7,
       topTools: [{ key: "Shell", calls: 4, results: 3, alerts: 2 }],
+      categories: [{ key: "terminal", label: "终端执行", calls: 4, tools: 1 }],
     },
     workspaces: {
       topWorkspaces: [
@@ -154,16 +157,16 @@ const payload = {
     },
     charts: {
       hourly: [
-        { time: "2026-04-23T10:00:00.000Z", label: "10:00", events: 2, alerts: 0, tokens: 3000, platforms: [{ key: "codex", total: 3000 }] },
-        { time: "2026-04-23T11:00:00.000Z", label: "11:00", events: 4, alerts: 1, tokens: 15000, platforms: [{ key: "codex", total: 9000 }, { key: "claude", total: 6000 }] },
+        { time: "2026-04-23T10:00:00.000Z", label: "10:00", events: 2, alerts: 0, prompts: 1, agentMessages: 1, interactions: 2, toolCalls: 0, sessions: 1, tokens: 3000, platforms: [{ key: "codex", total: 3000 }] },
+        { time: "2026-04-23T11:00:00.000Z", label: "11:00", events: 4, alerts: 1, prompts: 1, agentMessages: 1, interactions: 2, toolCalls: 1, sessions: 2, tokens: 15000, platforms: [{ key: "codex", total: 9000 }, { key: "claude", total: 6000 }] },
       ],
       daily: [
-        { time: "2026-04-22T00:00:00.000Z", label: "04/22", events: 5, alerts: 0, tokens: 6000, estimatedUsd: 0.0175, knownTokenTotal: 6000, platforms: [{ key: "claude", total: 6000 }] },
-        { time: "2026-04-23T00:00:00.000Z", label: "04/23", events: 6, alerts: 1, tokens: 12000, estimatedUsd: 0.035, knownTokenTotal: 12000, platforms: [{ key: "codex", total: 12000 }] },
+        { time: "2026-04-22T00:00:00.000Z", label: "04/22", events: 5, alerts: 0, prompts: 1, agentMessages: 1, interactions: 2, toolCalls: 1, sessions: 1, tokens: 6000, estimatedUsd: 0.0175, knownTokenTotal: 6000, platforms: [{ key: "claude", total: 6000 }] },
+        { time: "2026-04-23T00:00:00.000Z", label: "04/23", events: 6, alerts: 1, prompts: 2, agentMessages: 2, interactions: 4, toolCalls: 1, sessions: 3, tokens: 12000, estimatedUsd: 0.035, knownTokenTotal: 12000, platforms: [{ key: "codex", total: 12000 }] },
       ],
       dailySessions: [
-        { time: "2026-04-22T00:00:00.000Z", label: "04/22", sessions: 1, events: 5, tokens: 6000, topWorkspace: { cwd: "/Users/me/docs" } },
-        { time: "2026-04-23T00:00:00.000Z", label: "04/23", sessions: 3, events: 6, tokens: 12000, topWorkspace: { cwd: "/Users/me/code/session-observer" } },
+        { time: "2026-04-22T00:00:00.000Z", label: "04/22", sessions: 1, events: 5, prompts: 1, agentMessages: 1, interactions: 2, toolCalls: 1, tokens: 6000, topWorkspace: { cwd: "/Users/me/docs" } },
+        { time: "2026-04-23T00:00:00.000Z", label: "04/23", sessions: 3, events: 6, prompts: 2, agentMessages: 2, interactions: 4, toolCalls: 1, tokens: 12000, topWorkspace: { cwd: "/Users/me/code/session-observer" } },
       ],
       platformShare: [
         { key: "codex", total: 12000 },
@@ -183,6 +186,50 @@ const payload = {
       tokenSpans: 60,
       thinkingSpans: 0,
       maxDepth: 3,
+    },
+    usageStats: {
+      today: { activeDays: 1, sessions: 3, events: 6, prompts: 2, agentMessages: 2, interactions: 4, toolCalls: 1, tokens: 12000, estimatedUsd: 0.035 },
+      interactions: {
+        prompts: 10,
+        agentMessages: 12,
+        toolCalls: 9,
+        toolResults: 7,
+        messages: 22,
+        repliesPerPrompt: 1.2,
+        toolCallsPerPrompt: 0.9,
+        tokensPerPrompt: 1800,
+      },
+      sessions: {
+        total: 32,
+        measuredDurationSessions: 28,
+        averageDurationMs: 2_700_000,
+        medianDurationMs: 1_200_000,
+        averagePrompts: 3.2,
+        averageToolCalls: 2.8,
+        averageEvents: 37.5,
+        longest: { sessionId: "sess-active", title: "Active Codex session", sourceType: "codex", cwd: "/Users/me/code/session-observer", durationMs: 10_800_000, prompts: 4, toolCalls: 8, tokens: 12000 },
+      },
+      cadence: {
+        activeDays7: 4,
+        activeDays30: 12,
+        recent7: { activeDays: 4, sessions: 8, events: 100, prompts: 20, agentMessages: 22, interactions: 42, toolCalls: 16, tokens: 18000, estimatedUsd: 0.0525 },
+        previous7: { activeDays: 3, sessions: 6, events: 80, prompts: 15, agentMessages: 16, interactions: 31, toolCalls: 12, tokens: 12000, estimatedUsd: 0.035 },
+        sessionChangePercent: 33.3,
+        interactionChangePercent: 35.5,
+        tokenChangePercent: 50,
+        costChangePercent: 50,
+        busiestHour: { hour: 11, label: "11:00", events: 40, interactions: 18, tokens: 15000 },
+        recentFiveHours: { activeDays: 2, sessions: 2, events: 6, prompts: 2, agentMessages: 2, interactions: 4, toolCalls: 1, tokens: 18000, estimatedUsd: 0.0525 },
+      },
+      forecast: {
+        monthCost: 0.0525,
+        projectedMonthCost: 0.1575,
+        dailyAverageCost: 0.00525,
+        monthTokens: 18000,
+        projectedMonthTokens: 54000,
+        dayOfMonth: 10,
+        daysInMonth: 30,
+      },
     },
   },
 };
@@ -213,11 +260,29 @@ const activeOverview = {
 };
 
 describe("ObservabilityWorkspace", () => {
+  test.each([
+    ["overview", "overview-pulse-v2"],
+    ["tokens", "token-ledger-v2"],
+  ])("renders a distinct %s workspace composition", (view, layout) => {
+    const { container } = render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={payload}
+          view={view}
+          activeOverview={{ total: 0, sessions: [], windowMinutes: 30 }}
+          onRefresh={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(container.querySelector(`[data-layout="${layout}"]`)).toBeInTheDocument();
+  });
+
   afterEach(() => {
     cleanup();
   });
 
-  test("renders the overview health, source, runtime, workspace, and tool panels", () => {
+  test("renders the V2 overview pulse, activity, runtime, workspace, and tool panels", () => {
     render(
       <MantineProvider>
         <ObservabilityWorkspace
@@ -230,41 +295,50 @@ describe("ObservabilityWorkspace", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "运行总览" })).toBeInTheDocument();
-    expect(screen.getByText("事件总量")).toBeInTheDocument();
-    expect(screen.getByText("1,200")).toBeInTheDocument();
-    expect(screen.getByText("数据源状态")).toBeInTheDocument();
-    expect(screen.getByText("按天 Token 趋势")).toBeInTheDocument();
-    expect(screen.getByText("会话热度图")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "运行总览工作台" })).toHaveAttribute("data-layout", "overview-pulse-v2");
+    expect(screen.getByText("运行健康")).toBeInTheDocument();
+    expect(screen.getByText("今日概览")).toBeInTheDocument();
+    expect(screen.getByText("今日会话")).toBeInTheDocument();
+    expect(screen.getByText("当前活跃")).toBeInTheDocument();
+    expect(screen.getByText("今日对话")).toBeInTheDocument();
+    expect(screen.getByText("今日 Token")).toBeInTheDocument();
+    expect(screen.getByText("今日成本")).toBeInTheDocument();
+    expect(screen.getByText("缓存覆盖")).toBeInTheDocument();
+    expect(screen.getByText("24 小时负载走势")).toBeInTheDocument();
+    expect(screen.getByTestId("overview-activity-chart")).toBeInTheDocument();
+    expect(screen.getByText("一年会话活跃度")).toBeInTheDocument();
     expect(screen.getByTestId("daily-session-heatmap")).toBeInTheDocument();
     expect(screen.getByText("活跃率")).toBeInTheDocument();
+    expect(screen.getByText("活跃节奏")).toBeInTheDocument();
+    expect(screen.getByText("当前连续")).toBeInTheDocument();
     expect(screen.getByText("主要工作区")).toBeInTheDocument();
     expect(screen.getByText("高值日期")).toBeInTheDocument();
-    expect(screen.getByText("活跃会话")).toBeInTheDocument();
-    expect(screen.getByText("Trace Span")).toBeInTheDocument();
-    expect(screen.getAllByText("480").length).toBeGreaterThan(0);
-    expect(screen.getByText("观测覆盖")).toBeInTheDocument();
-    expect(screen.getByText("成本覆盖")).toBeInTheDocument();
-    expect(screen.getByText("模型集中度")).toBeInTheDocument();
-    expect(screen.getByText("关键观察")).toBeInTheDocument();
-    expect(screen.getByText("最贵模型")).toBeInTheDocument();
-    expect(screen.getByText("最近活跃会话")).toBeInTheDocument();
-    expect(screen.getByText("Active Codex session")).toBeInTheDocument();
+    expect(screen.getByText("正在写入的会话")).toBeInTheDocument();
+    expect(screen.getAllByText("Active Codex session").length).toBeGreaterThan(0);
     expect(screen.getByText("预计 2,400/h")).toBeInTheDocument();
-    expect(screen.getByText("/Users/me/.codex/sessions")).toBeInTheDocument();
-    expect(screen.getByText("运行健康")).toBeInTheDocument();
-    expect(screen.getByText("内存占用")).toBeInTheDocument();
-    expect(screen.getByText("RSS")).toBeInTheDocument();
-    expect(screen.getByText("135.8 MB")).toBeInTheDocument();
-    expect(screen.getByText("Heap Used")).toBeInTheDocument();
-    expect(screen.getByText("12.5 MB")).toBeInTheDocument();
-    expect(screen.getByText("Heap Total")).toBeInTheDocument();
-    expect(screen.getByText("21.7 MB")).toBeInTheDocument();
-    expect(screen.getByText("External")).toBeInTheDocument();
-    expect(screen.getByText("Codex codex-cli 0.130.0 / Claude 1.0.0")).toBeInTheDocument();
-    expect(screen.getByText("工作区集中度")).toBeInTheDocument();
+    expect(screen.getByText("事件 / 分钟")).toBeInTheDocument();
+    expect(screen.getByText("Token / 分钟")).toBeInTheDocument();
+    expect(screen.getByText("使用统计")).toBeInTheDocument();
+    expect(screen.getByText("累计提问")).toBeInTheDocument();
+    expect(screen.getByText("中位会话跨度")).toBeInTheDocument();
+    expect(screen.getByText("近 7 天节奏")).toBeInTheDocument();
+    expect(screen.getByText("最近 5 小时")).toBeInTheDocument();
+    expect(screen.getByText("工作方式")).toBeInTheDocument();
+    expect(screen.queryByText("/Users/me/.codex/sessions")).not.toBeInTheDocument();
+    expect(screen.getByText("服务与数据源")).toBeInTheDocument();
+    expect(screen.getByText("进程 RSS")).toBeInTheDocument();
+    expect(screen.getByText("数据延迟")).toBeInTheDocument();
+    expect(screen.getByText("缓存复用")).toBeInTheDocument();
+    expect(screen.getByText("监控文件")).toBeInTheDocument();
+    expect(screen.getAllByText("135.8 MB").length).toBeGreaterThan(0);
+    expect(screen.getByText("工作区负载")).toBeInTheDocument();
+    expect(screen.getByText("工具调用结构")).toBeInTheDocument();
+    expect(screen.getByText("今日负载")).toBeInTheDocument();
+    expect(screen.getByText("每会话调用")).toBeInTheDocument();
     expect(screen.getAllByText("Shell").length).toBeGreaterThan(0);
-    expect(screen.queryByText("平台 Token 占比")).not.toBeInTheDocument();
+    expect(screen.queryByText("Trace Span")).not.toBeInTheDocument();
+    expect(screen.queryByText("观测覆盖")).not.toBeInTheDocument();
+    expect(screen.queryByText("按天 Token 趋势")).not.toBeInTheDocument();
   });
 
   test("switches the daily session heatmap color metric", () => {
@@ -285,6 +359,10 @@ describe("ObservabilityWorkspace", () => {
     expect(within(heatmap).getByText("4 次会话")).toBeInTheDocument();
 
     const metricGroup = within(heatmap).getByRole("radiogroup", { name: "切换热度图指标" });
+    fireEvent.click(within(metricGroup).getByLabelText("对话"));
+    expect(within(heatmap).getByText("颜色依据：每日提问与 Agent 消息数")).toBeInTheDocument();
+    expect(within(heatmap).getByText("6 条消息")).toBeInTheDocument();
+
     fireEvent.click(within(metricGroup).getByLabelText("Token"));
 
     expect(within(metricGroup).getByLabelText("Token")).toBeChecked();
@@ -293,70 +371,47 @@ describe("ObservabilityWorkspace", () => {
     expect(within(heatmap).getByText("Token 峰值")).toBeInTheDocument();
   });
 
-  test("renders token windows, model ranking, and high-cost sessions", () => {
+  test("renders the consolidated token ledger, switchable trend, attribution, and sessions", () => {
     render(
       <MantineProvider>
         <ObservabilityWorkspace payload={payload} view="tokens" loading={false} onRefresh={() => {}} />
       </MantineProvider>,
     );
 
-    expect(screen.getByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
-    expect(screen.getByText("Token 账本分解")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Token 账本工作台" })).toHaveAttribute("data-layout", "token-ledger-v2");
+    expect(screen.getByText("Token 构成")).toBeInTheDocument();
     expect(screen.getByText("Prompt 与上下文未命中输入")).toBeInTheDocument();
-    expect(screen.getAllByText("有效总量").length).toBeGreaterThan(0);
+    expect(screen.getByText("有效 Token")).toBeInTheDocument();
     expect(screen.getAllByText("非缓存输入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存命中").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存写入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("输出").length).toBeGreaterThan(0);
     expect(screen.getAllByText("推理输出").length).toBeGreaterThan(0);
     expect(screen.getByText("成本估算")).toBeInTheDocument();
-    expect(screen.getByText("$0.0525")).toBeInTheDocument();
-    expect(screen.getByText("模型成本效率")).toBeInTheDocument();
+    expect(screen.getAllByText("$0.0525").length).toBeGreaterThan(0);
+    expect(screen.getByText("效率指标")).toBeInTheDocument();
+    expect(screen.getByText("每会话 Token")).toBeInTheDocument();
+    expect(screen.getByText("每会话成本")).toBeInTheDocument();
+    expect(screen.getByText("百万 Token 成本")).toBeInTheDocument();
+    expect(screen.getByText("缓存读写杠杆")).toBeInTheDocument();
+    expect(screen.getByText("月度预测")).toBeInTheDocument();
+    expect(screen.getByText("本月已估算")).toBeInTheDocument();
+    expect(screen.getByText("月末成本预测")).toBeInTheDocument();
+    expect(screen.getByText("模型成本归因")).toBeInTheDocument();
     expect(screen.getAllByText((_, element) => element.textContent.includes("/M")).length).toBeGreaterThan(0);
-    expect(screen.getByText("近 14 天 Token 消耗趋势")).toBeInTheDocument();
-    expect(screen.getByText("近 14 天金额花费趋势")).toBeInTheDocument();
-    expect(screen.getByText("工作区消耗")).toBeInTheDocument();
+    expect(screen.getByText("30 天消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("工作区消耗归因")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
-    expect(screen.getByTestId("token-cost-trend-chart")).toBeInTheDocument();
-    expect(screen.getByText("时间窗口")).toBeInTheDocument();
-    expect(screen.getByText("Codex 5,000 · Claude Code 3,000")).toBeInTheDocument();
-    expect(screen.getByText("估算 $0.0180")).toBeInTheDocument();
-    expect(screen.getByText("输入侧 6,800")).toBeInTheDocument();
-    expect(screen.getByText("非缓存 5,000")).toBeInTheDocument();
-    expect(screen.getByText("命中 1,800")).toBeInTheDocument();
-    expect(screen.getByText("写入 200")).toBeInTheDocument();
-    expect(screen.getByText("输出 1,000")).toBeInTheDocument();
+    expect(screen.queryByTestId("token-cost-trend-chart")).not.toBeInTheDocument();
+    expect(screen.getByText("当前周期")).toBeInTheDocument();
+    expect(screen.getByText("Codex 5,000 · Claude 3,000")).toBeInTheDocument();
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
     expect(screen.getByText("高消耗会话")).toBeInTheDocument();
     expect(screen.getByText("Investigate timeout")).toBeInTheDocument();
     expect(screen.getAllByText("$0.0350").length).toBeGreaterThan(0);
-    expect(screen.queryByText("平台占比")).not.toBeInTheDocument();
-  });
-
-  test("renders activity insights without the old alert queue", () => {
-    render(
-      <MantineProvider>
-        <ObservabilityWorkspace
-          payload={payload}
-          view="insights"
-          activeOverview={activeOverview}
-          loading={false}
-          onRefresh={() => {}}
-        />
-      </MantineProvider>,
-    );
-
-    expect(screen.getByRole("heading", { name: "活动洞察" })).toBeInTheDocument();
-    expect(screen.getByText("24h 活动热度")).toBeInTheDocument();
-    expect(screen.getByTestId("activity-heat-chart")).toBeInTheDocument();
-    expect(screen.getByText("工具调用结构")).toBeInTheDocument();
-    expect(screen.getByText("命名调用")).toBeInTheDocument();
-    expect(screen.getByText("Trace 组成")).toBeInTheDocument();
-    expect(screen.getByText("活跃速率")).toBeInTheDocument();
-    expect(screen.getByText("工作区负载象限")).toBeInTheDocument();
-    expect(screen.getByText("会话压力分布")).toBeInTheDocument();
-    expect(screen.getByText("活动结构")).toBeInTheDocument();
-    expect(screen.queryByText("模型消耗排行")).not.toBeInTheDocument();
-    expect(screen.queryByText("异常队列")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "7 天" }));
+    expect(screen.getByText("7 天消耗趋势")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "金额" }));
+    expect(screen.getByRole("radio", { name: "金额" })).toBeChecked();
   });
 });

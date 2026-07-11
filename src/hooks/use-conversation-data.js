@@ -7,15 +7,6 @@ import {
   sliceConversationPage,
 } from "../lib/conversation-paging";
 
-const BACKGROUND_LOAD_DELAY_MS = 16;
-const MAX_BACKGROUND_PRELOAD_EVENTS = 3000;
-
-function waitForNextConversationBatch() {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, BACKGROUND_LOAD_DELAY_MS);
-  });
-}
-
 export function useConversationData({ dataSource, localEvents, notify }) {
   const conversationRequestId = useRef(0);
   const conversationEventsRef = useRef([]);
@@ -41,43 +32,6 @@ export function useConversationData({ dataSource, localEvents, notify }) {
       setConversationPage(merged.page);
     });
   }, []);
-
-  const preloadRemainingConversation = useCallback(async (requestId, session) => {
-    if (dataSource !== "server") return;
-    if (conversationPageRef.current.total > MAX_BACKGROUND_PRELOAD_EVENTS) return;
-
-    setConversationLoadingMore(true);
-    try {
-      while (requestId === conversationRequestId.current && conversationPageRef.current.hasMore) {
-        if (conversationPageRef.current.total > MAX_BACKGROUND_PRELOAD_EVENTS) return;
-        const offset = conversationPageRef.current.nextOffset;
-        const payload = await apiClient.fetchEvents({
-          sessionId: session.sessionId,
-          order: "asc",
-          limit: CONVERSATION_PAGE_LIMIT,
-          offset,
-          mode: "raw",
-          summary: 0,
-        });
-        if (requestId !== conversationRequestId.current) return;
-
-        const nextEvents = payload.events || [];
-        if (nextEvents.length === 0) return;
-
-        commitConversationChunk(nextEvents, Number(payload.totalMatching) || conversationPageRef.current.total);
-        await waitForNextConversationBatch();
-      }
-    } catch (error) {
-      if (requestId !== conversationRequestId.current) return;
-      notify({
-        title: "会话后台加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    } finally {
-      if (requestId === conversationRequestId.current) setConversationLoadingMore(false);
-    }
-  }, [commitConversationChunk, dataSource, notify]);
 
   const closeConversation = useCallback(() => {
     conversationRequestId.current += 1;
@@ -117,7 +71,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
     try {
       const payload = await apiClient.fetchEvents({
         sessionId: session.sessionId,
-        order: "asc",
+        order: "desc",
         limit: CONVERSATION_PAGE_LIMIT,
         offset: 0,
         mode: "raw",
@@ -125,8 +79,6 @@ export function useConversationData({ dataSource, localEvents, notify }) {
       });
       if (requestId !== conversationRequestId.current) return;
       commitConversationChunk(payload.events || [], Number(payload.totalMatching) || payload.events?.length || 0, { replace: true });
-      setConversationLoading(false);
-      void preloadRemainingConversation(requestId, session);
     } catch (error) {
       if (requestId !== conversationRequestId.current) return;
       notify({
@@ -137,7 +89,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
     } finally {
       if (requestId === conversationRequestId.current) setConversationLoading(false);
     }
-  }, [commitConversationChunk, dataSource, localEvents, notify, preloadRemainingConversation]);
+  }, [commitConversationChunk, dataSource, localEvents, notify]);
 
   const loadMoreConversation = useCallback(async () => {
     if (!conversationSession || conversationLoading || conversationLoadingMore || !conversationPageRef.current.hasMore) return;
@@ -162,7 +114,7 @@ export function useConversationData({ dataSource, localEvents, notify }) {
     try {
       const payload = await apiClient.fetchEvents({
         sessionId: conversationSession.sessionId,
-        order: "asc",
+        order: "desc",
         limit: CONVERSATION_PAGE_LIMIT,
         offset: conversationPageRef.current.nextOffset,
         mode: "raw",

@@ -27,11 +27,13 @@ const parser = {
     cwd: json.cwd,
     model: json.model,
     callType: json.callType || "Agent",
+    toolName: json.toolName,
     summary: json.summary || json.content,
     content: json.content,
     sourceFile: context.sourceFile,
     sourceType: "codex",
     tokenUsage: json.tokenUsage,
+    extra: json.extra,
   }),
 };
 
@@ -87,6 +89,138 @@ test("summary store builds global dashboard data without retaining raw events", 
   assert.deepEqual(summary.sessions.groups.map((group) => group.sessionId).sort(), ["june-session", "may-session"]);
   assert.ok(summary.charts.dailySessions.length >= 365);
   assert.equal(summary.memory.retainedRawEvents, 0);
+});
+
+test("summary store derives interaction, cadence, duration, forecast, and tool category statistics", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "2026-06-05.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "prompt",
+      time: "2026-06-05T10:00:00.000Z",
+      sessionId: "stats-session",
+      title: "Statistics work",
+      cwd: "/repo-stats",
+      model: "gpt-5.5",
+      callType: "Prompt",
+      content: "Add usage statistics",
+    },
+    {
+      id: "agent",
+      time: "2026-06-05T10:01:00.000Z",
+      sessionId: "stats-session",
+      title: "Statistics work",
+      cwd: "/repo-stats",
+      model: "gpt-5.5",
+      callType: "Agent",
+      content: "I will implement it",
+    },
+    {
+      id: "tool",
+      time: "2026-06-05T10:02:00.000Z",
+      sessionId: "stats-session",
+      title: "Statistics work",
+      cwd: "/repo-stats",
+      model: "gpt-5.5",
+      callType: "Tool_Call",
+      toolName: "apply_patch",
+      content: "patch files",
+    },
+    {
+      id: "tokens",
+      time: "2026-06-05T10:03:00.000Z",
+      sessionId: "stats-session",
+      title: "Statistics work",
+      cwd: "/repo-stats",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
+      content: "usage",
+      tokenUsage: { input: 1000, output: 200, total: 1200 },
+    },
+  ], Date.parse("2026-06-05T10:03:00.000Z"));
+
+  const store = createSummaryStore({ parsers: [parser], now: () => Date.parse("2026-06-06T12:00:00.000Z") });
+  const summary = store.getSummary({ files: [file] });
+
+  assert.equal(summary.usageStats.interactions.prompts, 1);
+  assert.equal(summary.usageStats.interactions.agentMessages, 1);
+  assert.equal(summary.usageStats.interactions.toolCalls, 1);
+  assert.equal(summary.usageStats.sessions.averageDurationMs, 180000);
+  assert.equal(summary.usageStats.cadence.activeDays7, 1);
+  assert.equal(summary.usageStats.cadence.recent7.interactions, 2);
+  assert.equal(summary.usageStats.forecast.monthCost > 0, true);
+  assert.equal(summary.sessions.groups[0].toolCalls, 1);
+  assert.equal(summary.charts.daily.find((row) => row.label === "06/05").interactions, 2);
+  assert.equal(summary.tools.categories.find((row) => row.key === "code").calls, 1);
+});
+
+test("summary store keeps bounded session goal, outcome, tool, file, model, and compaction summaries", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "session-details.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "prompt",
+      time: "2026-06-05T10:00:00.000Z",
+      sessionId: "detail-session",
+      cwd: "/repo-details",
+      model: "gpt-5.5",
+      callType: "Prompt",
+      content: "Build a compact event workbench",
+    },
+    {
+      id: "edit",
+      time: "2026-06-05T10:01:00.000Z",
+      sessionId: "detail-session",
+      cwd: "/repo-details",
+      model: "gpt-5.5",
+      callType: "Tool_Call",
+      toolName: "apply_patch",
+      content: "tool=apply_patch args={\"file_path\":\"/repo-details/src/app.jsx\"}",
+    },
+    {
+      id: "error",
+      time: "2026-06-05T10:02:00.000Z",
+      sessionId: "detail-session",
+      cwd: "/repo-details",
+      model: "gpt-5.5",
+      callType: "Tool_Result",
+      toolName: "apply_patch",
+      content: "Error: patch failed",
+    },
+    {
+      id: "compact",
+      time: "2026-06-05T10:03:00.000Z",
+      sessionId: "detail-session",
+      cwd: "/repo-details",
+      model: "gpt-5.6-sol",
+      callType: "Raw",
+      content: "context_compacted",
+    },
+    {
+      id: "agent",
+      time: "2026-06-05T10:04:00.000Z",
+      sessionId: "detail-session",
+      cwd: "/repo-details",
+      model: "gpt-5.6-sol",
+      callType: "Agent",
+      content: "The event workbench is complete",
+    },
+  ], Date.parse("2026-06-05T10:04:00.000Z"));
+
+  const store = createSummaryStore({ parsers: [parser], now: () => Date.parse("2026-06-06T12:00:00.000Z") });
+  const session = store.getSummary({ files: [file] }).sessions.groups[0];
+
+  assert.equal(session.firstUserMessage, "Build a compact event workbench");
+  assert.equal(session.latestAgentMessage, "The event workbench is complete");
+  assert.deepEqual(session.topTools, [{ key: "apply_patch", calls: 1 }]);
+  assert.deepEqual(session.editedFiles, ["/repo-details/src/app.jsx"]);
+  assert.equal(session.toolErrors, 1);
+  assert.equal(session.compactions, 1);
+  assert.deepEqual(session.modelTimeline.map((item) => item.model), ["gpt-5.5", "gpt-5.6-sol"]);
+  assert.equal(session.firstUserMessage.length <= 240, true);
+  assert.equal(session.latestAgentMessage.length <= 320, true);
 });
 
 test("summary store applies Codex fast pricing to event and model cost summaries", () => {

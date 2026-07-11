@@ -9,7 +9,9 @@ import {
   ScrollArea,
   SegmentedControl,
   Stack,
+  Tabs,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
   Tooltip,
@@ -28,8 +30,12 @@ import {
   IconFolders,
   IconLayersIntersect,
   IconMessage2,
+  IconCoin,
+  IconHistory,
   IconRoute,
+  IconSearch,
   IconTerminal2,
+  IconTools,
   IconTrash,
   IconX,
   IconZoomScan,
@@ -44,9 +50,16 @@ import {
   shortSessionId,
 } from "../lib/formatters";
 import { readableEventSummary } from "../lib/event-display";
+import {
+  buildActivityRuns,
+  buildSessionArtifacts,
+  buildSessionPresentation,
+} from "../lib/activity-models";
+import { buildConversationTurns } from "../lib/conversation-models";
+import { ConversationTurn } from "./conversation-drawer";
 
 const SESSION_VIRTUAL_THRESHOLD = 24;
-const SESSION_ROW_HEIGHT = 112;
+const SESSION_ROW_HEIGHT = 84;
 const SESSION_ROW_OVERSCAN = 4;
 const DIALOGUE_TYPES = new Set(["Prompt", "User", "Agent"]);
 
@@ -75,6 +88,11 @@ function formatDurationText(start, end) {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return "-";
   const minutes = Math.max(1, Math.round((endMs - startMs) / 60000));
   if (minutes < 60) return `${formatNumber(minutes)} 分钟`;
+  if (minutes >= 1440) {
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    return hours ? `${formatNumber(days)} 天 ${formatNumber(hours)} 小时` : `${formatNumber(days)} 天`;
+  }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${formatNumber(hours)} 小时 ${formatNumber(rest)} 分钟` : `${formatNumber(hours)} 小时`;
@@ -239,13 +257,13 @@ function formatAgeText(ageMs) {
   return rest ? `${hours} 小时 ${rest} 分钟前` : `${hours} 小时前`;
 }
 
-function ActiveSessionsPanel({ overview, onOpenConversation, onOpenSessionDetail }) {
+function ActiveSessionsPanel({ overview, onOpenSessionDetail }) {
   const sessions = overview?.sessions || [];
   const total = Number(overview?.total || 0);
   const hiddenCount = Math.max(0, total - sessions.length);
 
   return (
-    <Paper radius="xl" p="lg" className="active-sessions-panel">
+    <Paper radius="md" p="md" className="active-sessions-panel">
       <Group justify="space-between" align="flex-start" gap="md" className="active-sessions-panel__head">
         <Group gap="sm" align="flex-start" wrap="nowrap">
           <ThemeIcon radius="lg" size={42} variant="light" color={total ? "teal" : "gray"} className="active-sessions-panel__icon">
@@ -253,9 +271,9 @@ function ActiveSessionsPanel({ overview, onOpenConversation, onOpenSessionDetail
           </ThemeIcon>
           <div className="active-sessions-panel__copy">
             <Text className="eyebrow">当前活跃</Text>
-            <Title order={4}>最近 {formatNumber(overview?.windowMinutes || 30)} 分钟仍在写入的会话</Title>
+            <Title order={3}>正在写入</Title>
             <Text className="active-sessions-panel__subline">
-              {total ? `按最新事件排序，可直接进入对话查看上下文` : "当前筛选范围内没有持续写入的会话"}
+              {total ? `最近 ${formatNumber(overview?.windowMinutes || 30)} 分钟有新事件，按更新时间排序` : "当前筛选范围内没有持续写入的会话"}
             </Text>
           </div>
         </Group>
@@ -295,17 +313,6 @@ function ActiveSessionsPanel({ overview, onOpenConversation, onOpenSessionDetail
                 </span>
                 <IconArrowRight size={16} className="active-session-row__arrow" />
               </button>
-              <Tooltip label="查看对话" withArrow>
-                <ActionIcon
-                  variant="light"
-                  radius="xl"
-                  color="blue"
-                  aria-label={`查看活跃会话对话 ${session.title}`}
-                  onClick={() => onOpenConversation?.(session)}
-                >
-                  <IconMessage2 size={16} />
-                </ActionIcon>
-              </Tooltip>
             </div>
           ))}
         </div>
@@ -346,83 +353,116 @@ function DetailRankRows({ rows, total, valueFormatter = formatNumber, emptyLabel
   );
 }
 
+function conversationTurnText(turn) {
+  return [
+    ...(turn?.userMessages || []).map((entry) => entry.content),
+    ...(turn?.assistantMessages || []).map((entry) => entry.content),
+    ...(turn?.toolEntries || []).map((entry) => `${entry.toolName} ${entry.content || ""}`),
+  ].join(" ").toLocaleLowerCase();
+}
+
+function CollapsibleSessionTurn({ turn, defaultOpen }) {
+  const [opened, setOpened] = useState(defaultOpen);
+  const prompt = turn.userMessages?.[0]?.content || turn.assistantMessages?.[0]?.content || "无对话摘要";
+  return (
+    <section className={`session-turn-disclosure${opened ? " is-open" : ""}`}>
+      <button type="button" onClick={() => setOpened((current) => !current)} aria-expanded={opened}>
+        <span>
+          <strong>第 {formatNumber(turn.index)} 轮</strong>
+          <em>{clipText(prompt, 72)}</em>
+        </span>
+        <span>{formatDateTime(turn.startedAt)} · 工具 {formatNumber(turn.toolSummary?.total || 0)}</span>
+        <IconChevronRight size={16} aria-hidden="true" />
+      </button>
+      {opened ? <ConversationTurn turn={turn} hideHeader /> : null}
+    </section>
+  );
+}
+
 function SessionDetailPanel({
   session,
   selectedSessionId,
   events,
   loading,
   page,
-  onOpenConversation,
   onFocusStreamSession,
   onClearSessionFocus,
   onLoadMore,
   onCopySessionId,
   onOpenEvent,
 }) {
-  const [conversationCollapsed, setConversationCollapsed] = useState(false);
+  const [detailTab, setDetailTab] = useState("conversation");
+  const [conversationQuery, setConversationQuery] = useState("");
+  const [conversationLimit, setConversationLimit] = useState(8);
+  const presentation = useMemo(() => buildSessionPresentation(session, events, page), [events, page, session]);
+  const artifacts = useMemo(() => buildSessionArtifacts(session, events), [events, session]);
+  const turns = useMemo(() => buildConversationTurns(events), [events]);
+  const runs = useMemo(() => buildActivityRuns(events, session ? [session] : []), [events, session]);
+  const normalizedQuery = conversationQuery.trim().toLocaleLowerCase();
+  const matchingTurns = useMemo(
+    () => normalizedQuery ? turns.filter((turn) => conversationTurnText(turn).includes(normalizedQuery)) : turns,
+    [normalizedQuery, turns],
+  );
+  const visibleTurns = matchingTurns.slice(-conversationLimit);
 
   useEffect(() => {
-    setConversationCollapsed(false);
+    setDetailTab("conversation");
+    setConversationQuery("");
+    setConversationLimit(8);
   }, [selectedSessionId]);
 
   if (!selectedSessionId) {
     return (
-      <Paper className="session-detail-panel session-detail-panel--empty" radius="xl" p="lg" data-session-detail-panel>
-        <ThemeIcon radius="lg" size={42} variant="light" color="blue">
-          <IconZoomScan size={21} stroke={1.9} />
-        </ThemeIcon>
+      <Paper className="session-detail-panel session-detail-panel--empty" radius="md" p="lg" data-session-detail-panel>
+        <ThemeIcon radius="md" size={40} variant="light" color="teal"><IconZoomScan size={20} /></ThemeIcon>
         <div>
-          <Text className="eyebrow">会话详情</Text>
-          <Title order={5}>选择一个会话查看完整画像</Title>
-          <Text className="session-detail-empty__copy">从活跃会话、事件流或列表进入后，这里会展示 Token、模型、工具、事件和文件信息。</Text>
+          <Text className="eyebrow">会话工作台</Text>
+          <Title order={3}>选择会话查看完整上下文</Title>
+          <Text className="session-detail-empty__copy">对话、活动、用量和文件变更会集中在同一个详情面板中。</Text>
         </div>
       </Paper>
     );
   }
 
-  const stats = buildSessionDetailStats(session, events);
   const title = getSessionTitle(session, selectedSessionId);
-  const tokenTotal = stats.tokens.total || toFiniteNumber(session?.totalTokens || session?.tokens);
-  const inputSideTotal = stats.tokens.input + stats.tokens.cacheReadInput;
-  const tokenCompositionTotal = inputSideTotal + stats.tokens.output;
-  const sourceFiles = session?.sourceFiles || [];
+  const tokenTotal = presentation.tokens.total || toFiniteNumber(session?.totalTokens || session?.tokens);
   const rawIds = getSessionIds({ ...session, sessionId: selectedSessionId });
-  const eventTotalLabel = page?.total ? `${formatNumber((events || []).length)} / ${formatNumber(page.total)} 已载入` : `${formatNumber(stats.eventCount)} 事件`;
-  const hasDialoguePreview = stats.dialoguePreview.length > 0;
+  const loadedLabel = page?.total
+    ? `最近载入 ${formatNumber(presentation.loadedEventCount)} / ${formatNumber(page.total)} 条原始事件`
+    : `${formatNumber(presentation.loadedEventCount)} 条原始事件`;
+  const interactionTotal = presentation.userEvents + presentation.agentEvents;
+  const tokenRows = [
+    ["输入", presentation.tokens.input],
+    ["缓存命中", presentation.tokens.cacheReadInput],
+    ["缓存写入", presentation.tokens.cacheCreationInput],
+    ["输出", presentation.tokens.output],
+    ["推理输出", presentation.tokens.reasoningOutput],
+  ];
+  const tokenDenominator = Math.max(tokenTotal, ...tokenRows.map(([, value]) => toFiniteNumber(value)), 1);
 
   return (
-    <Paper className="session-detail-panel" radius="xl" p="lg" data-session-detail-panel>
+    <Paper className="session-detail-panel session-detail-workbench" radius="md" p="md" data-session-detail-panel>
       <div className="session-detail-head">
-        <Group gap="sm" align="flex-start" wrap="nowrap" className="session-detail-head__identity">
-          <ThemeIcon radius="lg" size={42} variant="light" color={session?.sourceType === "claude" ? "orange" : "blue"}>
-            <IconZoomScan size={21} stroke={1.9} />
-          </ThemeIcon>
-          <div className="session-detail-head__copy">
-            <Text className="eyebrow">会话详情</Text>
-            <Title order={5} className="session-detail-title">{clipText(title, 74)}</Title>
-            <Text className="session-detail-subline">
-              {platformLabel(session?.sourceType)} · {shortSessionId(selectedSessionId)} · {eventTotalLabel}
-            </Text>
-          </div>
-        </Group>
-        <Group gap={6} wrap="nowrap" className="session-detail-actions">
+        <div className="session-detail-head__copy">
+          <Text className="eyebrow">会话工作台</Text>
+          <Title order={3} className="session-detail-title">{clipText(title, 78)}</Title>
+          <Text className="session-detail-subline">
+            {platformLabel(session?.sourceType)} · {shortSessionId(selectedSessionId)} · {loadedLabel}
+          </Text>
+        </div>
+        <Group gap={4} wrap="nowrap" className="session-detail-actions">
           <Tooltip label="复制会话 ID" withArrow>
-            <ActionIcon variant="light" radius="xl" color="gray" onClick={() => onCopySessionId?.(selectedSessionId)} aria-label="复制当前会话 ID">
+            <ActionIcon variant="subtle" radius="sm" color="gray" onClick={() => onCopySessionId?.(selectedSessionId)} aria-label="复制当前会话 ID">
               <IconCopy size={16} />
             </ActionIcon>
           </Tooltip>
           <Tooltip label="在事件流聚焦" withArrow>
-            <ActionIcon variant="light" radius="xl" color="teal" onClick={() => onFocusStreamSession?.(session || { sessionId: selectedSessionId })} aria-label="在事件流聚焦当前会话">
+            <ActionIcon variant="subtle" radius="sm" color="teal" onClick={() => onFocusStreamSession?.(session || { sessionId: selectedSessionId })} aria-label="在事件流聚焦当前会话">
               <IconRoute size={16} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="查看对话" withArrow>
-            <ActionIcon variant="light" radius="xl" color="blue" onClick={() => onOpenConversation?.(session || { sessionId: selectedSessionId, title })} aria-label="查看当前会话对话">
-              <IconMessage2 size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="取消聚焦" withArrow>
-            <ActionIcon variant="light" radius="xl" color="gray" onClick={onClearSessionFocus} aria-label="取消当前会话聚焦">
+          <Tooltip label="关闭详情" withArrow>
+            <ActionIcon variant="subtle" radius="sm" color="gray" onClick={onClearSessionFocus} aria-label="取消当前会话聚焦">
               <IconX size={16} />
             </ActionIcon>
           </Tooltip>
@@ -430,138 +470,164 @@ function SessionDetailPanel({
       </div>
 
       <div className="session-detail-metrics">
-        <DetailMetric label="事件" value={formatNumber(stats.eventCount)} meta={stats.duration === "-" ? "持续时间未知" : `持续 ${stats.duration}`} />
-        <DetailMetric label="Token" value={formatTokenText(tokenTotal, Boolean(tokenTotal || session?.hasTokenData))} meta={`输入侧 ${formatCompactNumber(inputSideTotal)}`} />
-        <DetailMetric label="模型" value={formatNumber(stats.modelRows.length)} meta={stats.modelRows[0]?.key || "暂无模型"} />
-        <DetailMetric label="原始会话" value={formatNumber(stats.rawSessionCount)} meta={`${formatNumber(rawIds.length)} 个 ID 可操作`} />
+        <DetailMetric label="完整会话事件" value={formatNumber(presentation.eventCount)} meta={`已载入 ${formatNumber(presentation.loadedEventCount)}`} />
+        <DetailMetric label="完整会话 Token" value={formatTokenText(tokenTotal, Boolean(tokenTotal || session?.hasTokenData))} meta={`估算 $${toFiniteNumber(presentation.estimatedUsd).toFixed(2)}`} />
+        <DetailMetric label="持续时间" value={formatDurationText(presentation.first, presentation.latest)} meta={`${formatDateTime(presentation.first)} 开始`} />
+        <DetailMetric label="问答" value={formatNumber(interactionTotal)} meta={`${formatNumber(presentation.userEvents)} 用户 · ${formatNumber(presentation.agentEvents)} Agent`} />
+      </div>
+      <div className="session-detail-time-range">
+        <span>开始时间 <strong>{presentation.first ? formatDateTime(presentation.first) : "-"}</strong></span>
+        <span>最近活动 <strong>{presentation.latest ? formatDateTime(presentation.latest) : "-"}</strong></span>
       </div>
 
-      <section className="session-detail-conversation">
-        <div className="session-detail-section-head session-detail-section-head--conversation">
-          <Text>对话内容</Text>
-          <div className="session-detail-conversation__head-actions">
-            <span>{stats.dialoguePreview.length ? `${formatNumber(stats.dialoguePreview.length)} 条片段` : "暂无片段"}</span>
-            <Button
-              variant="light"
-              radius="xl"
-              color="blue"
+      {(artifacts.goal || artifacts.outcome) ? (
+        <div className="session-detail-brief">
+          <div>
+            <span>目标</span>
+            <p>{artifacts.goal || "未提取到明确目标"}</p>
+          </div>
+          <div>
+            <span>最近结果</span>
+            <p>{artifacts.outcome || "当前加载范围尚无 Agent 结论"}</p>
+          </div>
+        </div>
+      ) : null}
+
+      <Tabs value={detailTab} onChange={setDetailTab} className="session-detail-tabs" keepMounted={false}>
+        <Tabs.List>
+          <Tabs.Tab value="conversation" leftSection={<IconMessage2 size={14} />}>对话</Tabs.Tab>
+          <Tabs.Tab value="timeline" leftSection={<IconHistory size={14} />}>活动</Tabs.Tab>
+          <Tabs.Tab value="usage" leftSection={<IconCoin size={14} />}>用量</Tabs.Tab>
+          <Tabs.Tab value="artifacts" leftSection={<IconTools size={14} />}>文件与工具</Tabs.Tab>
+          <Tabs.Tab value="raw" leftSection={<IconTerminal2 size={14} />}>原始</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="conversation" className="session-detail-tab-panel">
+          <div className="session-detail-tab-toolbar">
+            <TextInput
+              leftSection={<IconSearch size={14} />}
+              placeholder="搜索当前已载入对话"
+              value={conversationQuery}
+              onChange={(event) => setConversationQuery(event.currentTarget.value)}
               size="xs"
-              leftSection={<IconMessage2 size={15} />}
-              onClick={() => onOpenConversation?.(session || { sessionId: selectedSessionId, title })}
-            >
-              打开完整对话
+              aria-label="搜索当前已载入对话"
+            />
+            <span>{formatNumber(matchingTurns.length)} 轮 · {loadedLabel}</span>
+          </div>
+          {page?.hasMore ? (
+            <Button variant="subtle" size="xs" color="gray" loading={loading} onClick={onLoadMore} className="session-detail-load-earlier">
+              加载更早内容
             </Button>
-            <Tooltip label={conversationCollapsed ? "展开对话内容" : "收起对话内容"} withArrow>
-              <ActionIcon
-                variant="subtle"
-                radius="xl"
-                color="gray"
-                aria-label={conversationCollapsed ? "展开会话内容" : "收起会话内容"}
-                className={`session-detail-conversation__toggle${conversationCollapsed ? "" : " is-open"}`}
-                disabled={!hasDialoguePreview && !loading}
-                onClick={() => setConversationCollapsed((current) => !current)}
-              >
-                <IconChevronRight size={16} />
-              </ActionIcon>
-            </Tooltip>
-          </div>
-        </div>
-        {conversationCollapsed ? (
-          <Text className="session-detail-empty session-detail-conversation__collapsed">对话内容已折叠</Text>
-        ) : hasDialoguePreview ? (
-          <div className="session-detail-conversation__list">
-            {stats.dialoguePreview.map((event, index) => (
-              <article
-                key={event.eventId || `${event.time}-${event.callType}-${index}`}
-                className={`session-detail-conversation__item session-detail-conversation__item--${event.callType === "Agent" ? "agent" : "user"}`}
-              >
-                <div>
-                  <span>{dialogueRoleLabel(event)}</span>
-                  <em>{formatDateTime(event.time)}</em>
-                </div>
-                <p>{readableEventSummary(event, 180)}</p>
-              </article>
+          ) : null}
+          <div className="session-detail-turns">
+            {visibleTurns.map((turn, index) => (
+              <CollapsibleSessionTurn
+                key={turn.id}
+                turn={turn}
+                defaultOpen={index >= visibleTurns.length - 2}
+              />
             ))}
+            {!loading && !visibleTurns.length ? <Text className="session-detail-empty">当前加载范围没有可显示的问答。</Text> : null}
+            {loading && !visibleTurns.length ? <Text className="session-detail-empty">正在加载最近对话...</Text> : null}
           </div>
-        ) : (
-          <Text className="session-detail-empty">{loading ? "正在加载对话内容…" : "当前已加载事件中暂无用户或 Agent 内容"}</Text>
-        )}
-      </section>
+          {conversationLimit < matchingTurns.length ? (
+            <Button variant="subtle" size="xs" color="gray" onClick={() => setConversationLimit((current) => current + 8)}>
+              显示更早回合
+            </Button>
+          ) : null}
+        </Tabs.Panel>
 
-      <div className="session-detail-token">
-        <div className="session-detail-section-head">
-          <Text>Token 构成</Text>
-          <span>{formatTokenText(tokenTotal, Boolean(tokenTotal))}</span>
-        </div>
-        <div className="session-detail-token__bars">
-          {[
-            ["非缓存输入", stats.tokens.input, "var(--accent)"],
-            ["缓存命中", stats.tokens.cacheReadInput, "#39d98a"],
-            ["缓存写入", stats.tokens.cacheCreationInput, "#14b8a6"],
-            ["输出", stats.tokens.output, "var(--violet)"],
-            ["推理", stats.tokens.reasoningOutput, "var(--orange)"],
-          ].map(([label, value, color]) => (
-            <div key={label}>
-              <span>{label}</span>
-              <Progress value={percentValue(value, label === "推理" ? stats.tokens.output : tokenCompositionTotal)} color="blue" size="xs" radius="xl" style={{ "--progress-section-color": color }} />
-              <strong>{formatCompactNumber(value)}</strong>
+        <Tabs.Panel value="timeline" className="session-detail-tab-panel">
+          <div className="session-detail-run-list">
+            {runs.slice(0, 40).map((run) => (
+              <button key={run.id} type="button" onClick={() => run.latestEvent && onOpenEvent?.(run.latestEvent)}>
+                <time>{formatDateTime(run.endedAt)}</time>
+                <span>
+                  <strong>{run.userPreview || run.assistantPreview || "工具或系统活动"}</strong>
+                  <em>{formatNumber(run.eventCount)} 事件 · {formatNumber(run.toolCalls)} 工具{run.toolErrors ? ` · ${formatNumber(run.toolErrors)} 错误` : ""}</em>
+                </span>
+                <b>{run.tokenTotal ? `${formatCompactNumber(run.tokenTotal)} Tok` : "-"}</b>
+              </button>
+            ))}
+            {!runs.length ? <Text className="session-detail-empty">当前加载范围没有可归组的活动。</Text> : null}
+          </div>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="usage" className="session-detail-tab-panel">
+          <section className="session-detail-token">
+            <div className="session-detail-section-head">
+              <Text>完整会话 Token 构成</Text>
+              <span>{formatTokenText(tokenTotal, Boolean(tokenTotal))}</span>
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="session-detail-token__bars">
+              {tokenRows.map(([label, value]) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <Progress value={percentValue(value, tokenDenominator)} color="teal" size="xs" radius="xs" />
+                  <strong>{formatCompactNumber(value)}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+          <div className="session-detail-grid">
+            <section>
+              <div className="session-detail-section-head"><Text>模型</Text><span>{formatNumber(presentation.modelRows.length)} 个</span></div>
+              <DetailRankRows rows={presentation.modelRows} total={presentation.modelRows.reduce((sum, row) => sum + row.value, 0)} />
+            </section>
+            <section>
+              <div className="session-detail-section-head"><Text>模型切换</Text><span>{formatNumber(artifacts.modelTimeline.length)} 次记录</span></div>
+              <div className="session-model-timeline">
+                {artifacts.modelTimeline.map((item, index) => (
+                  <div key={`${item.model}-${item.time}-${index}`}><strong>{item.model}</strong><span>{formatDateTime(item.time)}</span></div>
+                ))}
+                {!artifacts.modelTimeline.length ? <Text className="session-detail-empty">暂无模型切换记录</Text> : null}
+              </div>
+            </section>
+          </div>
+        </Tabs.Panel>
 
-      <div className="session-detail-grid">
-        <section>
-          <div className="session-detail-section-head">
-            <Text>事件类型</Text>
-            <span>{formatNumber(stats.typeRows.length)} 类</span>
+        <Tabs.Panel value="artifacts" className="session-detail-tab-panel">
+          <div className="session-detail-health-strip">
+            <div><span>工具错误</span><strong>{formatNumber(artifacts.toolErrors)}</strong></div>
+            <div><span>上下文压缩</span><strong>{formatNumber(artifacts.compactions)}</strong></div>
+            <div><span>文件变更</span><strong>{formatNumber(artifacts.editedFiles.length)}</strong></div>
+            <div><span>工具种类</span><strong>{formatNumber(artifacts.tools.length)}</strong></div>
           </div>
-          <DetailRankRows rows={stats.typeRows.map((row) => ({ ...row, key: callTypeLabel(row.key) }))} total={stats.eventCount} />
-        </section>
-        <section>
-          <div className="session-detail-section-head">
-            <Text>工具调用</Text>
-            <span>{formatNumber(stats.toolRows.length)} 类</span>
+          <div className="session-detail-grid">
+            <section>
+              <div className="session-detail-section-head"><Text>工具调用</Text><span>{formatNumber(artifacts.tools.length)} 类</span></div>
+              <DetailRankRows
+                rows={artifacts.tools.map((row) => ({ key: row.key, value: row.calls }))}
+                total={artifacts.tools.reduce((sum, row) => sum + toFiniteNumber(row.calls), 0)}
+                emptyLabel="暂无工具调用"
+              />
+            </section>
+            <section>
+              <div className="session-detail-section-head"><Text>编辑文件</Text><span>{formatNumber(artifacts.editedFiles.length)} 个</span></div>
+              <div className="session-artifact-list">
+                {artifacts.editedFiles.map((file) => <code key={file} title={file}>{file}</code>)}
+                {!artifacts.editedFiles.length ? <Text className="session-detail-empty">暂无文件变更摘要</Text> : null}
+              </div>
+            </section>
           </div>
-          <DetailRankRows rows={stats.toolRows} total={stats.toolRows.reduce((sum, row) => sum + row.value, 0)} emptyLabel="暂无工具调用" />
-        </section>
-      </div>
+          {artifacts.commands.length ? (
+            <section className="session-command-list">
+              <div className="session-detail-section-head"><Text>最近命令</Text><span>{formatNumber(artifacts.commands.length)} 条</span></div>
+              {artifacts.commands.map((command, index) => <code key={`${command}-${index}`}>{command}</code>)}
+            </section>
+          ) : null}
+        </Tabs.Panel>
 
-      <div className="session-detail-grid">
-        <section>
-          <div className="session-detail-section-head">
-            <Text>模型分布</Text>
-            <span>{stats.modelRows[0]?.key || "-"}</span>
-          </div>
-          <DetailRankRows rows={stats.modelRows} total={stats.modelRows.reduce((sum, row) => sum + row.value, 0)} />
-        </section>
-        <section>
-          <div className="session-detail-section-head">
-            <Text>对话结构</Text>
-            <span>{formatNumber(stats.userEvents + stats.agentEvents)} 条</span>
-          </div>
-          <div className="session-detail-dialogue">
-            <div><span>用户输入</span><strong>{formatNumber(stats.userEvents)}</strong></div>
-            <div><span>Agent 输出</span><strong>{formatNumber(stats.agentEvents)}</strong></div>
-            <div><span>开始时间</span><strong>{stats.first ? formatDateTime(stats.first) : "-"}</strong></div>
-            <div><span>最新事件</span><strong>{stats.latest ? formatDateTime(stats.latest) : "-"}</strong></div>
-          </div>
-        </section>
-      </div>
-
-      <section className="session-detail-events">
-        <div className="session-detail-section-head">
-          <Text>最近事件</Text>
-          <span>{loading ? "加载中" : eventTotalLabel}</span>
-        </div>
-        {stats.recentEvents.length ? (
+        <Tabs.Panel value="raw" className="session-detail-tab-panel">
+          <div className="session-detail-section-head"><Text>最近原始事件</Text><span>{loadedLabel}</span></div>
           <div className="session-detail-event-list">
-            {stats.recentEvents.map((event, index) => (
+            {presentation.recentEvents.slice(0, 30).map((event, index) => (
               <button
                 key={event.eventId || `${event.time}-${event.callType}-${index}`}
                 type="button"
                 className="session-detail-event"
                 onClick={() => onOpenEvent?.(event)}
+                aria-label={readableEventSummary(event, 96)}
               >
                 <span>{callTypeLabel(event.callType)}</span>
                 <strong>{readableEventSummary(event, 96)}</strong>
@@ -569,30 +635,13 @@ function SessionDetailPanel({
               </button>
             ))}
           </div>
-        ) : (
-          <Text className="session-detail-empty">{loading ? "正在加载事件…" : "暂无可展示事件"}</Text>
-        )}
-        {page?.hasMore ? (
-          <Button variant="light" radius="xl" color="blue" size="xs" onClick={onLoadMore} loading={loading} mt="sm">
-            加载更多事件
-          </Button>
-        ) : null}
-      </section>
-
-      <section className="session-detail-meta">
-        <div>
-          <Text>工作目录</Text>
-          <strong title={session?.cwd || ""}>{session?.cwd || "无目录信息"}</strong>
-        </div>
-        <div>
-          <Text>来源文件</Text>
-          <strong title={sourceFiles.join("\n")}>{sourceFiles.length ? clipText(sourceFiles[0], 76) : "无来源文件"}</strong>
-        </div>
-        <div>
-          <Text>会话 ID</Text>
-          <strong title={rawIds.join("\n")}>{rawIds.map(shortSessionId).join(" · ") || shortSessionId(selectedSessionId)}</strong>
-        </div>
-      </section>
+          {page?.hasMore ? <Button variant="light" size="xs" loading={loading} onClick={onLoadMore}>加载更早事件</Button> : null}
+          <section className="session-detail-meta">
+            <div><Text>工作目录</Text><strong title={session?.cwd || ""}>{session?.cwd || "无目录信息"}</strong></div>
+            <div><Text>会话 ID</Text><strong title={rawIds.join("\n")}>{rawIds.map(shortSessionId).join(" · ")}</strong></div>
+          </section>
+        </Tabs.Panel>
+      </Tabs>
     </Paper>
   );
 }
@@ -758,7 +807,6 @@ function SessionRow({
   selectedSet,
   selectedSessionId,
   onToggleSelect,
-  onOpenConversation,
   onOpenSessionDetail,
   onRename,
   onDelete,
@@ -805,15 +853,12 @@ function SessionRow({
           <span>{formatDateTime(session.latest)}</span>
           <span>{groupedEventText(session)}</span>
           <span>{formatTokenText(session.totalTokens, session.hasTokenData)}</span>
+          {(session.latestAgentMessage || session.latestUserMessage || session.firstUserMessage) ? (
+            <span className="session-row__preview" title={session.latestAgentMessage || session.latestUserMessage || session.firstUserMessage}>
+              {clipText(session.latestAgentMessage || session.latestUserMessage || session.firstUserMessage, 72)}
+            </span>
+          ) : null}
         </div>
-        {session.sourceFiles?.[0] ? (
-          <div className="session-row__file-line">
-            <ThemeIcon radius="xl" size={20} variant="light" color="gray">
-              <IconFileText size={12} />
-            </ThemeIcon>
-            <span>{clipText(session.sourceFiles[0], 84)}</span>
-          </div>
-        ) : null}
       </button>
 
       <div className="session-row__models">
@@ -836,17 +881,6 @@ function SessionRow({
             onClick={() => onCopySessionId?.(session.sessionId)}
           >
             <IconCopy size={16} />
-          </ActionIcon>
-        </Tooltip>
-        <Tooltip label="查看对话" withArrow>
-          <ActionIcon
-            variant="light"
-            radius="xl"
-            color="blue"
-            aria-label={`查看对话 · ${shortSessionId(session.sessionId)}`}
-            onClick={() => onOpenConversation(session)}
-          >
-            <IconMessage2 size={16} />
           </ActionIcon>
         </Tooltip>
         <Tooltip label="重命名" withArrow>
@@ -951,7 +985,6 @@ export function SessionWorkspace({
   detailPage,
   selectedIds,
   onToggleSelect,
-  onOpenConversation,
   onOpenSessionDetail,
   onFocusStreamSession,
   onClearSessionFocus,
@@ -990,26 +1023,35 @@ export function SessionWorkspace({
   }
 
   return (
-    <div className="session-workspace-layout">
+    <div
+      className="session-workspace-layout"
+      role="region"
+      aria-label="会话工作台"
+      data-layout="session-library"
+      data-selected={selectedSessionId ? "true" : "false"}
+    >
       <ScrollArea offsetScrollbars className="sessions-page">
         <Stack gap="md">
-          <ActiveSessionsPanel
-            overview={activeOverview}
-            onOpenConversation={onOpenConversation}
-            onOpenSessionDetail={openSessionDetail}
-          />
+          {Number(activeOverview?.total || 0) > 0 ? (
+            <ActiveSessionsPanel
+              overview={activeOverview}
+              onOpenSessionDetail={openSessionDetail}
+            />
+          ) : null}
           {(sections || []).map((section) => {
             const sectionTokenTotal = section.sessions.reduce((sum, session) => sum + Number(session.totalTokens || 0), 0);
             const sectionHasTokenData = section.sessions.some((session) => session.hasTokenData);
             const sectionEventTotal = section.sessions.reduce((sum, session) => sum + Number(session.count || 0), 0);
             const sectionLatest = section.sessions[0]?.latest || "";
             const SectionIcon = GroupIcon[section.groupType] || IconFolder;
+            const sectionPath = section.label || section.cwd || "";
+            const sectionTitle = section.groupType === "platform" ? sectionPath : basename(sectionPath) || sectionPath;
 
             return (
               <Paper
                 key={section.key || section.cwd}
-                radius="xl"
-                p="lg"
+                radius="md"
+                p="md"
                 className="session-section"
                 data-session-section-key={section.key || section.cwd}
               >
@@ -1020,9 +1062,9 @@ export function SessionWorkspace({
                   </ThemeIcon>
                   <div className="session-section__copy">
                     <Text className="eyebrow">{groupLabels[section.groupType] || "工作目录"}</Text>
-                    <Title order={4} className="session-section__title">{clipText(section.label || section.cwd, 96)}</Title>
-                    <Text className="session-section__subline">
-                      最近更新 {formatDateTime(sectionLatest)} · {formatNumber(sectionEventTotal)} 条事件
+                    <Title order={3} className="session-section__title" title={sectionPath}>{clipText(sectionTitle, 72)}</Title>
+                    <Text className="session-section__subline" title={sectionPath}>
+                      {clipText(sectionPath, 92)} · 最近 {formatDateTime(sectionLatest)} · {formatNumber(sectionEventTotal)} 条事件
                     </Text>
                   </div>
                 </Group>
@@ -1046,7 +1088,6 @@ export function SessionWorkspace({
                     selectedSet={selectedSet}
                     selectedSessionId={selectedSessionId}
                     onToggleSelect={onToggleSelect}
-                    onOpenConversation={onOpenConversation}
                     onOpenSessionDetail={openSessionDetail}
                     onRename={onRename}
                     onDelete={onDelete}
@@ -1082,7 +1123,6 @@ export function SessionWorkspace({
               events={detailEvents}
               loading={detailLoading}
               page={detailPage}
-              onOpenConversation={onOpenConversation}
               onFocusStreamSession={onFocusStreamSession}
               onClearSessionFocus={onClearSessionFocus}
               onLoadMore={onLoadMoreSessionDetail}
@@ -1097,7 +1137,7 @@ export function SessionWorkspace({
                 </ThemeIcon>
                 <div className="workspace-index__head-copy">
                   <Text className="eyebrow">工作目录</Text>
-                  <Title order={5} className="workspace-index__title" title={workspaceRootLabel}>{workspaceRootLabel}</Title>
+                  <Title order={3} className="workspace-index__title" title={workspaceRootLabel}>{workspaceRootLabel}</Title>
                   <Text className="workspace-index__hint">按公共路径折叠，点击叶子定位分组</Text>
                 </div>
               </Group>

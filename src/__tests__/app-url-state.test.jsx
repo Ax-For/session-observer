@@ -230,8 +230,22 @@ describe("App URL state", () => {
     render(<App />);
 
     expect(await screen.findByDisplayValue("rename")).toBeInTheDocument();
-    expect(screen.getByLabelText("仅显示已命名")).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "更多条件" }));
+    expect(await screen.findByLabelText("仅显示已命名")).toBeChecked();
     expect(screen.getByDisplayValue("Claude Code")).toBeInTheDocument();
+  });
+
+  test("renders a persistent workspace navigation with the current view selected", async () => {
+    window.history.replaceState(null, "", "/?tab=stream");
+
+    render(<App />);
+
+    const navigation = await screen.findByRole("navigation", { name: "主导航" });
+    expect(navigation).toBeInTheDocument();
+    expect(screen.getByTestId("instrument-rail")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-canvas")).toHaveAttribute("data-workbench-view", "stream");
+    expect(screen.getByRole("radio", { name: "事件流" })).toBeChecked();
+    expect(screen.getByText("SESSION OBSERVER")).toBeInTheDocument();
   });
 
   test("writes key workspace state back into the URL", async () => {
@@ -241,14 +255,12 @@ describe("App URL state", () => {
     fireEvent.change(searchInput, { target: { value: "incident" } });
     fireEvent.click(screen.getByRole("button", { name: "搜索" }));
     fireEvent.click(screen.getByRole("radio", { name: "原始" }));
-    fireEvent.click(screen.getByRole("radio", { name: "异常" }));
     fireEvent.click(screen.getByRole("radio", { name: "会话" }));
 
     await waitFor(() => {
       expect(window.location.search).toContain("tab=sessions");
       expect(window.location.search).toContain("q=incident");
       expect(window.location.search).toContain("mode=raw");
-      expect(window.location.search).toContain("qf=alert");
     });
   });
 
@@ -304,7 +316,7 @@ describe("App URL state", () => {
     render(<App />);
 
     expect(await screen.findByText("Agent answered the incident")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /查看会话详情 sess-eve/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 Incident triage/ })[0]);
 
     await waitFor(() => {
       expect(fetchedEventUrls().some((url) => (
@@ -315,8 +327,8 @@ describe("App URL state", () => {
     });
 
     expect(await screen.findByRole("heading", { name: "Incident triage" })).toBeInTheDocument();
-    expect(screen.getByText("对话内容")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开完整对话" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: "打开完整对话" })).not.toBeInTheDocument();
   });
 
   test("clears the focused session from the sessions page", async () => {
@@ -324,7 +336,7 @@ describe("App URL state", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "取消聚焦会话 sess-42" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消聚焦 sess-42" }));
 
     await waitFor(() => {
       expect(window.location.search).not.toContain("session=sess-42");
@@ -336,7 +348,7 @@ describe("App URL state", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Token 消耗" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Token 账本" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Token" })).toBeChecked();
     await waitFor(() => {
       expect(window.location.search).toContain("tab=tokens");
@@ -365,15 +377,15 @@ describe("App URL state", () => {
     expect(fetchedUrls()).toEqual(["/api/sessions"]);
   });
 
-  test("maps the retired alert queue URL to activity insights", async () => {
+  test("maps retired insight URLs to the consolidated overview", async () => {
     window.history.replaceState(null, "", "/?tab=alerts");
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "活动洞察" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "洞察" })).toBeChecked();
+    expect(await screen.findByRole("heading", { name: "运行总览" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "总览" })).toBeChecked();
     await waitFor(() => {
-      expect(window.location.search).toContain("tab=insights");
+      expect(window.location.search).toContain("tab=overview");
     });
   });
 
@@ -383,7 +395,7 @@ describe("App URL state", () => {
     const searchInput = await screen.findByPlaceholderText("用户 / Agent 问答内容");
     searchInput.focus();
 
-    expect(screen.getByRole("radio", { name: "观测" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "活动" })).toBeChecked();
     const fetchCountBeforeTyping = fetch.mock.calls.length;
 
     fireEvent.keyDown(searchInput, { key: "m" });
@@ -391,7 +403,7 @@ describe("App URL state", () => {
     fireEvent.keyDown(searchInput, { key: "r" });
     fireEvent.keyDown(searchInput, { key: "a" });
 
-    expect(screen.getByRole("radio", { name: "观测" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "活动" })).toBeChecked();
     expect(fetch).toHaveBeenCalledTimes(fetchCountBeforeTyping);
 
     const slashEvent = new KeyboardEvent("keydown", {

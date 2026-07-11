@@ -1,14 +1,43 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, test, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { StreamWorkspace } from "../stream-workspace";
 
 describe("StreamWorkspace", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("renders the event explorer workbench landmark", () => {
+    render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{ title: "全部会话", subtitle: "跨平台", tags: [] }}
+          summary={{
+            totals: {},
+            counts: {},
+            topTypes: [],
+            topModels: [],
+            platforms: [],
+            tokenWindows: { day: {}, week: {} },
+          }}
+          sessions={[]}
+          events={[]}
+          onSelectSession={() => {}}
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole("region", { name: "事件工作台" })).toHaveAttribute("data-layout", "event-explorer");
+  });
+
   test("renders the stream scope rail, summary cards, session list, and event feed", () => {
     const onOpenSessionDetail = vi.fn();
     const onOpenEvent = vi.fn();
 
-    render(
+    const { container } = render(
       <MantineProvider>
         <StreamWorkspace
           scope={{
@@ -123,51 +152,26 @@ describe("StreamWorkspace", () => {
 
     expect(screen.getByRole("heading", { name: "Incident triage" })).toBeInTheDocument();
     expect(screen.getByText("Codex · 告警视图 · observe")).toBeInTheDocument();
-    expect(screen.getByText("观测总览")).toBeInTheDocument();
-    expect(screen.getByText("平台分布")).toBeInTheDocument();
-    expect(screen.getByText("观测上下文")).toBeInTheDocument();
-    expect(screen.getByText("模型焦点")).toBeInTheDocument();
-    expect(screen.getByText("时间消耗")).toBeInTheDocument();
-    expect(screen.getByText("当前聚焦")).toBeInTheDocument();
-    expect(screen.getByText("Incident triage · sess-1")).toBeInTheDocument();
-    expect(screen.getByText("搜索关键词")).toBeInTheDocument();
-    expect(screen.getAllByText("incident").length).toBeGreaterThan(0);
-    expect(screen.getByText("工作区范围")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".feed-panel__fact")].map((node) => node.textContent.trim()).slice(0, 3)).toEqual([
+      "匹配 320",
+      "已载入 250 / 320",
+      "活动 2",
+    ]);
     expect(screen.getAllByText("/Users/me/code/session-observer").length).toBeGreaterThan(0);
-    expect(screen.getByText("最近刷新")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "返回全部会话" }).length).toBeGreaterThan(0);
-    expect(screen.getByText("今日 Token")).toBeInTheDocument();
-    expect(screen.getByText("本周 Token")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code 2,000")).toBeInTheDocument();
-    expect(screen.getByText("Codex 1,200")).toBeInTheDocument();
-    expect(screen.getByText("合计 8,400")).toBeInTheDocument();
-    expect(screen.getAllByText("匹配 320").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("已加载 250 / 320").length).toBeGreaterThan(0);
-    expect(screen.getByText("会话 31")).toBeInTheDocument();
-    expect(screen.getByText("2,620")).toBeInTheDocument();
-    expect(screen.getByText("总计 2,620 Tok")).toBeInTheDocument();
-    expect(screen.getByText("缓存 1,200")).toBeInTheDocument();
-    expect(screen.getByText("推理 80")).toBeInTheDocument();
-    expect(screen.getByText("Codex")).toBeInTheDocument();
-    expect(screen.getByText("8,437 事件")).toBeInTheDocument();
-    expect(screen.getByText("12 会话")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code")).toBeInTheDocument();
-    expect(screen.getByText("36,323 事件")).toBeInTheDocument();
-    expect(screen.getByText("19 会话")).toBeInTheDocument();
-    expect(screen.getAllByText("Token Usage").length).toBeGreaterThan(0);
+    expect(container.querySelector(".overview-board")).not.toBeInTheDocument();
+    expect(screen.queryByText("今日 Token")).not.toBeInTheDocument();
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
-    expect(screen.getByText("Token usage · In 2.4k · Out 220 · Total 2.6k")).toBeInTheDocument();
-    expect(screen.getByText("调用 navigate_page · {\"type\":\"reload\"}")).toBeInTheDocument();
-    expect(screen.getByText("用户")).toBeInTheDocument();
+    expect(screen.getByText("SEMANTIC ACTIVITY")).toBeInTheDocument();
+    expect(screen.getAllByText("用户回合").length).toBeGreaterThan(0);
     expect(screen.getByText("这里需要突出用户消息")).toBeInTheDocument();
-    expect(screen.getAllByText("Agent").length).toBeGreaterThan(0);
     expect(screen.getByText("我会优先展示对话内容")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /查看会话详情 Incident triage/ }));
+    expect(screen.getByRole("region", { name: "当前窗口分析" })).toBeInTheDocument();
+    expect(screen.getByText("2 个活动")).toBeInTheDocument();
+    expect(screen.getByText("Token Usage 60 · Tool Call 40")).toBeInTheDocument();
+    expect(screen.getByText("Codex 12 · Claude 19")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 Incident triage/ })[0]);
     expect(onOpenSessionDetail).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: "sess-1" }), { order: "desc" });
-    fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 sess-1/ })[0]);
-    expect(onOpenSessionDetail).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: "sess-1" }), { order: "desc" });
-    fireEvent.click(screen.getByText("Token usage · In 2.4k · Out 220 · Total 2.6k"));
-    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
   });
 
   test("highlights the submitted search term only in dialogue content", () => {
@@ -242,7 +246,7 @@ describe("StreamWorkspace", () => {
     expect(screen.getByText("Needle count analysis")).toBeInTheDocument();
   });
 
-  test("formats large token metrics with chinese units in the overview panel", () => {
+  test("keeps stream context limited to event-window facts", () => {
     render(
       <MantineProvider>
         <StreamWorkspace
@@ -297,15 +301,12 @@ describe("StreamWorkspace", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText("10.53亿")).toBeInTheDocument();
-    expect(screen.getByText("输入 10.5亿")).toBeInTheDocument();
-    expect(screen.getByText("输出 300万")).toBeInTheDocument();
-    expect(screen.getByText("缓存 11.86亿")).toBeInTheDocument();
-    expect(screen.getByText("推理 50.32万")).toBeInTheDocument();
-    expect(screen.getByText("合计 837.73万")).toBeInTheDocument();
-    expect(screen.getByText("Codex 610万")).toBeInTheDocument();
-    expect(screen.getByText("Claude Code 227.73万")).toBeInTheDocument();
-    expect(screen.getByText("合计 1256万")).toBeInTheDocument();
+    expect(screen.getByText("46,738")).toBeInTheDocument();
+    expect(screen.getByText("250 / 46,738")).toBeInTheDocument();
+    expect(screen.getByText("活动").closest("span")).toHaveTextContent("活动 0");
+    expect(screen.queryByText("10.53亿")).not.toBeInTheDocument();
+    expect(screen.getByText("Tool Call 77")).toBeInTheDocument();
+    expect(screen.getByText("glm-5 15")).toBeInTheDocument();
   });
 
   test("offers a clear action when a session focus is active", () => {
@@ -424,9 +425,8 @@ describe("StreamWorkspace", () => {
     );
 
     expect(container.querySelector(".session-rail__title-row")).toBeInTheDocument();
-    expect(container.querySelectorAll(".session-rail__metric")).toHaveLength(3);
-    expect(container.querySelector(".session-rail__path")).toHaveAttribute("title", longCwd);
-    expect(screen.getAllByText("019e5fc9").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".session-rail__metrics > span")).toHaveLength(2);
+    expect(container.querySelector(".session-rail__preview")).toHaveAttribute("title", longCwd);
   });
 
   test("windows the event list instead of rendering every loaded event", () => {
@@ -478,11 +478,106 @@ describe("StreamWorkspace", () => {
           generatedAt="2026-04-19T15:00:00.000Z"
           onOpenFilters={() => {}}
           onOpenEvent={() => {}}
+          viewMode="raw"
         />
       </MantineProvider>,
     );
 
     expect(container.querySelectorAll(".event-row").length).toBeLessThan(40);
     expect(screen.getByText("当前显示 180 条事件")).toBeInTheDocument();
+  });
+
+  test("keeps virtual event row keys unique for same-signature events", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const events = Array.from({ length: 5 }, (_, index) => ({
+      eventId: "shared-event-id",
+      time: "2026-07-10T12:00:00.000Z",
+      callType: "Raw",
+      sourceType: "codex",
+      model: "gpt-5.5",
+      sessionId: "sess-1",
+      summary: `raw event ${index}`,
+      extra: "raw",
+    }));
+
+    render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{ title: "全部会话", subtitle: "跨平台 · 全部事件 · observe", tags: [] }}
+          summary={{
+            totals: { input: 0, output: 0, total: 0, cachedInput: 0, reasoningOutput: 0 },
+            tokenWindows: { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } },
+            counts: { totalVisible: 5, totalMatching: 5, totalLoaded: 5, sessions: 1 },
+            topTypes: [],
+            topModels: [],
+            platforms: [],
+          }}
+          sessions={[]}
+          events={events}
+          selectedSessionId=""
+          onSelectSession={() => {}}
+          onClearSessionFocus={() => {}}
+          generatedAt="2026-07-10T12:00:01.000Z"
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+          viewMode="raw"
+        />
+      </MantineProvider>,
+    );
+
+    const duplicateKeyWarning = consoleError.mock.calls
+      .flat()
+      .some((part) => String(part).includes("same key"));
+    consoleError.mockRestore();
+
+    expect(duplicateKeyWarning).toBe(false);
+  });
+
+  test("deduplicates adjacent dialogue records with the same speaker and content", () => {
+    render(
+      <MantineProvider>
+        <StreamWorkspace
+          scope={{ title: "全部会话", subtitle: "跨平台 · 全部事件 · observe", tags: [] }}
+          summary={{
+            totals: { input: 0, output: 0, total: 0, cachedInput: 0, reasoningOutput: 0 },
+            tokenWindows: { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } },
+            counts: { totalVisible: 2, totalMatching: 2, totalLoaded: 2, sessions: 1 },
+            topTypes: [],
+            topModels: [],
+            platforms: [],
+          }}
+          sessions={[]}
+          events={[
+            {
+              eventId: "agent-1",
+              time: "2026-07-10T10:00:00.000Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.5",
+              sessionId: "sess-1",
+              summary: "助手输出 · 重复回答",
+            },
+            {
+              eventId: "agent-2",
+              time: "2026-07-10T10:00:01.000Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.5",
+              sessionId: "sess-1",
+              summary: "助手输出 · 重复回答",
+            },
+          ]}
+          selectedSessionId=""
+          onSelectSession={() => {}}
+          onClearSessionFocus={() => {}}
+          generatedAt="2026-07-10T10:00:02.000Z"
+          onOpenFilters={() => {}}
+          onOpenEvent={() => {}}
+          viewMode="raw"
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getAllByText("重复回答")).toHaveLength(1);
   });
 });

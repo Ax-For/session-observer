@@ -555,6 +555,8 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.equal(summary.alerts.recent[0].toolName, "Shell");
   assert.equal(summary.tools.totalCalls, 2);
   assert.equal(summary.tools.totalResults, 1);
+  assert.equal(summary.tools.categories.find((row) => row.key === "terminal").calls, 1);
+  assert.equal(summary.tools.categories.find((row) => row.key === "files").calls, 1);
   assert.deepEqual(summary.tools.topTools, [
     { key: "Shell", calls: 1, results: 1, alerts: 1 },
     { key: "Read", calls: 1, results: 0, alerts: 0 },
@@ -570,7 +572,14 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
       label: "11:00",
       events: 0,
       alerts: 0,
+      prompts: 0,
+      agentMessages: 0,
+      interactions: 0,
+      toolCalls: 0,
+      sessions: 0,
       tokens: 0,
+      estimatedUsd: 0,
+      knownTokenTotal: 0,
       platforms: [],
     },
     {
@@ -578,7 +587,14 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
       label: "12:00",
       events: 0,
       alerts: 0,
+      prompts: 0,
+      agentMessages: 0,
+      interactions: 0,
+      toolCalls: 0,
+      sessions: 0,
       tokens: 0,
+      estimatedUsd: 0,
+      knownTokenTotal: 0,
       platforms: [],
     },
   ]);
@@ -589,31 +605,35 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.equal(summary.charts.daily.at(-1).tokens, 1200);
   assert.equal(summary.charts.daily.find((bucket) => bucket.label === "04/22").tokens, 500);
   assert.equal(summary.charts.dailySessions.length, 14);
-  assert.deepEqual(summary.charts.dailySessions.find((bucket) => bucket.label === "04/23"), {
-    time: "2026-04-23T00:00:00.000Z",
-    label: "04/23",
-    sessions: 1,
+  const april23 = summary.charts.dailySessions.find((bucket) => bucket.label === "04/23");
+  assert.equal(april23.sessions, 1);
+  assert.equal(april23.events, 4);
+  assert.equal(april23.prompts, 1);
+  assert.equal(april23.agentMessages, 0);
+  assert.equal(april23.interactions, 1);
+  assert.equal(april23.toolCalls, 1);
+  assert.equal(april23.tokens, 1200);
+  assert.equal(april23.estimatedUsd > 0, true);
+  assert.deepEqual(april23.topWorkspace, {
+    cwd: "/repo/a",
     events: 4,
-    tokens: 1200,
-    topWorkspace: {
-      cwd: "/repo/a",
-      events: 4,
-      sessions: 1,
-      tokens: 1200,
-    },
-  });
-  assert.deepEqual(summary.charts.dailySessions.find((bucket) => bucket.label === "04/22"), {
-    time: "2026-04-22T00:00:00.000Z",
-    label: "04/22",
     sessions: 1,
+    tokens: 1200,
+  });
+  const april22 = summary.charts.dailySessions.find((bucket) => bucket.label === "04/22");
+  assert.equal(april22.sessions, 1);
+  assert.equal(april22.events, 2);
+  assert.equal(april22.prompts, 0);
+  assert.equal(april22.agentMessages, 0);
+  assert.equal(april22.interactions, 0);
+  assert.equal(april22.toolCalls, 1);
+  assert.equal(april22.tokens, 500);
+  assert.equal(april22.estimatedUsd > 0, true);
+  assert.deepEqual(april22.topWorkspace, {
+    cwd: "/repo/b",
     events: 2,
+    sessions: 1,
     tokens: 500,
-    topWorkspace: {
-      cwd: "/repo/b",
-      events: 2,
-      sessions: 1,
-      tokens: 500,
-    },
   });
   assert.equal(summary.charts.dailySessions.find((bucket) => bucket.label === "04/21").topWorkspace, null);
   assert.deepEqual(summary.charts.platformShare, [
@@ -623,6 +643,13 @@ test("buildObservabilitySummary aggregates health, token, alert, tool, and works
   assert.deepEqual(summary.charts.alertTypes, [
     { key: "Tool_Result", count: 1 },
   ]);
+  assert.equal(summary.usageStats.interactions.prompts, 1);
+  assert.equal(summary.usageStats.interactions.toolCalls, 2);
+  assert.equal(summary.usageStats.interactions.tokensPerPrompt, 1700);
+  assert.equal(summary.usageStats.sessions.averageDurationMs, 120000);
+  assert.equal(summary.usageStats.today.interactions, 1);
+  assert.equal(summary.usageStats.cadence.activeDays7, 2);
+  assert.equal(summary.usageStats.forecast.monthCost > 0, true);
 });
 
 test("buildObservabilitySummary can apply Codex fast pricing", () => {

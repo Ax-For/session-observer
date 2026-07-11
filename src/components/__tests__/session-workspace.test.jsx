@@ -1,10 +1,34 @@
 import { MantineProvider } from "@mantine/core";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, test, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { formatDateTime } from "../../lib/formatters";
 import { SessionWorkspace } from "../session-workspace";
 
 describe("SessionWorkspace", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("renders the session library workbench landmark", () => {
+    render(
+      <MantineProvider>
+        <SessionWorkspace
+          sections={[]}
+          workspaceIndex={[]}
+          selectedIds={[]}
+          onToggleSelect={() => {}}
+          onOpenConversation={() => {}}
+          onFocusWorkspace={() => {}}
+          onRename={() => {}}
+          onDelete={() => {}}
+          onCopySessionId={() => {}}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByRole("region", { name: "会话工作台" })).toHaveAttribute("data-layout", "session-library");
+  });
+
   test("renders active sessions above the grouped session list", () => {
     const onOpenConversation = vi.fn();
     const onOpenSessionDetail = vi.fn();
@@ -51,12 +75,12 @@ describe("SessionWorkspace", () => {
     );
 
     expect(screen.getByText("当前活跃")).toBeInTheDocument();
-    expect(screen.getByText("最近 30 分钟仍在写入的会话")).toBeInTheDocument();
+    expect(screen.getByText("正在写入")).toBeInTheDocument();
+    expect(screen.getByText("最近 30 分钟有新事件，按更新时间排序")).toBeInTheDocument();
     expect(screen.getByText("还有 1 个活跃会话")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /查看活跃会话详情 当前项目 UI 调整/ }));
     expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
-    fireEvent.click(screen.getByRole("button", { name: /查看活跃会话对话 当前项目 UI 调整/ }));
-    expect(onOpenConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
+    expect(screen.queryByRole("button", { name: /查看活跃会话对话 当前项目 UI 调整/ })).not.toBeInTheDocument();
   });
 
   test("keeps a session id copy action on session cards", () => {
@@ -209,7 +233,7 @@ describe("SessionWorkspace", () => {
 
     const virtualScroll = document.querySelector(".session-list-virtual-scroll");
     expect(virtualScroll).toBeTruthy();
-    Object.defineProperty(virtualScroll, "scrollTop", { value: 8200, configurable: true });
+    Object.defineProperty(virtualScroll, "scrollTop", { value: 6300, configurable: true });
     fireEvent.scroll(virtualScroll);
 
     await waitFor(() => {
@@ -247,6 +271,7 @@ describe("SessionWorkspace", () => {
               model: "gpt-5.4",
               sessionId: "sess-1",
               summary: "用户输入 · 改造详情页",
+              content: "用户输入 · 改造详情页",
             },
             {
               time: "2026-05-31T10:01:00.000Z",
@@ -255,6 +280,7 @@ describe("SessionWorkspace", () => {
               model: "gpt-5.4",
               sessionId: "sess-1",
               summary: "Agent 回复 · 已补充详情布局",
+              content: "Agent 回复 · 已补充详情布局",
             },
             {
               time: "2026-05-31T10:01:01.000Z",
@@ -263,6 +289,7 @@ describe("SessionWorkspace", () => {
               model: "gpt-5.4",
               sessionId: "sess-1",
               summary: "Agent 回复 · 已补充详情布局",
+              content: "Agent 回复 · 已补充详情布局",
             },
             {
               time: "2026-05-31T10:02:00.000Z",
@@ -272,6 +299,7 @@ describe("SessionWorkspace", () => {
               sessionId: "sess-1",
               toolName: "exec_command",
               summary: "tool=exec_command args={\"cmd\":\"npm test\"}",
+              content: "tool=exec_command args={\"command\":\"npm test\"}",
             },
             {
               time: "2026-05-31T10:04:00.000Z",
@@ -310,31 +338,28 @@ describe("SessionWorkspace", () => {
     );
 
     expect(screen.getByText("Session detail work")).toBeInTheDocument();
-    expect(screen.getByText("Token 构成")).toBeInTheDocument();
-    expect(screen.getByText("事件类型")).toBeInTheDocument();
-    expect(screen.getByText("工具调用")).toBeInTheDocument();
-    expect(screen.getByText("模型分布")).toBeInTheDocument();
-    expect(screen.getByText("对话内容")).toBeInTheDocument();
+    expect(screen.getByText("完整会话 Token")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByText(/用户输入 · 改造详情页/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Agent 回复 · 已补充详情布局/).length).toBeGreaterThan(0);
-    const previewTexts = [...container.querySelectorAll(".session-detail-conversation__item p")].map((node) => node.textContent);
-    expect(previewTexts.filter((text) => text.includes("Agent 回复 · 已补充详情布局"))).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "收起会话内容" }));
-    expect(container.querySelectorAll(".session-detail-conversation__item")).toHaveLength(0);
-    expect(screen.getByText("对话内容已折叠")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开完整对话" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "展开会话内容" }));
-    expect(container.querySelectorAll(".session-detail-conversation__item").length).toBeGreaterThan(0);
-    expect(screen.getByText("最近事件")).toBeInTheDocument();
+    expect([...container.querySelectorAll(".conversation-turn .conv-message-body")]
+      .filter((node) => node.textContent.includes("Agent 回复 · 已补充详情布局"))).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /第 1 轮/ }));
+    expect(container.querySelector(".conversation-turn")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /第 1 轮/ }));
+    expect(container.querySelector(".conversation-turn")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "用量" }));
+    expect(screen.getByText("完整会话 Token 构成")).toBeInTheDocument();
+    expect(screen.getByText("模型")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "文件与工具" }));
     expect(screen.getByText("exec_command")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "打开完整对话" }));
-    expect(onOpenConversation).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
     fireEvent.click(screen.getByRole("button", { name: "在事件流聚焦当前会话" }));
     expect(onFocusStreamSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
-    fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));
-    expect(onClearSessionFocus).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("tab", { name: "原始" }));
     fireEvent.click(screen.getByRole("button", { name: /Token usage/ }));
     expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));
+    expect(onClearSessionFocus).toHaveBeenCalledOnce();
   });
 
   test("shows the selected session start time from summary data before events are loaded", () => {

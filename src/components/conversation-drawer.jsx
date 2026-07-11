@@ -39,8 +39,8 @@ export function ConversationDrawer({
     [turns, visibleTurnStart, visibleTurnEnd],
   );
   const selectedTurnIndex = turns.findIndex((turn) => turn.id === selectedTurnId);
-  const currentTurnIndex = selectedTurnIndex >= 0 ? selectedTurnIndex : 0;
-  const selectedTurnValue = selectedTurnId || turns[0]?.id || null;
+  const currentTurnIndex = selectedTurnIndex >= 0 ? selectedTurnIndex : Math.max(0, turns.length - 1);
+  const selectedTurnValue = selectedTurnId || turns.at(-1)?.id || null;
   const turnOptions = useMemo(
     () => turns.map((turn) => ({
       value: turn.id,
@@ -58,41 +58,17 @@ export function ConversationDrawer({
     ? Math.min(100, Math.round((Number(page.loaded) / Number(page.total)) * 100))
     : 0;
   const headerProgressText = Number(page.total) > 0
-    ? `已加载 ${formatNumber(page.loaded)} / 共 ${formatNumber(page.total)} 条事件`
+    ? `${hasMore ? "已载入最近" : "已载入"} ${formatNumber(page.loaded)} / 共 ${formatNumber(page.total)} 条事件`
     : loading
       ? "正在准备会话内容…"
       : "尚未加载事件";
   const progressText = loadingMore
-    ? `正在加载 ${formatNumber(page.loaded)} / ${formatNumber(page.total)}…`
+    ? `正在加载更早内容 · 当前 ${formatNumber(page.loaded)} / ${formatNumber(page.total)}`
     : hasMore
-      ? `已加载 ${formatNumber(page.loaded)} / 共 ${formatNumber(page.total)} · 向下滚动加载更多`
+      ? `当前仅载入最近 ${formatNumber(page.loaded)} / ${formatNumber(page.total)} 条事件`
       : page.loaded > 0
         ? `已加载全部 ${formatNumber(page.loaded)} 条`
         : "";
-
-  useEffect(() => {
-    if (!opened) return undefined;
-    const viewport = viewportRef.current;
-    if (!viewport) return undefined;
-
-    function handleScroll() {
-      const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-      if (remaining >= 260) return;
-
-      if (visibleTurnEnd < turns.length) {
-        revealMoreTurns();
-        return;
-      }
-
-      if (!hasMore || loading || loadingMore || typeof onLoadMore !== "function") return;
-      onLoadMore();
-    }
-
-    viewport.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      viewport.removeEventListener("scroll", handleScroll);
-    };
-  }, [opened, visibleTurnEnd, turns.length, hasMore, loading, loadingMore, onLoadMore]);
 
   useEffect(() => {
     if (!opened) return;
@@ -105,9 +81,22 @@ export function ConversationDrawer({
   }, [opened, session?.sessionId]);
 
   useEffect(() => {
-    if (selectedTurnId || !turns[0]) return;
-    setSelectedTurnId(turns[0].id);
+    if (selectedTurnId || !turns.at(-1)) return;
+    const latestTurn = turns.at(-1);
+    const nextStart = Math.max(0, turns.length - INITIAL_VISIBLE_TURNS);
+    pendingScrollTurnId.current = latestTurn.id;
+    setVisibleTurnStart(nextStart);
+    setVisibleTurnCount(Math.min(INITIAL_VISIBLE_TURNS, turns.length));
+    setSelectedTurnId(latestTurn.id);
   }, [selectedTurnId, turns]);
+
+  useEffect(() => {
+    if (!selectedTurnId || selectedTurnIndex < 0) return;
+    if (selectedTurnIndex >= visibleTurnStart && selectedTurnIndex < visibleTurnEnd) return;
+    const nextStart = Math.max(0, Math.min(selectedTurnIndex - 2, turns.length - INITIAL_VISIBLE_TURNS));
+    setVisibleTurnStart(nextStart);
+    setVisibleTurnCount(Math.min(INITIAL_VISIBLE_TURNS, turns.length));
+  }, [selectedTurnId, selectedTurnIndex, turns.length, visibleTurnEnd, visibleTurnStart]);
 
   useEffect(() => {
     setScrubberValue(Math.min(turns.length || 1, currentTurnIndex + 1));
@@ -126,7 +115,7 @@ export function ConversationDrawer({
       scrollToTurn(turnId);
       pendingScrollTurnId.current = "";
     });
-  }, [visibleTurnCount, selectedTurnId]);
+  }, [visibleTurnCount, visibleTurnStart, selectedTurnId]);
 
   function scrollToTurn(turnId) {
     const element = turnRefs.current.get(turnId);
@@ -147,7 +136,9 @@ export function ConversationDrawer({
   }
 
   function revealMoreTurns() {
-    setVisibleTurnCount((current) => Math.min(current + TURN_BATCH_SIZE, turns.length - visibleTurnStart));
+    const nextStart = Math.max(0, visibleTurnStart - TURN_BATCH_SIZE);
+    setVisibleTurnCount((current) => Math.min(turns.length - nextStart, current + visibleTurnStart - nextStart));
+    setVisibleTurnStart(nextStart);
   }
 
   function jumpToTurn(turnId) {
@@ -330,7 +321,7 @@ export function ConversationDrawer({
                   {turns.length > visibleTurns.length
                     ? ` · 当前范围 ${formatNumber(visibleTurnStart + 1)}-${formatNumber(visibleTurnEnd)}`
                     : ""}
-                  {loadingMore ? " · 正在补齐后续回合" : ""}
+                  {loadingMore ? " · 正在补齐更早回合" : ""}
                 </Text>
                 <div className="conversation-turn-scrubber">
                   <Group justify="space-between" align="center" gap="xs">
@@ -379,6 +370,43 @@ export function ConversationDrawer({
                   </Paper>
                 ) : null}
 
+                {!loading && progressText && hasMore ? (
+                  <Paper radius="xl" p="sm" className="conversation-more">
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Text className="conversation-more__status">{progressText}</Text>
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        radius="xl"
+                        color="blue"
+                        loading={loadingMore}
+                        onClick={onLoadMore}
+                      >
+                        加载更早内容
+                      </Button>
+                    </Group>
+                  </Paper>
+                ) : null}
+
+                {!loading && visibleTurnStart > 0 ? (
+                  <Paper radius="xl" p="sm" className="conversation-more conversation-window-more">
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Text className="conversation-more__status">
+                        当前显示第 {formatNumber(visibleTurnStart + 1)}-{formatNumber(visibleTurnEnd)} 轮
+                      </Text>
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        radius="xl"
+                        color="blue"
+                        onClick={revealMoreTurns}
+                      >
+                        显示更早回合
+                      </Button>
+                    </Group>
+                  </Paper>
+                ) : null}
+
                 {visibleTurns.map((turn) => (
                   <ConversationTurn
                     key={turn.id}
@@ -391,41 +419,10 @@ export function ConversationDrawer({
                   />
                 ))}
 
-                {!loading && visibleTurnEnd < turns.length ? (
-                  <Paper radius="xl" p="sm" className="conversation-more conversation-window-more">
-                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
-                      <Text className="conversation-more__status">
-                        为保持滚动流畅，当前只渲染 {formatNumber(visibleTurns.length)} / {formatNumber(turns.length)} 轮
-                      </Text>
-                      <Button
-                        variant="subtle"
-                        size="xs"
-                        radius="xl"
-                        color="blue"
-                        onClick={revealMoreTurns}
-                      >
-                        显示更多回合
-                      </Button>
-                    </Group>
-                  </Paper>
-                ) : null}
-
-                {!loading && progressText ? (
+                {!loading && progressText && !hasMore ? (
                   <Paper radius="xl" p="sm" className="conversation-more">
                     <Group justify="space-between" align="center" wrap="wrap" gap="xs">
                       <Text className="conversation-more__status">{progressText}</Text>
-                      {hasMore ? (
-                        <Button
-                          variant="subtle"
-                          size="xs"
-                          radius="xl"
-                          color="blue"
-                          loading={loadingMore}
-                          onClick={onLoadMore}
-                        >
-                          继续加载
-                        </Button>
-                      ) : null}
                     </Group>
                   </Paper>
                 ) : null}
@@ -526,7 +523,7 @@ function buildSearchSnippet(value, normalizedQuery) {
   return `${prefix}${source.slice(start, end)}${suffix}`;
 }
 
-function ConversationTurn({ turn, searchMatch, setTurnRef }) {
+export function ConversationTurn({ turn, searchMatch, setTurnRef, hideHeader = false }) {
   const hasTools = turn.toolEntries.length > 0;
   const hasThinking = turn.thinkingEntries.length > 0;
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -546,7 +543,7 @@ function ConversationTurn({ turn, searchMatch, setTurnRef }) {
 
   return (
     <section ref={setTurnRef} className={`conversation-turn ${searchMatch ? "is-search-match" : ""}`}>
-      <div className="conversation-turn__head">
+      {!hideHeader ? <div className="conversation-turn__head">
         <Group gap="xs" wrap="wrap">
           <Badge radius="xl" variant="light" color="blue">第 {turn.index} 轮</Badge>
           {searchMatch ? <Badge radius="xl" variant="light" color="yellow">当前搜索命中</Badge> : null}
@@ -558,7 +555,7 @@ function ConversationTurn({ turn, searchMatch, setTurnRef }) {
             {turn.toolSummary.errors ? ` · 错误 ${turn.toolSummary.errors}` : ""}
           </Text>
         ) : null}
-      </div>
+      </div> : null}
 
       <Stack gap="sm">
         {turn.userMessages.map((entry) => (
