@@ -1,50 +1,26 @@
 # Session Observer
 
+**A local-first observability workbench for Codex and Claude Code.** Turn scattered JSONL transcripts into a semantic activity stream, searchable session library, token and cost ledger, and runtime health dashboard - without uploading prompts, tool output, or source paths.
+
 [![CI](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-LTS%20or%20newer-339933.svg)](package.json)
 [![React](https://img.shields.io/badge/react-19-149eca.svg)](package.json)
-
-Local-first observability dashboard for Codex and Claude Code sessions: event stream search, conversation replay, token usage, workspace insights, and memory-safe JSONL scanning.
+[![Local first](https://img.shields.io/badge/data-local--first-16a085.svg)](#privacy-model)
 
 [中文文档](README.zh-CN.md)
 
 ![Session Observer overview](docs/screenshots/overview.png)
 
-## Why Session Observer?
+Session Observer is built for developers who use multiple local coding agents and need to answer practical questions quickly:
 
-AI coding sessions quickly become hard to inspect: prompts, agent messages, tool calls, token usage, working directories, and long JSONL histories are scattered across local files. Session Observer turns those local logs into a desktop-friendly observability workspace without uploading your session content anywhere.
+- What is running right now, and which session is still writing?
+- What did the user ask, what did the agent answer, and which tools ran in between?
+- Where did input, cache-read, cache-write, output, reasoning, and estimated cost come from?
+- Which models, workspaces, files, and commands dominate usage?
+- Can a large transcript history be inspected without building a memory-heavy global event index?
 
-Use it when you want to:
-
-- inspect recent Codex and Claude Code activity in one timeline;
-- jump from an event to the related session and conversation detail;
-- understand token usage, cache hits, reasoning output, and high-cost sessions;
-- see workspace-level activity and daily session heat;
-- monitor process memory while scanning large local JSONL histories.
-
-## Highlights
-
-- **Local-first by default**: binds to `127.0.0.1` and reads local Codex / Claude Code transcripts directly.
-- **On-demand event stream**: recent events are read as needed, with explicit search submission, loading state, filters, and dialogue-only highlighting.
-- **Conversation-aware sessions**: browse active sessions, workspace trees, session details, conversation drawers, models, tools, and related events.
-- **Detailed token ledger**: separates uncached input, cache hits, cache creation, output, and reasoning output across time, model, workspace, and session views.
-- **Memory-aware architecture**: avoids keeping full historical JSONL data resident in memory; dashboard surfaces RSS, heap, external memory, and source-cache state.
-- **Privacy-conscious docs and exports**: screenshots and examples are sanitized; raw session files are intentionally excluded from source control.
-
-## Screenshots
-
-Screenshots are generated from sanitized example data. They do not contain real prompts, local paths, tool outputs, or raw session JSONL content.
-
-| Overview | Event stream |
-| --- | --- |
-| ![Overview dashboard](docs/screenshots/overview.png) | ![Event stream](docs/screenshots/stream.png) |
-
-| Token ledger | Session detail |
-| --- | --- |
-| ![Token dashboard](docs/screenshots/tokens.png) | ![Session detail](docs/screenshots/sessions.png) |
-
-## Quick Start
+## Start in 30 seconds
 
 ```bash
 npm install
@@ -52,21 +28,76 @@ npm install
 ./manage.sh open
 ```
 
-The default UI is `http://127.0.0.1:8787`.
+The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or external database is required.
 
-`manage.sh` automatically builds the Vite frontend when `dist/` is missing or stale. For UI-only iteration, run:
+`manage.sh` builds the Vite frontend when needed and runs the Node service with a constrained heap. For UI-only development, use `npm run dev`.
 
-```bash
-npm run dev
-```
+## Product surfaces
 
-## Data Sources
+| Surface | What it is for |
+| --- | --- |
+| **Overview** | Runtime and source health, RSS and heap usage, today's sessions and conversations, 24-hour event and token load, active writers, usage cadence, and workspace concentration |
+| **Token ledger** | Uncached input, cache hits, cache creation, output, reasoning output, estimated cost, efficiency ratios, forecasts, trends, model attribution, workspace attribution, and high-cost sessions |
+| **Event stream** | Semantic activity grouped by user turn, dedicated Q&A/tool/usage/raw views, explicit search, filters, highlighted dialogue matches, live follow/pause, and direct jumps into session detail |
+| **Session library** | Active sessions, workspace grouping, directory tree, stable full-session totals, start and latest timestamps, collapsible conversations, activity, usage, files/tools, commands, errors, compactions, and raw diagnostics |
 
-| Source | Default path | Purpose |
+## Why it is different
+
+### Semantic activity instead of raw log noise
+
+The default event stream groups a user turn, its agent response, tool calls, token snapshots, model, duration, and errors into one expandable activity. The raw view remains available for debugging, but internal records no longer overwhelm the normal workflow.
+
+Search is submitted explicitly and matches only user and agent dialogue content. It does not produce noisy hits from internal metadata, paths, or token records.
+
+### One canonical session workbench
+
+Every event-to-session jump opens the same detail surface. Full-session counts and token totals come from the stable summary, while conversation content is read from a bounded recent window. The latest 400 raw events load first, turns are collapsible, and older content is fetched only when requested.
+
+### Detailed token and cost attribution
+
+Token accounting separates:
+
+- uncached input;
+- cache-read input;
+- cache creation;
+- model output;
+- reasoning output.
+
+The UI attributes usage by time window, model, platform, workspace, and session. Cost values are estimates based on the recognized model price table; they are not provider invoices.
+
+### Designed for large local histories
+
+Session Observer avoids retaining the complete transcript corpus in memory:
+
+- recent event pages are reverse-scanned directly from source files;
+- completed archive summaries are reused when files do not change;
+- growing current files are parsed incrementally;
+- persistent summaries keep bounded goals, outcomes, tools, files, errors, compactions, and model transitions instead of raw event arrays;
+- the UI virtualizes or batches large lists and exposes process RSS, heap, external memory, and cache state.
+
+This keeps normal navigation responsive even when individual JSONL files are hundreds of megabytes. Actual memory usage still depends on transcript shape, active filters, and the number of pages explicitly loaded.
+
+## Screenshots
+
+Screenshots use sanitized example data. They do not contain real prompts, local user paths, tool output, credentials, or source JSONL records.
+
+| Overview | Event stream |
+| --- | --- |
+| ![Overview dashboard](docs/screenshots/overview.png) | ![Event stream](docs/screenshots/stream.png) |
+
+| Token ledger | Session workbench |
+| --- | --- |
+| ![Token dashboard](docs/screenshots/tokens.png) | ![Session detail](docs/screenshots/sessions.png) |
+
+## Data sources
+
+| Source | Default path | Data used |
 | --- | --- | --- |
-| Codex sessions | `~/.codex/sessions/**/*.jsonl` | Codex events, prompts, agent messages, tool calls, and token usage |
-| Claude Code projects | `~/.claude/projects/**/*.jsonl` | Claude Code project sessions, tool calls, messages, and usage |
-| Codex state DB | `~/.codex/state_5.sqlite` | Codex title metadata, read through the `sqlite3` CLI |
+| Codex sessions | `~/.codex/sessions/**/*.jsonl` | Prompts, agent messages, tool calls, token usage, models, timestamps, and working directories |
+| Claude Code projects | `~/.claude/projects/**/*.jsonl` | Project sessions, messages, tool activity, models, and usage |
+| Codex state DB | `~/.codex/state_5.sqlite` | Session title metadata, read through the `sqlite3` CLI |
+
+Source changes are observed through filesystem notifications and streamed to the browser. Event pages and searches are still read on demand rather than held in a permanent in-memory index.
 
 ## Requirements
 
@@ -75,46 +106,36 @@ npm run dev
 - `sqlite3` CLI for Codex title metadata
 - A modern desktop browser
 
-## Common Commands
+## Commands
 
 ```bash
-./manage.sh start      # Start the local observer in the background
+./manage.sh start      # Start the observer in the background
 ./manage.sh status     # Show PID and local URL
 ./manage.sh logs -f    # Follow runtime logs
-./manage.sh stop       # Stop the background service
-./manage.sh run        # Run the server in the foreground
+./manage.sh stop       # Stop the service
+./manage.sh run        # Run in the foreground
 
-npm test               # Run frontend Vitest tests
-npm run test:core      # Run parser and aggregation tests
-npm run build          # Build the frontend
-npm run check          # Run lint, tests, core tests, and production build
+npm test               # Frontend Vitest suite
+npm run test:core      # Parser, aggregation, cache, and route tests
+npm run build          # Production frontend build
+npm run check          # Lint, all tests, and production build
 ```
-
-## Feature Map
-
-| Surface | What it shows |
-| --- | --- |
-| Overview | Runtime status, session heatmap, token trend, source health, memory usage, workspace concentration, and active sessions |
-| Token | Token ledger, cache hits, cache creation, output, reasoning output, time windows, model cost, workspace spend, and high-cost sessions |
-| Insights | Active rate, session load, tool reliability, workspace load, activity shape, and operational notes |
-| Event stream | Observe/raw modes, button-triggered search, loading state, filters, highlighted dialogue results, recent active sessions, and session jumps |
-| Sessions | Grouped session list, workspace tree, active sessions, detail panel, conversation replay, focused stream navigation, and batch operations |
 
 ## Architecture
 
 ```text
-server.js              Node HTTP API, static frontend, and session-management routes
-manage.sh              Local service lifecycle helper
+server.js              Local HTTP API and built frontend
+manage.sh              Service lifecycle and memory-oriented Node flags
+server/                On-demand scanning, source watchers, summary cache, and routes
 shared/                Codex / Claude Code parsing, dedupe, token, trace, and aggregation logic
-server/                Source scanning, on-demand event reading, summary cache, and HTTP routes
-src/app.jsx            React workspace shell, URL state, and page orchestration
-src/components/        Overview, stream, sessions, event drawer, and conversation drawer
-src/hooks/             Data loading, source change stream, session actions, and URL sync
-src/lib/               View models, formatting, paging, event display, and URL helpers
-tests/                 Node-side parser, cache, memory, route, export, and trace tests
+src/app.jsx            React shell, URL state, and workspace orchestration
+src/components/        Overview, token, event stream, session library, and detail surfaces
+src/hooks/             Data loading, source changes, paging, and session actions
+src/lib/               Activity models, view models, formatting, paging, and URL helpers
+tests/                 Node-side parser, cache, memory, route, and trace tests
 ```
 
-The backend stays a single local Node process. The frontend is built with Vite and served by the same process. Shared parsing lives in `shared/` so server-side summaries and frontend view models use the same event vocabulary.
+The backend remains one local Node process. Vite builds the React interface, which is served by the same process. Shared parsing keeps server summaries and frontend views on the same event vocabulary.
 
 ## Configuration
 
@@ -122,41 +143,40 @@ The backend stays a single local Node process. The frontend is built with Vite a
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | HTTP bind address |
 | `PORT` | `8787` | HTTP port |
-| `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex session directory |
-| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code projects directory |
-| `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata SQLite database |
-
-Example:
+| `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex transcript directory |
+| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code project directory |
+| `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata database |
 
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```
 
-## Privacy Model
+## Privacy model
 
-Session logs may contain prompts, tool output, local paths, code snippets, and other sensitive data. Session Observer is designed for local inspection:
+Session transcripts may contain prompts, source code, tool output, filesystem paths, and credentials. Session Observer is designed for local inspection:
 
-- the default server binds to `127.0.0.1`;
-- raw JSONL transcripts and `.runtime/` artifacts are ignored by source control;
-- screenshots and documentation examples should use sanitized data;
-- binding to `0.0.0.0` should be done only when you understand the network exposure.
+- the default server binds only to `127.0.0.1`;
+- transcript JSONL files and `.runtime/` artifacts are excluded from source control;
+- searches and dashboards run against local files;
+- no telemetry or hosted storage is required.
+
+Only bind to a non-local interface when you understand the exposure risk:
 
 ```bash
 HOST=0.0.0.0 ./manage.sh start
 ```
 
-## Project Health
+## Project
 
-- License: [MIT](LICENSE)
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security policy: [SECURITY.md](SECURITY.md)
-- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- Social preview asset: [docs/social-preview.png](docs/social-preview.png)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [MIT license](LICENSE)
+- [Social preview](docs/social-preview.png)
 
 ## Roadmap
 
-- More local coding-agent adapters.
-- Session diff and timeline comparison.
-- Sanitized report exports for sharing incidents.
-- Pluggable cost models and model aliases.
-- Better long-running source cache diagnostics.
+- Additional local coding-agent adapters.
+- Session comparison and timeline diffing.
+- More configurable pricing aliases and retention controls.
+- Deeper diagnostics for long-running source watchers and cache reuse.
