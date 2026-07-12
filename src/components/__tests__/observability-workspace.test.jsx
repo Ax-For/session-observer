@@ -235,6 +235,122 @@ const payload = {
   },
 };
 
+function makeTokenRange({ key, label, days, total, cost, sessions, sessionTitle, model, workspace, timeline }) {
+  return {
+    key,
+    label,
+    days,
+    startAt: timeline[0].time,
+    endAt: timeline.at(-1).time,
+    timelineGranularity: days === 1 ? "hour" : "day",
+    timeline,
+    history: {
+      cachedHistoricalDays: Math.max(0, days - 1),
+      strategy: "persisted-daily-summaries",
+    },
+    health: {
+      eventsTotal: sessions * 10,
+      sessionsTotal: sessions,
+      activeDays: Math.min(days, sessions),
+    },
+    comparison: {
+      tokenChangePercent: 25,
+      costChangePercent: 20,
+      sessionChangePercent: 10,
+      previousTokens: total * 0.8,
+      previousCost: cost * 0.8,
+      previousSessions: Math.max(1, sessions - 1),
+    },
+    peak: timeline.at(-1),
+    tokens: {
+      input: total * 0.55,
+      inputTotal: total * 0.8,
+      output: total * 0.08,
+      total,
+      cachedInput: total * 0.25,
+      cacheReadInput: total * 0.25,
+      cacheCreationInput: total * 0.02,
+      reasoningOutput: total * 0.03,
+      effectiveTotal: total,
+      cost: {
+        estimatedUsd: cost,
+        knownTokenTotal: total,
+        currency: "USD",
+        source: "built-in-estimate",
+        unknownModels: [],
+        byModel: [{ model, estimatedUsd: cost, knownTokenTotal: total }],
+      },
+      byPlatform: [{ key: "codex", total }],
+      byModel: [{ key: model, total }],
+      byWorkspace: [{ cwd: workspace, total, estimatedUsd: cost, knownTokenTotal: total }],
+      topSessions: [{
+        sessionId: `${key}-session`,
+        title: sessionTitle,
+        sourceType: "codex",
+        cwd: workspace,
+        events: sessions * 10,
+        tokens: total,
+        estimatedUsd: cost,
+        knownTokenTotal: total,
+      }],
+    },
+  };
+}
+
+const tokenRangePayload = {
+  ...payload,
+  summary: {
+    ...payload.summary,
+    tokenRanges: {
+      today: makeTokenRange({
+        key: "today",
+        label: "当天",
+        days: 1,
+        total: 8_000,
+        cost: 0.018,
+        sessions: 2,
+        sessionTitle: "Today range session",
+        model: "gpt-5.5",
+        workspace: "/Users/me/code/today",
+        timeline: [
+          { time: "2026-04-23T10:00:00.000Z", label: "10:00", tokens: 3_000, estimatedUsd: 0.006 },
+          { time: "2026-04-23T11:00:00.000Z", label: "11:00", tokens: 5_000, estimatedUsd: 0.012 },
+        ],
+      }),
+      week: makeTokenRange({
+        key: "week",
+        label: "近 7 天",
+        days: 7,
+        total: 18_000,
+        cost: 0.0525,
+        sessions: 5,
+        sessionTitle: "Week range session",
+        model: "gpt-5.4",
+        workspace: "/Users/me/code/week",
+        timeline: [
+          { time: "2026-04-22T00:00:00.000Z", label: "04/22", tokens: 6_000, estimatedUsd: 0.0175 },
+          { time: "2026-04-23T00:00:00.000Z", label: "04/23", tokens: 12_000, estimatedUsd: 0.035 },
+        ],
+      }),
+      month: makeTokenRange({
+        key: "month",
+        label: "近 30 天",
+        days: 30,
+        total: 40_000,
+        cost: 0.12,
+        sessions: 9,
+        sessionTitle: "Month range session",
+        model: "gpt-5.3-codex",
+        workspace: "/Users/me/code/month",
+        timeline: [
+          { time: "2026-04-01T00:00:00.000Z", label: "04/01", tokens: 10_000, estimatedUsd: 0.03 },
+          { time: "2026-04-23T00:00:00.000Z", label: "04/23", tokens: 30_000, estimatedUsd: 0.09 },
+        ],
+      }),
+    },
+  },
+};
+
 const activeOverview = {
   total: 1,
   windowMinutes: 30,
@@ -485,11 +601,14 @@ describe("ObservabilityWorkspace", () => {
   test("renders the consolidated token ledger, switchable trend, attribution, and sessions", () => {
     render(
       <MantineProvider>
-        <ObservabilityWorkspace payload={payload} view="tokens" loading={false} onRefresh={() => {}} />
+        <ObservabilityWorkspace payload={tokenRangePayload} view="tokens" loading={false} onRefresh={() => {}} />
       </MantineProvider>,
     );
 
     expect(screen.getByRole("region", { name: "Token 账本工作台" })).toHaveAttribute("data-layout", "token-ledger-v2");
+    expect(screen.getByText("数据范围")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "近 7 天" })).toBeChecked();
+    expect(screen.getByText("历史 6 天直接读取缓存，今天增量更新")).toBeInTheDocument();
     expect(screen.getByText("Token 构成")).toBeInTheDocument();
     expect(screen.getByText("Prompt 与上下文未命中输入")).toBeInTheDocument();
     expect(screen.getByText("有效 Token")).toBeInTheDocument();
@@ -505,23 +624,29 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("每会话成本")).toBeInTheDocument();
     expect(screen.getByText("百万 Token 成本")).toBeInTheDocument();
     expect(screen.getByText("缓存读写杠杆")).toBeInTheDocument();
-    expect(screen.getByText("月度预测")).toBeInTheDocument();
-    expect(screen.getByText("本月已估算")).toBeInTheDocument();
-    expect(screen.getByText("月末成本预测")).toBeInTheDocument();
+    expect(screen.queryByText("月度预测")).not.toBeInTheDocument();
     expect(screen.getByText("模型成本归因")).toBeInTheDocument();
     expect(screen.getAllByText((_, element) => element.textContent.includes("/M")).length).toBeGreaterThan(0);
-    expect(screen.getByText("30 天消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("近 7 天消耗趋势")).toBeInTheDocument();
     expect(screen.getByText("工作区消耗归因")).toBeInTheDocument();
     expect(screen.getByTestId("token-trend-chart")).toBeInTheDocument();
     expect(screen.queryByTestId("token-cost-trend-chart")).not.toBeInTheDocument();
-    expect(screen.getByText("当前周期")).toBeInTheDocument();
-    expect(screen.getByText("Codex 5,000 · Claude 3,000")).toBeInTheDocument();
+    expect(screen.getByText("范围摘要")).toBeInTheDocument();
+    expect(screen.getByText("Week range session")).toBeInTheDocument();
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
     expect(screen.getByText("高消耗会话")).toBeInTheDocument();
-    expect(screen.getByText("Investigate timeout")).toBeInTheDocument();
-    expect(screen.getAllByText("$0.0350").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("radio", { name: "7 天" }));
-    expect(screen.getByText("7 天消耗趋势")).toBeInTheDocument();
+    expect(screen.getAllByText("$0.0525").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("radio", { name: "当天" }));
+    expect(screen.getByText("当天消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("Today range session")).toBeInTheDocument();
+    expect(screen.getAllByText("gpt-5.5").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("today").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Week range session")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "近 30 天" }));
+    expect(screen.getByText("近 30 天消耗趋势")).toBeInTheDocument();
+    expect(screen.getByText("Month range session")).toBeInTheDocument();
+    expect(screen.getAllByText("gpt-5.3-codex").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("month").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("radio", { name: "金额" }));
     expect(screen.getByRole("radio", { name: "金额" })).toBeChecked();
   });

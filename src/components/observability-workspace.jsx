@@ -52,6 +52,15 @@ function tokenLabel(value) {
   return formatHumanNumber(value);
 }
 
+function workspacePathParts(value) {
+  const path = String(value || "").replace(/\/$/, "");
+  const parts = path.split("/").filter(Boolean);
+  return {
+    name: parts.at(-1) || path || "未知工作区",
+    parent: parts.length > 1 ? `/${parts.slice(0, -1).join("/")}` : "/",
+  };
+}
+
 function usdLabel(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return "$0";
@@ -97,6 +106,21 @@ function durationLabel(value) {
   const days = Math.floor(hours / 24);
   const restHours = hours % 24;
   return restHours ? `${days} 天 ${restHours} 小时` : `${days} 天`;
+}
+
+function shortDateLabel(value, includeTime = false) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const datePart = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
+  if (!includeTime) return datePart;
+  return `${datePart} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function compactChangeLabel(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "暂无基期";
+  const rounded = Math.round(Number(value));
+  if (!rounded) return "持平";
+  return `${rounded > 0 ? "+" : ""}${formatNumber(rounded)}%`;
 }
 
 function changeLabel(value) {
@@ -512,6 +536,7 @@ function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = 
               />
               <YAxis
                 width={72}
+                domain={[0, "auto"]}
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: "var(--text-faint)", fontSize: 11 }}
@@ -526,7 +551,7 @@ function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = 
               />
               <Area
                 dataKey="value"
-                type="natural"
+                type="monotone"
                 stroke={stroke}
                 strokeWidth={2.8}
                 fill={stroke}
@@ -1533,72 +1558,21 @@ function CodexUsageBand({ usage, codexVersion, onQuery }) {
 
   return (
     <Paper className={`v5-codex-usage is-${status}`} radius="md" p={0} aria-label="Codex 使用额度">
-      <div className="v5-codex-usage__lead">
-        <div className="v5-codex-usage__identity">
-          <ThemeIcon size={30} radius="sm" variant="light" color="teal">
-            <IconGauge size={17} stroke={1.8} />
-          </ThemeIcon>
-          <div>
-            <span>ACCOUNT LIMITS</span>
-            <strong>Codex 使用额度</strong>
-          </div>
-        </div>
-        <div className="v5-codex-usage__lead-meta">
-          <Badge radius="sm" variant="light" color="teal">{codexPlanLabel(usage?.planType)}</Badge>
-          <span title={displayVersion}>{displayVersion}</span>
-        </div>
-      </div>
-
-      <div className="v5-codex-usage__content" aria-live="polite">
-        {ready && primaryLimit ? (
-          <div className="v5-codex-usage__windows">
-            <CodexQuotaWindow window={primaryLimit.primary} fallbackLabel="短周期额度" />
-            <CodexQuotaWindow window={primaryLimit.secondary} fallbackLabel="长周期额度" />
-          </div>
-        ) : (
-          <div className={`v5-codex-usage__state is-${status}`}>
-            <strong>{loading ? "正在查询账户额度" : unavailable ? "账户额度读取失败" : "尚未查询账户额度"}</strong>
-            <span>{loading
-              ? "正在连接本机 Codex"
-              : unavailable
-                ? usage?.error || "请稍后重新查询"
-                : "额度数据仅在手动查询时读取"}</span>
-          </div>
-        )}
-      </div>
-
-      <div className="v5-codex-usage__aside">
-        <div className="v5-codex-usage__credit">
-          <div className="v5-codex-usage__credit-head">
-            <span>额度重置</span>
-            <strong>{hasResetCount ? `可用 ${formatNumber(resetCount)} 次` : ready ? "未提供" : "待查询"}</strong>
-          </div>
-          {ready && expiryWarning ? (
-            <div className="v5-codex-usage__expiry-alert" role="alert">
-              <IconAlertTriangle size={15} stroke={2} />
-              <div>
-                <strong>{expiryWarning.label}</strong>
-                <span>{expiryWarning.detail}</span>
-              </div>
+      <div className="v5-codex-usage__header">
+        <div className="v5-codex-usage__lead">
+          <div className="v5-codex-usage__identity">
+            <ThemeIcon size={28} radius="sm" variant="light" color="teal">
+              <IconGauge size={16} stroke={1.8} />
+            </ThemeIcon>
+            <div>
+              <span>ACCOUNT LIMITS</span>
+              <strong>Codex 使用额度</strong>
             </div>
-          ) : null}
-          {ready ? (
-            <div className="v5-codex-usage__expirations">
-              <span>最近三次到期</span>
-              {upcomingResets.length ? (
-                <ol>
-                  {upcomingResets.map((credit, index) => (
-                    <li key={`${credit.expiresAt}-${index}`}>
-                      <em>{String(index + 1).padStart(2, "0")}</em>
-                      <time dateTime={credit.expiresAt}>{formatDateTime(credit.expiresAt)}</time>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p>到期时间暂未提供</p>
-              )}
-            </div>
-          ) : null}
+          </div>
+          <div className="v5-codex-usage__lead-meta">
+            <Badge radius="sm" variant="light" color="teal">{codexPlanLabel(usage?.planType)}</Badge>
+            <span title={displayVersion}>{displayVersion}</span>
+          </div>
         </div>
         <div className="v5-codex-usage__action">
           <div className="v5-codex-usage__action-meta">
@@ -1617,6 +1591,59 @@ function CodexUsageBand({ usage, codexVersion, onQuery }) {
           >
             {ready || unavailable ? "重新查询" : "查询额度"}
           </Button>
+        </div>
+      </div>
+
+      <div className="v5-codex-usage__body">
+        <div className="v5-codex-usage__content" aria-live="polite">
+          {ready && primaryLimit ? (
+            <div className="v5-codex-usage__windows">
+              <CodexQuotaWindow window={primaryLimit.primary} fallbackLabel="短周期额度" />
+              <CodexQuotaWindow window={primaryLimit.secondary} fallbackLabel="长周期额度" />
+            </div>
+          ) : (
+            <div className={`v5-codex-usage__state is-${status}`}>
+              <strong>{loading ? "正在查询账户额度" : unavailable ? "账户额度读取失败" : "尚未查询账户额度"}</strong>
+              <span>{loading
+                ? "正在连接本机 Codex"
+                : unavailable
+                  ? usage?.error || "请稍后重新查询"
+                  : "额度数据仅在手动查询时读取"}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="v5-codex-usage__aside">
+          <div className="v5-codex-usage__credit">
+            <div className="v5-codex-usage__credit-head">
+              <span>额度重置</span>
+              <strong>{hasResetCount ? `可用 ${formatNumber(resetCount)} 次` : ready ? "未提供" : "待查询"}</strong>
+            </div>
+            {ready && expiryWarning ? (
+              <div className="v5-codex-usage__expiry-alert" role="alert">
+                <IconAlertTriangle size={14} stroke={2} />
+                <strong>{expiryWarning.label}</strong>
+                <span>{expiryWarning.detail}</span>
+              </div>
+            ) : null}
+            {ready ? (
+              <div className="v5-codex-usage__expirations">
+                <span>最近三次到期</span>
+                {upcomingResets.length ? (
+                  <ol>
+                    {upcomingResets.map((credit, index) => (
+                      <li key={`${credit.expiresAt}-${index}`}>
+                        <em>{String(index + 1).padStart(2, "0")}</em>
+                        <time dateTime={credit.expiresAt}>{formatDateTime(credit.expiresAt)}</time>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p>到期时间暂未提供</p>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </Paper>
@@ -1663,6 +1690,47 @@ function TokenEfficiencyStrip({ tokens, tokenCost, sessionsTotal }) {
           <em>{row.meta}</em>
         </div>
       ))}
+    </section>
+  );
+}
+
+function TokenRangeToolbar({ range, value, onChange }) {
+  const cachedHistoricalDays = finiteToken(range?.history?.cachedHistoricalDays);
+  const cacheText = cachedHistoricalDays > 0
+    ? `历史 ${formatNumber(cachedHistoricalDays)} 天直接读取缓存，今天增量更新`
+    : "今天数据按追加内容增量更新";
+  const dateRange = range?.days === 1
+    ? `${shortDateLabel(range?.startAt)} 00:00 - ${shortDateLabel(range?.endAt, true)}`
+    : `${shortDateLabel(range?.startAt)} - ${shortDateLabel(range?.endAt)}`;
+
+  return (
+    <section className="v5-token-range" aria-label="Token 数据范围">
+      <div className="v5-token-range__lead">
+        <span>TIME RANGE</span>
+        <strong>数据范围</strong>
+        <em>整页统计统一切换</em>
+      </div>
+      <SegmentedControl
+        className="v5-token-range__control"
+        size="sm"
+        radius="sm"
+        value={value}
+        onChange={onChange}
+        aria-label="Token 数据范围"
+        data={[
+          { label: "当天", value: "today" },
+          { label: "近 7 天", value: "week" },
+          { label: "近 30 天", value: "month" },
+        ]}
+      />
+      <div className="v5-token-range__scope">
+        <span>{dateRange}</span>
+        <strong>{formatNumber(range?.health?.sessionsTotal || 0)} 会话 · {formatNumber(range?.health?.activeDays || 0)} 个活跃日</strong>
+      </div>
+      <div className="v5-token-range__cache">
+        <Badge radius="sm" variant="light" color="teal">持久化日汇总</Badge>
+        <span>{cacheText}</span>
+      </div>
     </section>
   );
 }
@@ -1775,53 +1843,6 @@ function UsageStatisticsBoard({ stats, onOpenSessionDetail }) {
         </section>
       </div>
     </Paper>
-  );
-}
-
-function TokenForecastStrip({ stats }) {
-  const forecast = stats?.forecast;
-  const cadence = stats?.cadence || {};
-  if (!forecast) return null;
-  const rows = [
-    {
-      label: "本月已估算",
-      value: usdLabel(forecast.monthCost || 0),
-      meta: `第 ${formatNumber(forecast.dayOfMonth || 0)} / ${formatNumber(forecast.daysInMonth || 0)} 天`,
-    },
-    {
-      label: "月末成本预测",
-      value: usdLabel(forecast.projectedMonthCost || 0),
-      meta: `日均 ${usdLabel(forecast.dailyAverageCost || 0)}`,
-    },
-    {
-      label: "本月 Token",
-      value: tokenLabel(forecast.monthTokens || 0),
-      meta: `预测 ${tokenLabel(forecast.projectedMonthTokens || 0)}`,
-    },
-    {
-      label: "近 7 天成本",
-      value: usdLabel(cadence.recent7?.estimatedUsd || 0),
-      meta: changeLabel(cadence.costChangePercent),
-      tone: cadence.costChangePercent == null
-        ? "neutral"
-        : (Number(cadence.costChangePercent) > 0 ? "cost-up" : (Number(cadence.costChangePercent) < 0 ? "cost-down" : "neutral")),
-    },
-  ];
-
-  return (
-    <section className="v4-token-forecast" aria-label="Token 月度预测">
-      <div className="v4-token-forecast__lead">
-        <span>FORECAST</span>
-        <strong>月度预测</strong>
-      </div>
-      {rows.map((row) => (
-        <div key={row.label} className={`v4-token-forecast__item${row.tone ? ` is-${row.tone}` : ""}`}>
-          <span>{row.label}</span>
-          <strong>{row.value}</strong>
-          <em>{row.meta}</em>
-        </div>
-      ))}
-    </section>
   );
 }
 
@@ -1965,6 +1986,7 @@ function TokenWorkspacePanel({ tokens }) {
   const total = sumBy(tokens?.byWorkspace, (row) => row.total) || finiteToken(tokens?.effectiveTotal);
   const top = rows[0];
   const topRowsTotal = sumBy(rows, (row) => row.total);
+  const peak = Math.max(1, ...rows.map((row) => finiteToken(row.total)));
 
   if (!rows.length) {
     return <Text className="mc-muted-line">暂无工作区 Token 数据。</Text>;
@@ -1988,12 +2010,29 @@ function TokenWorkspacePanel({ tokens }) {
           },
         ]}
       />
-      <RankedRows
-        rows={rows.map((row) => ({ ...row, key: row.cwd }))}
-        renderLabel={(row) => clipText(row.cwd, 44)}
-        renderMeta={(row) => `${percentLabel(percentValue(row.total, total))} 总量 · ${usdLabel(row.estimatedUsd || 0)}`}
-        valueFormatter={tokenLabel}
-      />
+      <div className="mc-attribution-table">
+        <div className="mc-attribution-table__head" aria-hidden="true">
+          <span>#</span>
+          <span>工作区</span>
+          <span>Token 规模</span>
+        </div>
+        {rows.map((row, index) => {
+          const path = workspacePathParts(row.cwd);
+          return (
+            <div key={row.cwd} className="mc-attribution-table__row">
+              <span className="mc-attribution-table__rank">{String(index + 1).padStart(2, "0")}</span>
+              <div className="mc-attribution-table__identity" title={row.cwd}>
+                <Text>{path.name}</Text>
+                <span>{clipText(path.parent, 34)} · {percentLabel(percentValue(row.total, total))} · {usdLabel(row.estimatedUsd || 0)}</span>
+              </div>
+              <div className="mc-attribution-table__metric">
+                <strong>{tokenLabel(row.total)}</strong>
+                <i aria-hidden="true"><b style={{ width: `${Math.max(4, percentValue(row.total, peak))}%` }} /></i>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2014,14 +2053,21 @@ function ModelCostMatrixPanel({ tokens, tokenCost }) {
 
   return (
     <div className="mc-model-cost-matrix">
+      <div className="mc-model-cost-matrix__head" aria-hidden="true">
+        <span>模型</span>
+        <span>Token / 成本</span>
+        <span>单位成本</span>
+      </div>
       {rows.map((row) => (
         <div key={row.key} className="mc-model-cost-row">
-          <div>
+          <div className="mc-model-cost-row__identity">
             <Text>{row.key}</Text>
+          </div>
+          <div className="mc-model-cost-row__usage">
             <span>{tokenLabel(row.tokens)} · {row.estimatedUsd ? usdLabel(row.estimatedUsd) : "未计价"}</span>
+            <i aria-hidden="true"><b style={{ width: `${Math.max(4, Math.round((row.tokens / peak) * 100))}%` }} /></i>
           </div>
           <em>{row.costPerMillion ? `${usdLabel(row.costPerMillion)}/M` : "-"}</em>
-          <b style={{ width: `${Math.max(7, Math.round((row.tokens / peak) * 100))}%` }} />
         </div>
       ))}
     </div>
@@ -2198,22 +2244,35 @@ function WorkspaceLoadPanel({ workspaces }) {
 
   return (
     <div className="mc-workspace-load">
-      {rows.map((workspace) => (
-        <div key={workspace.cwd} className="mc-workspace-load-row">
-          <div className="mc-workspace-load-row__head">
-            <Text>{clipText(workspace.cwd, 72)}</Text>
-            <strong>{formatNumber(workspace.sessions || 0)} 会话</strong>
+      <div className="mc-workspace-load__head" aria-hidden="true">
+        <span>工作区</span>
+        <span>会话</span>
+        <span>事件</span>
+        <span>Token</span>
+      </div>
+      {rows.map((workspace, index) => {
+        const path = workspacePathParts(workspace.cwd);
+        return (
+          <div key={workspace.cwd} className="mc-workspace-load-row">
+            <div className="mc-workspace-load-row__identity" title={workspace.cwd}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <div>
+                <Text>{path.name}</Text>
+                <span>{clipText(path.parent, 30)}</span>
+              </div>
+            </div>
+            <strong className="mc-workspace-load-row__sessions">{formatNumber(workspace.sessions || 0)}</strong>
+            <div className="mc-workspace-load-row__metric is-events">
+              <span>{formatNumber(workspace.events || 0)}</span>
+              <i aria-hidden="true"><b style={{ width: `${Math.max(4, percentValue(workspace.events, peakEvents))}%` }} /></i>
+            </div>
+            <div className="mc-workspace-load-row__metric is-tokens">
+              <span>{tokenLabel(workspace.tokens || 0)}</span>
+              <i aria-hidden="true"><b style={{ width: `${Math.max(4, percentValue(workspace.tokens, peakTokens))}%` }} /></i>
+            </div>
           </div>
-          <div className="mc-workspace-load-row__bars" aria-hidden="true">
-            <span style={{ width: `${Math.max(4, percentValue(workspace.events, peakEvents))}%` }} />
-            <em style={{ width: `${Math.max(4, percentValue(workspace.tokens, peakTokens))}%` }} />
-          </div>
-          <div className="mc-workspace-load-row__meta">
-            <span>{formatNumber(workspace.events || 0)} 事件</span>
-            <span>{tokenLabel(workspace.tokens || 0)} Token</span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -2588,35 +2647,79 @@ function SystemReadinessPanel({ runtime, sources, index, generatedAt, health }) 
   );
 }
 
-function TokenWindowSummary({ windows }) {
+function TokenRangeSummary({ range }) {
+  const tokens = range?.tokens || {};
+  const cost = tokens.cost || {};
+  const platforms = tokens.byPlatform || [];
+  const effectiveTotal = finiteToken(tokens.effectiveTotal) || finiteToken(tokens.total);
+  const activeDays = Math.max(1, finiteToken(range?.health?.activeDays));
+  const comparison = range?.comparison || {};
+  const changes = [
+    ["Token", comparison.tokenChangePercent],
+    ["成本", comparison.costChangePercent],
+    ["会话", comparison.sessionChangePercent],
+  ];
+  const topModel = tokens.byModel?.[0];
+  const topWorkspace = tokens.byWorkspace?.[0];
+  const topWorkspacePath = workspacePathParts(topWorkspace?.cwd);
+
   return (
-    <div className="v2-token-windows">
-      {[
-        ["今日", windows?.day],
-        ["本周", windows?.week],
-      ].map(([label, window]) => {
-        const codexTotal = getPlatformTotal(window?.platforms, "codex");
-        const claudeTotal = getPlatformTotal(window?.platforms, "claude");
-        const inputSide = inputSideToken(window) || finiteToken(window?.input);
-        return (
-          <section key={label}>
-            <div className="v2-token-windows__head">
-              <span>{label}</span>
-              <strong>{tokenLabel(window?.total || 0)}</strong>
-              <em>{usdLabel(window?.estimatedUsd || 0)}</em>
-            </div>
-            <div className="v2-token-windows__platforms">
-              <span style={{ width: `${percentValue(codexTotal, window?.total)}%` }} />
-            </div>
-            <dl>
-              <div><dt>非缓存输入</dt><dd>{tokenLabel(window?.input || 0)}</dd></div>
-              <div><dt>缓存命中</dt><dd>{tokenLabel(cacheReadToken(window))} · {percentLabel(percentValue(cacheReadToken(window), inputSide))}</dd></div>
-              <div><dt>输出</dt><dd>{tokenLabel(window?.output || 0)}</dd></div>
-              <div><dt>平台</dt><dd>Codex {tokenLabel(codexTotal)} · Claude {tokenLabel(claudeTotal)}</dd></div>
-            </dl>
-          </section>
-        );
-      })}
+    <div className="v5-token-range-summary">
+      <div className="v5-token-range-summary__hero">
+        <span>{range?.label || "当前范围"}</span>
+        <strong>{tokenLabel(effectiveTotal)}</strong>
+        <em>{usdLabel(cost.estimatedUsd || 0)} 估算成本</em>
+      </div>
+      <dl className="v5-token-range-summary__facts">
+        <div><dt>会话</dt><dd>{formatNumber(range?.health?.sessionsTotal || 0)}</dd></div>
+        <div><dt>活跃日均</dt><dd>{tokenLabel(effectiveTotal / activeDays)}</dd></div>
+        <div><dt>峰值</dt><dd>{range?.peak?.label || "-"}</dd></div>
+        <div><dt>峰值 Token</dt><dd>{tokenLabel(range?.peak?.tokens || 0)}</dd></div>
+      </dl>
+      <div className="v5-token-range-summary__changes">
+        <span>较上一周期</span>
+        {changes.map(([label, value]) => (
+          <div key={label} className={value == null ? "is-neutral" : Number(value) > 0 ? "is-up" : Number(value) < 0 ? "is-down" : "is-neutral"}>
+            <em>{label}</em>
+            <strong>{compactChangeLabel(value)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="v5-token-range-summary__platforms">
+        <span>平台构成</span>
+        <div aria-label="范围内 Token 平台构成">
+          {platforms.map((platform) => (
+            <i
+              key={platform.key}
+              title={`${platformLabel(platform.key)} ${tokenLabel(platform.total)}`}
+              style={{
+                width: `${percentValue(platform.total, effectiveTotal)}%`,
+                background: platform.key === "claude" ? "var(--platform-claude)" : "var(--platform-codex)",
+              }}
+            />
+          ))}
+        </div>
+        <ul>
+          {platforms.slice(0, 3).map((platform) => (
+            <li key={platform.key}>
+              <span>{platformLabel(platform.key)}</span>
+              <strong>{percentLabel(percentValue(platform.total, effectiveTotal))}</strong>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="v5-token-range-summary__leaders">
+        <div>
+          <span>主模型</span>
+          <strong>{topModel?.key || "-"}</strong>
+          <em>{percentLabel(percentValue(topModel?.total, effectiveTotal))}</em>
+        </div>
+        <div title={topWorkspace?.cwd || ""}>
+          <span>主工作区</span>
+          <strong>{topWorkspacePath.name}</strong>
+          <em>{percentLabel(percentValue(topWorkspace?.total, effectiveTotal))}</em>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3079,7 +3182,7 @@ export function ObservabilityWorkspace({
   onOpenSessionDetail,
 }) {
   const [usageMetric, setUsageMetric] = useState("tokens");
-  const [usageDays, setUsageDays] = useState("30");
+  const [tokenRangeKey, setTokenRangeKey] = useState("week");
   const summary = payload?.summary || {};
   const health = summary.health || {};
   const tokens = summary.tokens || {};
@@ -3091,7 +3194,6 @@ export function ObservabilityWorkspace({
   const dailyChart = charts.daily || [];
   const dailySessionHeatmap = charts.dailySessions || [];
   const tokenWindows = tokens.windows || { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } };
-  const tokenCost = tokens.cost || {};
   const activeTotal = Number(activeOverview?.total || 0);
   const activeWindowMinutes = activeOverview?.windowMinutes || 30;
   const newestActiveAge = activeOverview?.sessions?.[0]?.ageMs;
@@ -3101,7 +3203,28 @@ export function ObservabilityWorkspace({
   const cacheCoverage = percentValue(cacheReadToken(tokens), inputSideTotal);
   const dailyTokenSpark = dailyChart.slice(-7).map((row) => row.tokens);
   const dailySessionSpark = dailySessionHeatmap.slice(-7).map((row) => row.sessions);
-  const visibleDailyChart = dailyChart.slice(-Math.max(1, Number(usageDays) || 30));
+  const tokenRangeDays = tokenRangeKey === "today" ? 1 : tokenRangeKey === "month" ? 30 : 7;
+  const fallbackTimeline = tokenRangeKey === "today"
+    ? hourlyChart
+    : dailyChart.slice(-tokenRangeDays);
+  const fallbackRange = {
+    key: tokenRangeKey,
+    label: tokenRangeKey === "today" ? "当天" : tokenRangeKey === "month" ? "近 30 天" : "近 7 天",
+    days: tokenRangeDays,
+    startAt: fallbackTimeline[0]?.time,
+    endAt: fallbackTimeline.at(-1)?.time,
+    timelineGranularity: tokenRangeKey === "today" ? "hour" : "day",
+    timeline: fallbackTimeline,
+    history: { cachedHistoricalDays: Math.max(0, tokenRangeDays - 1) },
+    health: { sessionsTotal: health.sessionsTotal || 0, activeDays: tokenRangeDays },
+    tokens,
+    peak: topBy(fallbackTimeline, (row) => row.tokens),
+  };
+  const selectedTokenRange = summary.tokenRanges?.[tokenRangeKey] || fallbackRange;
+  const scopedTokens = selectedTokenRange.tokens || tokens;
+  const scopedTokenCost = scopedTokens.cost || {};
+  const scopedHealth = selectedTokenRange.health || health;
+  const scopedTimeline = selectedTokenRange.timeline || fallbackTimeline;
   const overviewKpis = [
     {
       label: "今日会话",
@@ -3271,32 +3394,21 @@ export function ObservabilityWorkspace({
 
       {view === "tokens" ? (
         <>
-          <TokenLedgerPanel tokens={tokens} tokenCost={tokenCost} />
+          <TokenRangeToolbar range={selectedTokenRange} value={tokenRangeKey} onChange={setTokenRangeKey} />
 
-          <TokenEfficiencyStrip tokens={tokens} tokenCost={tokenCost} sessionsTotal={health.sessionsTotal} />
+          <TokenLedgerPanel tokens={scopedTokens} tokenCost={scopedTokenCost} />
 
-          <TokenForecastStrip stats={usageStats} />
+          <TokenEfficiencyStrip tokens={scopedTokens} tokenCost={scopedTokenCost} sessionsTotal={scopedHealth.sessionsTotal} />
 
           <div className="v2-token-primary">
             <ChartCard
               eyebrow="TREND"
-              title={`${usageDays} 天消耗趋势`}
+              title={`${selectedTokenRange.label}消耗趋势`}
               icon={IconChartBar}
               tone={trendIsCost ? "success" : "primary"}
               className="v2-panel v2-token-trend"
               action={(
                 <div className="v3-token-trend-controls">
-                  <SegmentedControl
-                    size="xs"
-                    radius="sm"
-                    value={usageDays}
-                    onChange={setUsageDays}
-                    data={[
-                      { label: "7 天", value: "7" },
-                      { label: "14 天", value: "14" },
-                      { label: "30 天", value: "30" },
-                    ]}
-                  />
                   <SegmentedControl
                     size="xs"
                     radius="sm"
@@ -3311,7 +3423,7 @@ export function ObservabilityWorkspace({
               )}
             >
               <MetricAreaChart
-                data={visibleDailyChart}
+                data={scopedTimeline}
                 valueKey={trendIsCost ? "estimatedUsd" : "tokens"}
                 color={trendIsCost ? "teal.6" : "blue.6"}
                 label={trendIsCost ? "金额" : "Token"}
@@ -3321,8 +3433,8 @@ export function ObservabilityWorkspace({
             </ChartCard>
 
             <Paper className="mc-panel v2-panel v2-token-window-panel" radius="md" p="lg">
-              <PanelHeader eyebrow="WINDOWS" title="当前周期" icon={IconClock} tone="primary" />
-              <TokenWindowSummary windows={tokenWindows} />
+              <PanelHeader eyebrow="SCOPE" title="范围摘要" icon={IconClock} tone="primary" />
+              <TokenRangeSummary range={selectedTokenRange} />
             </Paper>
           </div>
 
@@ -3333,14 +3445,14 @@ export function ObservabilityWorkspace({
                 title="模型成本归因"
                 icon={IconCpu}
                 tone="accent"
-                action={<span className="v2-panel-note">{usdLabel(tokenCost.estimatedUsd)} 总估算</span>}
+                action={<span className="v2-panel-note">{usdLabel(scopedTokenCost.estimatedUsd)} 范围估算</span>}
               />
-              <ModelCostMatrixPanel tokens={tokens} tokenCost={tokenCost} />
+              <ModelCostMatrixPanel tokens={scopedTokens} tokenCost={scopedTokenCost} />
             </Paper>
 
             <Paper className="mc-panel v2-panel" radius="md" p="lg">
               <PanelHeader eyebrow="WORKSPACES" title="工作区消耗归因" icon={IconRoute} tone="primary" />
-              <TokenWorkspacePanel tokens={tokens} />
+              <TokenWorkspacePanel tokens={scopedTokens} />
             </Paper>
           </div>
 
@@ -3352,7 +3464,7 @@ export function ObservabilityWorkspace({
               tone="success"
               action={<span className="v2-panel-note">点击进入完整会话详情</span>}
             />
-            <TokenSessionTable sessions={tokens.topSessions} onOpenSessionDetail={onOpenSessionDetail || onOpenConversation} />
+            <TokenSessionTable sessions={scopedTokens.topSessions} onOpenSessionDetail={onOpenSessionDetail || onOpenConversation} />
           </Paper>
         </>
       ) : null}

@@ -91,6 +91,80 @@ test("summary store builds global dashboard data without retaining raw events", 
   assert.equal(summary.memory.retainedRawEvents, 0);
 });
 
+test("summary store builds cached token snapshots for today, seven days, and thirty days", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "range-usage.jsonl");
+
+  writeJsonl(file, [
+    {
+      id: "outside",
+      time: "2026-05-01T04:00:00.000Z",
+      sessionId: "outside-session",
+      title: "Outside range",
+      cwd: "/repo-old",
+      model: "gpt-5.4",
+      callType: "Token_Usage",
+      tokenUsage: { input: 400, output: 40, total: 440 },
+    },
+    {
+      id: "month",
+      time: "2026-05-20T04:00:00.000Z",
+      sessionId: "month-session",
+      title: "Month work",
+      cwd: "/repo-month",
+      model: "gpt-5.4",
+      callType: "Token_Usage",
+      tokenUsage: { input: 300, output: 30, total: 330 },
+    },
+    {
+      id: "week",
+      time: "2026-06-03T04:00:00.000Z",
+      sessionId: "week-session",
+      title: "Week work",
+      cwd: "/repo-week",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
+      tokenUsage: { input: 200, cacheReadInput: 80, output: 20, total: 300 },
+    },
+    {
+      id: "today",
+      time: "2026-06-06T04:00:00.000Z",
+      sessionId: "today-session",
+      title: "Today work",
+      cwd: "/repo-today",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
+      tokenUsage: { input: 100, cacheReadInput: 50, output: 10, total: 160 },
+    },
+  ], Date.parse("2026-06-06T04:00:00.000Z"));
+
+  const store = createSummaryStore({
+    parsers: [parser],
+    now: () => Date.parse("2026-06-06T06:00:00.000Z"),
+  });
+  const summary = store.getSummary({ files: [file] });
+
+  assert.deepEqual(Object.keys(summary.tokenRanges), ["today", "week", "month"]);
+  assert.equal(summary.tokenRanges.today.days, 1);
+  assert.equal(summary.tokenRanges.today.tokens.effectiveTotal, 160);
+  assert.equal(summary.tokenRanges.today.health.sessionsTotal, 1);
+  assert.equal(summary.tokenRanges.today.tokens.byModel[0].key, "gpt-5.5");
+  assert.equal(summary.tokenRanges.today.tokens.byWorkspace[0].cwd, "/repo-today");
+  assert.equal(summary.tokenRanges.today.tokens.topSessions[0].sessionId, "today-session");
+  assert.equal(summary.tokenRanges.today.timelineGranularity, "hour");
+
+  assert.equal(summary.tokenRanges.week.tokens.effectiveTotal, 460);
+  assert.equal(summary.tokenRanges.week.health.sessionsTotal, 2);
+  assert.equal(summary.tokenRanges.week.timelineGranularity, "day");
+  assert.equal(summary.tokenRanges.week.history.cachedHistoricalDays, 6);
+
+  assert.equal(summary.tokenRanges.month.tokens.effectiveTotal, 790);
+  assert.equal(summary.tokenRanges.month.health.sessionsTotal, 3);
+  assert.equal(summary.tokenRanges.month.tokens.cost.byModel.length, 2);
+  assert.equal(summary.tokenRanges.month.tokens.byWorkspace.some((row) => row.cwd === "/repo-old"), false);
+  assert.equal(summary.tokenRanges.month.history.strategy, "persisted-daily-summaries");
+});
+
 test("summary store derives interaction, cadence, duration, forecast, and tool category statistics", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "2026-06-05.jsonl");
@@ -528,7 +602,10 @@ test("summary store restores unchanged file summaries from persistent cache", ()
       time: "2026-06-01T00:00:00.000Z",
       sessionId: "cached-session",
       cwd: "/repo",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
       content: "cached",
+      tokenUsage: { input: 100, output: 20, total: 120 },
     },
   ], Date.parse("2026-06-01T00:00:00.000Z"));
 
@@ -552,6 +629,8 @@ test("summary store restores unchanged file summaries from persistent cache", ()
   assert.equal(summary.cache.reusedFiles, 1);
   assert.equal(summary.cache.scannedFiles, 0);
   assert.equal(summary.health.eventsTotal, 1);
+  assert.equal(summary.tokenRanges.week.tokens.effectiveTotal, 120);
+  assert.equal(summary.tokenRanges.week.tokens.topSessions[0].sessionId, "cached-session");
 });
 
 test("summary store appends from persistent cache for a growing current file", () => {

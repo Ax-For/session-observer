@@ -14,7 +14,7 @@ const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 9;
+const SUMMARY_CACHE_VERSION = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SESSION_MESSAGE_LENGTH = 320;
@@ -354,8 +354,25 @@ function createDailyBucket() {
     usage: emptyUsage(),
     ...emptyCost(),
     sessions: new Set(),
+    sessionStats: new Map(),
     platforms: new Map(),
+    tokensByModel: new Map(),
+    costByModel: new Map(),
+    unknownCostModels: new Set(),
     workspaces: new Map(),
+  };
+}
+
+function createDailySessionBucket(sessionId, event = {}) {
+  return {
+    sessionId,
+    events: 0,
+    tokens: 0,
+    estimatedUsd: 0,
+    knownTokenTotal: 0,
+    sourceType: event?.sourceType || "unknown",
+    cwd: event?.cwd || "unknown",
+    latest: event?.time || "",
   };
 }
 
@@ -537,10 +554,22 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate) 
   if (event?.sessionId && event.sessionId !== "unknown") {
     bucket.sessions.add(event.sessionId);
     workspace.sessions.add(event.sessionId);
+    const session = bucket.sessionStats.get(event.sessionId) || createDailySessionBucket(event.sessionId, event);
+    session.events += 1;
+    session.tokens += tokenTotal;
+    addCostEstimate(session, costEstimate);
+    if (event?.sourceType) session.sourceType = event.sourceType;
+    if (event?.cwd) session.cwd = event.cwd;
+    if (event?.time && (!session.latest || event.time > session.latest)) session.latest = event.time;
+    bucket.sessionStats.set(event.sessionId, session);
   }
   if (tokenTotal > 0) {
     addUsageTotals(bucket.usage, event.tokenUsage, event.sourceType);
     addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
+    addMapValue(bucket.tokensByModel, event?.model, tokenTotal);
+    const modelKey = event?.model || "unknown";
+    if (costEstimate?.known) addModelCost(bucket.costByModel, modelKey, costEstimate);
+    else bucket.unknownCostModels.add(modelKey);
   }
   bucket.workspaces.set(cwd, workspace);
   summary.daily.set(key, bucket);
@@ -662,7 +691,20 @@ function mergeDailyBucket(target, source) {
   mergeCost(target, source);
   mergeUsage(target.usage, source.usage);
   for (const sessionId of source.sessions || []) target.sessions.add(sessionId);
+  for (const [sessionId, sourceSession] of source.sessionStats || []) {
+    const session = target.sessionStats.get(sessionId) || createDailySessionBucket(sessionId, sourceSession);
+    session.events += sourceSession.events || 0;
+    session.tokens += sourceSession.tokens || 0;
+    mergeCost(session, sourceSession);
+    if (sourceSession.sourceType) session.sourceType = sourceSession.sourceType;
+    if (sourceSession.cwd) session.cwd = sourceSession.cwd;
+    if (sourceSession.latest && (!session.latest || sourceSession.latest > session.latest)) session.latest = sourceSession.latest;
+    target.sessionStats.set(sessionId, session);
+  }
   mergeMapTotals(target.platforms, source.platforms);
+  mergeMapTotals(target.tokensByModel, source.tokensByModel);
+  mergeModelCosts(target.costByModel, source.costByModel);
+  for (const model of source.unknownCostModels || []) target.unknownCostModels.add(model);
   for (const [cwd, sourceWorkspace] of source.workspaces || []) {
     const workspace = target.workspaces.get(cwd) || createWorkspaceBucket(cwd);
     mergeWorkspace(workspace, sourceWorkspace);
@@ -1216,6 +1258,141 @@ function buildCostSummary(summary) {
   };
 }
 
+function rangeChangePercent(current, previous) {
+  const base = Number(previous) || 0;
+  if (base <= 0) return null;
+  return ((Number(current) || 0) - base) / base * 100;
+}
+
+function aggregateDailyRange(summary, startMs, endMs) {
+  const aggregate = createDailyBucket();
+  let activeDays = 0;
+  for (const [key, bucket] of summary.daily || []) {
+    const bucketMs = Number(key);
+    if (!Number.isFinite(bucketMs) || bucketMs < startMs || bucketMs > endMs) continue;
+    mergeDailyBucket(aggregate, bucket);
+    if ((bucket?.events || 0) > 0) activeDays += 1;
+  }
+  return { aggregate, activeDays };
+}
+
+function buildTodayTokenTimeline(summary, nowMs) {
+  const dayStartMs = startOfLocalDayMs(nowMs);
+  const currentHourMs = startOfHourMs(nowMs);
+  const bucketCount = Math.max(1, Math.floor((currentHourMs - dayStartMs) / HOUR_MS) + 1);
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const bucketMs = dayStartMs + index * HOUR_MS;
+    const bucket = summary.hourly.get(String(bucketMs));
+    return {
+      time: new Date(bucketMs).toISOString(),
+      label: formatHourLabel(bucketMs),
+      events: bucket?.events || 0,
+      sessions: bucket?.sessions?.size || 0,
+      tokens: bucket?.tokens || 0,
+      estimatedUsd: bucket?.estimatedUsd || 0,
+      knownTokenTotal: bucket?.knownTokenTotal || 0,
+      platforms: sortedValueEntries(bucket?.platforms || new Map()),
+    };
+  });
+}
+
+function buildTokenRangeSnapshot(summary, nowMs, definition) {
+  const currentDayMs = startOfLocalDayMs(nowMs);
+  const startMs = currentDayMs - (definition.days - 1) * DAY_MS;
+  const previousEndMs = startMs - DAY_MS;
+  const previousStartMs = previousEndMs - (definition.days - 1) * DAY_MS;
+  const { aggregate, activeDays } = aggregateDailyRange(summary, startMs, currentDayMs);
+  const { aggregate: previous } = aggregateDailyRange(summary, previousStartMs, previousEndMs);
+  const timeline = definition.days === 1
+    ? buildTodayTokenTimeline(summary, nowMs)
+    : buildDailyChart(summary, nowMs, definition.days);
+  const cost = buildCostSummary({
+    costByModel: aggregate.costByModel,
+    unknownCostModels: aggregate.unknownCostModels,
+    costSpeedTier: summary.costSpeedTier,
+  });
+  const byWorkspace = [...aggregate.workspaces.values()]
+    .map((workspace) => ({
+      cwd: workspace.cwd,
+      total: workspace.tokens || 0,
+      estimatedUsd: workspace.estimatedUsd || 0,
+      knownTokenTotal: workspace.knownTokenTotal || 0,
+      events: workspace.events || 0,
+      sessions: workspace.sessions?.size || 0,
+    }))
+    .sort((left, right) => {
+      if (right.total !== left.total) return right.total - left.total;
+      return String(left.cwd).localeCompare(String(right.cwd), "zh-CN");
+    });
+  const topSessions = [...aggregate.sessionStats.values()]
+    .map((rangeSession) => {
+      const session = summary.sessions.get(rangeSession.sessionId);
+      return {
+        sessionId: rangeSession.sessionId,
+        title: sessionDisplayTitle(session),
+        sourceType: rangeSession.sourceType || session?.sourceType || "unknown",
+        cwd: rangeSession.cwd || session?.cwd || "unknown",
+        latest: rangeSession.latest || session?.latest || "",
+        events: rangeSession.events || 0,
+        tokens: rangeSession.tokens || 0,
+        estimatedUsd: rangeSession.estimatedUsd || 0,
+        knownTokenTotal: rangeSession.knownTokenTotal || 0,
+      };
+    })
+    .sort((left, right) => {
+      if (right.tokens !== left.tokens) return right.tokens - left.tokens;
+      return String(right.latest).localeCompare(String(left.latest));
+    })
+    .slice(0, 12);
+  const peak = timeline.reduce((best, item) => (
+    !best || (item.tokens || 0) > (best.tokens || 0) ? item : best
+  ), null);
+
+  return {
+    key: definition.key,
+    label: definition.label,
+    days: definition.days,
+    startAt: new Date(startMs).toISOString(),
+    endAt: new Date(nowMs).toISOString(),
+    timelineGranularity: definition.days === 1 ? "hour" : "day",
+    timeline,
+    history: {
+      cachedHistoricalDays: Math.max(0, definition.days - 1),
+      strategy: "persisted-daily-summaries",
+    },
+    health: {
+      eventsTotal: aggregate.events || 0,
+      sessionsTotal: aggregate.sessions.size,
+      activeDays,
+    },
+    comparison: {
+      tokenChangePercent: rangeChangePercent(aggregate.usage.effectiveTotal, previous.usage.effectiveTotal),
+      costChangePercent: rangeChangePercent(cost.estimatedUsd, previous.estimatedUsd),
+      sessionChangePercent: rangeChangePercent(aggregate.sessions.size, previous.sessions.size),
+      previousTokens: previous.usage.effectiveTotal || 0,
+      previousCost: previous.estimatedUsd || 0,
+      previousSessions: previous.sessions.size,
+    },
+    peak,
+    tokens: {
+      ...aggregate.usage,
+      cost,
+      byPlatform: sortedValueEntries(aggregate.platforms),
+      byModel: sortedValueEntries(aggregate.tokensByModel).slice(0, 10),
+      byWorkspace,
+      topSessions,
+    },
+  };
+}
+
+function buildTokenRangeSnapshots(summary, nowMs) {
+  return Object.fromEntries([
+    { key: "today", label: "当天", days: 1 },
+    { key: "week", label: "近 7 天", days: 7 },
+    { key: "month", label: "近 30 天", days: 30 },
+  ].map((definition) => [definition.key, buildTokenRangeSnapshot(summary, nowMs, definition)]));
+}
+
 function buildPublicSummary(summary, cacheStats, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
   const sessions = buildSessionsPayload(summary, options.threadMeta);
@@ -1276,6 +1453,7 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
     }));
 
   const costSummary = buildCostSummary(summary);
+  const tokenRanges = buildTokenRangeSnapshots(summary, nowMs);
   const toolCategories = ObserverCore.buildToolCategories(topTools);
   const usageStats = ObserverCore.buildUsageStatistics({
     sessions: sessions.groups,
@@ -1335,6 +1513,7 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       byWorkspace: workspaceTokens,
       topSessions,
     },
+    tokenRanges,
     alerts: {
       total: summary.alerts.total,
       byType: sortedValueEntries(summary.alerts.byType, "count"),
