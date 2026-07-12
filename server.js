@@ -13,6 +13,10 @@ const sessionOps = require("./server/session-ops");
 const { createSourceChangeBus } = require("./server/source-change-bus");
 const { createSummaryStore } = require("./server/summary-store");
 const { createCodexUsageService } = require("./server/codex-usage");
+const { createSessionAnnotationStore } = require("./server/session-annotations");
+const { createDialogueSearchIndex } = require("./server/dialogue-search-index");
+const { parseGenericLineToEvent } = require("./shared/generic-event-parser");
+require("./server/custom-sources").loadCustomSources();
 
 const {
   applyEventSessionMeta: applyEventSessionMetaCore,
@@ -34,6 +38,7 @@ const {
 const parsers = {
   parseCodexLineToEvent: parseCodexLineToEventCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
+  parseGenericLineToEvent,
 };
 
 const summaryStore = createSummaryStore({
@@ -48,6 +53,14 @@ const sourceChangeBus = createSourceChangeBus({
 const codexUsageService = createCodexUsageService({
   version: require("./server/versions").codexVersion,
   cacheFile: config.CODEX_USAGE_CACHE_FILE,
+});
+const annotationStore = createSessionAnnotationStore({
+  file: config.SESSION_ANNOTATIONS_FILE,
+});
+const dialogueSearchIndex = createDialogueSearchIndex({
+  enabled: config.DIALOGUE_SEARCH_MODE === "sqlite",
+  file: config.DIALOGUE_SEARCH_DB,
+  parsers,
 });
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
@@ -92,6 +105,8 @@ routes.init({
   buildObservabilitySummaryCore,
   applySessionTitleOverridesCore,
   summaryStore,
+  annotationStore,
+  dialogueSearchIndex,
 });
 
 // The default data path uses on-demand reads plus lightweight summary caching.
@@ -166,6 +181,38 @@ const server = http.createServer((req, res) => {
 
     if (u.pathname === "/api/sessions" && req.method === "GET") {
       return sendJson(req, res, 200, routes.querySessions());
+    }
+
+    if (u.pathname === "/api/sessions/compare" && req.method === "GET") {
+      const left = u.searchParams.get("left") || "";
+      const right = u.searchParams.get("right") || "";
+      if (!left || !right) return sendJson(req, res, 400, { error: "left and right session ids required" });
+      const comparison = routes.querySessionComparison(left, right);
+      if (!comparison) return sendJson(req, res, 404, { error: "Session not found" });
+      return sendJson(req, res, 200, comparison);
+    }
+
+    if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/replay") && req.method === "GET") {
+      const sessionId = decodeURIComponent(u.pathname.split("/").filter(Boolean)[2] || "");
+      if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
+      const replay = routes.querySessionReplay(sessionId, u.searchParams.get("limit"));
+      if (!replay) return sendJson(req, res, 404, { error: "Session not found" });
+      return sendJson(req, res, 200, replay);
+    }
+
+    if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/annotation")) {
+      const sessionId = decodeURIComponent(u.pathname.split("/").filter(Boolean)[2] || "");
+      if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
+      if (req.method === "GET") return sendJson(req, res, 200, { annotation: routes.getSessionAnnotation(sessionId) });
+      if (req.method === "PUT" || req.method === "POST") {
+        return readJsonBody(req, res, (payload) => {
+          try {
+            sendJson(req, res, 200, { annotation: routes.setSessionAnnotation(sessionId, payload) });
+          } catch (error) {
+            sendJson(req, res, 400, { error: String(error.message || error) });
+          }
+        });
+      }
     }
 
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/export") && req.method === "GET") {

@@ -6503,6 +6503,10 @@ button.mc-active-cost-row:focus-visible {
   margin-top: 0;
 }
 
+.conv-message-head--user {
+  justify-content: flex-end;
+}
+
 .conv-role-label {
   color: var(--text-soft);
   font-size: 0.72rem;
@@ -6522,6 +6526,44 @@ button.mc-active-cost-row:focus-visible {
   line-height: 1.68;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.conv-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.conv-attachment {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-soft) 84%, transparent);
+  color: var(--text-soft);
+}
+
+.conv-attachment > span {
+  display: grid;
+  min-width: 0;
+}
+
+.conv-attachment strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-attachment small {
+  color: var(--text-faint);
+  font-size: 0.62rem;
+  line-height: 1.4;
 }
 
 .conv-agent-prefix,

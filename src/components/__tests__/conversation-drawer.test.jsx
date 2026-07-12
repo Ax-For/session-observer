@@ -4,6 +4,43 @@ import { describe, expect, test, vi } from "vitest";
 import { ConversationDrawer } from "../conversation-drawer";
 
 describe("ConversationDrawer", () => {
+  test("renders image prompts as user text with a compact attachment row", () => {
+    render(
+      <MantineProvider>
+        <ConversationDrawer
+          opened
+          onClose={() => {}}
+          session={{ sourceType: "codex", title: "Image prompt", sessionId: "sess-image" }}
+          loading={false}
+          events={[
+            {
+              time: "2026-07-12T15:38:09.415Z",
+              callType: "Prompt",
+              sourceLength: 254948,
+              content: [
+                "# Files mentioned by the user:",
+                "",
+                "## screenshot.png: /var/folders/private/screenshot.png",
+                "",
+                "## My request for Codex:",
+                "这里的工具调用字体大小还是有问题",
+                "<image name=[Image #1] path=\"/var/folders/private/screenshot.png\">",
+                "</image>",
+              ].join("\n"),
+            },
+          ]}
+        />
+      </MantineProvider>,
+    );
+
+    const dialog = screen.getAllByRole("dialog", { name: "会话对话" }).at(-1);
+    expect(within(dialog).getByText("这里的工具调用字体大小还是有问题")).toBeInTheDocument();
+    expect(within(dialog).getByText("screenshot.png")).toBeInTheDocument();
+    expect(within(dialog).getByText(/图片附件 · 原始记录/)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("/var/folders/private");
+    expect(dialog).not.toHaveTextContent("Files mentioned by the user");
+  });
+
   test("renders a conversation timeline instead of raw event cards", () => {
     render(
       <MantineProvider>

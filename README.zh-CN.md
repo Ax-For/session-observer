@@ -41,6 +41,8 @@ npm install
 | **事件流** | 按用户回合归组的语义活动、问答/工具/用量/原始视图、按钮触发搜索、筛选、高亮、实时跟随/暂停，以及跳转到会话详情 |
 | **会话管理** | 活跃会话、工作区分组、目录树、完整会话统计、开始与最近时间、可折叠对话、活动、用量、文件/工具、命令、错误、上下文压缩和原始诊断 |
 
+会话工作台同时支持执行回放、两会话对比和本地成果标注。对比使用紧凑摘要，不需要载入完整会话正文。Token 页面还会显示成本覆盖率、会话 Token 覆盖率、价格表版本和预算提醒。
+
 ## 设计重点
 
 ### 默认看语义活动，而不是底层日志噪声
@@ -146,6 +148,12 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex 会话目录 |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code 项目目录 |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex 标题元数据数据库 |
+| `OBSERVER_DAILY_TOKEN_BUDGET` | 未启用 | 当天 Token 预算 |
+| `OBSERVER_WEEKLY_TOKEN_BUDGET` | 未启用 | 近 7 天 Token 预算 |
+| `OBSERVER_DAILY_COST_BUDGET_USD` | 未启用 | 当天估算成本预算 |
+| `OBSERVER_WEEKLY_COST_BUDGET_USD` | 未启用 | 近 7 天估算成本预算 |
+| `OBSERVER_DIALOGUE_SEARCH` | `scan` | 设置为 `sqlite` 后使用磁盘归档全文检索 |
+| `OBSERVER_SOURCE_ADAPTERS_FILE` | 未启用 | 附加通用 JSONL 数据源清单 |
 
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start

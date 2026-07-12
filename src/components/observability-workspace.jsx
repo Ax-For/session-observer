@@ -19,7 +19,6 @@ import {
   IconGauge,
   IconRefresh,
   IconTerminal2,
-  IconArrowUpRight,
   IconChartBar,
   IconClock,
   IconCpu,
@@ -29,7 +28,6 @@ import {
   Area,
   AreaChart as RechartsAreaChart,
   Bar,
-  BarChart as RechartsBarChart,
   CartesianGrid,
   ComposedChart as RechartsComposedChart,
   Line,
@@ -171,19 +169,6 @@ function ratioLabel(value, denominator) {
   return `${decimalLabel(ratio, 1)}x`;
 }
 
-function compactDateLabel(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 function metricLabel(value, valueKey) {
   if (valueKey === "estimatedUsd" || valueKey === "cost" || valueKey === "usd" || valueKey === "金额") {
     return usdLabel(value);
@@ -204,10 +189,6 @@ function orderedToolRows(topTools = [], limit = 6) {
     .filter((tool) => !meaningful.some((item) => item.key === tool.key))
     .sort((a, b) => (b.calls + b.results) - (a.calls + a.results));
   return [...meaningful, ...supplemental].slice(0, limit);
-}
-
-function getPlatformTotal(items, platform) {
-  return Number((items || []).find((item) => item.key === platform)?.total) || 0;
 }
 
 function getSourceState(source) {
@@ -277,8 +258,6 @@ function Sparkline({ data, width = 64, height = 24, color = "var(--accent)" }) {
   const step = width / (values.length - 1);
   const points = values.map((v, i) => `${i * step},${height - (v / max) * (height - 2)}`).join(" ");
   const areaPoints = `0,${height} ${points} ${(values.length - 1) * step},${height}`;
-  const isUp = values[values.length - 1] > values[0];
-
   return (
     <svg width={width} height={height} className="mc-sparkline" aria-hidden="true">
       <defs>
@@ -297,119 +276,12 @@ function Sparkline({ data, width = 64, height = 24, color = "var(--accent)" }) {
 /**
  * Hero stat card with glow effect and sparkline.
  */
-function HeroStat({ label, value, detail, tone = "default", sparkData, icon }) {
-  return (
-    <div className={`mc-stat mc-stat--${tone}`}>
-      <div className="mc-stat__head">
-        <Text className="mc-stat__label">{label}</Text>
-        {icon ? <MetricGlyph icon={icon} tone={tone} size={34} iconSize={17} /> : null}
-      </div>
-      <div className="mc-stat__value-line">
-        <Text className="mc-stat__value">{value}</Text>
-        {sparkData && <Sparkline data={sparkData} />}
-      </div>
-      <Text className="mc-stat__detail">{detail}</Text>
-    </div>
-  );
-}
-
-function RankedRows({ rows, valueKey = "total", renderLabel, renderMeta, maxValue, valueFormatter = tokenLabel }) {
-  const values = (rows || []).map((row) => Number(row[valueKey]) || 0);
-  const peak = Math.max(1, Number(maxValue) || 0, ...values);
-
-  return (
-    <div className="mc-rank-list">
-      {(rows || []).map((row, i) => {
-        const value = Number(row[valueKey]) || 0;
-        return (
-          <div key={row.key || row.cwd || row.sessionId} className="mc-rank-row">
-            <span className="mc-rank-row__idx">{i + 1}</span>
-            <div className="mc-rank-row__copy">
-              <Text className="mc-rank-row__label">{renderLabel ? renderLabel(row) : row.key}</Text>
-              {renderMeta ? <Text className="mc-rank-row__meta">{renderMeta(row)}</Text> : null}
-            </div>
-            <div className="mc-rank-row__meter">
-              <span style={{ width: `${Math.max(7, Math.round((value / peak) * 100))}%` }} />
-            </div>
-            <Text className="mc-rank-row__value">{valueFormatter(value)}</Text>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function ChartCard({ eyebrow, title, action, icon, tone = "default", className = "", children }) {
   return (
     <Paper className={`mc-chart-card${className ? ` ${className}` : ""}`} radius="xl" p="lg">
       <PanelHeader eyebrow={eyebrow} title={title} icon={icon} tone={tone} action={action} />
       {children}
     </Paper>
-  );
-}
-
-function ViewIntro({ view, loading, index, onRefresh }) {
-  const viewCopy = {
-    overview: {
-      sequence: "01",
-      eyebrow: "CONTROL ROOM",
-      title: "运行总览",
-      subtitle: "看当前是否正常、资源消耗是否集中、最近是否有活跃写入。",
-    },
-    tokens: {
-      sequence: "02",
-      eyebrow: "USAGE LEDGER",
-      title: "Token 消耗",
-      subtitle: "按输入、缓存命中、输出、推理和成本拆解消耗来源。",
-    },
-    insights: {
-      sequence: "03",
-      eyebrow: "ANALYSIS DOSSIER",
-      title: "活动洞察",
-      subtitle: "先给出关键结论，再用时段、工具、工作区和会话压力验证。",
-    },
-  }[view] || {};
-
-  return (
-    <section className={`mc-view-intro mc-view-intro--${view}`} data-view={view}>
-      <span className="mc-view-intro__sequence" aria-hidden="true">{viewCopy.sequence}</span>
-      <div className="mc-view-intro__copy">
-        <div>
-          <Text className="mc-eyebrow">{viewCopy.eyebrow}</Text>
-          <Title order={2} className="mc-scope-title">{viewCopy.title}</Title>
-          <Text className="mc-scope-subtitle">{viewCopy.subtitle}</Text>
-        </div>
-      </div>
-      <div className="mc-view-intro__telemetry">
-        <div>
-          <span>CACHE</span>
-          <strong>{formatNumber(index?.cachedFiles || 0)}</strong>
-          <em>files</em>
-        </div>
-        <div>
-          <span>REUSED</span>
-          <strong>{formatNumber(index?.reusedFiles || 0)}</strong>
-          <em>files</em>
-        </div>
-        <div>
-          <span>UPDATED</span>
-          <strong>{formatDateTime(index?.lastBuiltAt)}</strong>
-          <em>local</em>
-        </div>
-      </div>
-      <Group gap="xs" justify="flex-end" className="mc-view-intro__actions" wrap="nowrap">
-        <PulseBadge color={index?.lastError ? "red" : "teal"} label={index?.lastError ? "读取异常" : loading ? "刷新中" : "数据就绪"} />
-        <Button
-          variant="subtle"
-          radius="sm"
-          leftSection={<IconRefresh size={16} />}
-          onClick={onRefresh}
-          loading={loading}
-        >
-          刷新观测
-        </Button>
-      </Group>
-    </section>
   );
 }
 
@@ -561,78 +433,6 @@ function MetricAreaChart({ data, valueKey = "tokens", color = "blue.6", label = 
                 isAnimationActive={false}
               />
             </RechartsAreaChart>
-          </ResponsiveContainer>
-        </ChartMountGate>
-      </div>
-      <ChartSummary data={chartData} valueKey="value" metricKind={valueKey} />
-    </>
-  );
-}
-
-function MetricBarChart({
-  data,
-  valueKey = "events",
-  color = "blue.6",
-  label = "事件",
-  testId,
-  height = 222,
-  fillHeight = false,
-}) {
-  const chartData = (data || []).map((item) => ({
-    ...item,
-    label: item.label || "-",
-    value: Number(item[valueKey]) || 0,
-  }));
-  const valueFormatter = chartValueFormatter(valueKey, label);
-  const stroke = chartStroke(color);
-
-  if (!chartData.length) {
-    return <EmptyChart label={label} />;
-  }
-
-  return (
-    <>
-      <div className={`mc-chart-frame mc-chart-frame--bar mc-chart-frame--mantine${fillHeight ? " is-fill" : ""}`} data-testid={testId} aria-label={`${label}柱状图`}>
-        <ChartMountGate height={height} fillHeight={fillHeight}>
-          <ResponsiveContainer
-            width="100%"
-            height={fillHeight ? "100%" : height}
-            initialDimension={{ width: 800, height }}
-            className="mc-chart-container"
-          >
-            <RechartsBarChart data={chartData} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="var(--line)" strokeDasharray="4 6" vertical={false} />
-              <XAxis
-                dataKey="label"
-                axisLine={false}
-                tickLine={false}
-                interval="preserveStartEnd"
-                tick={{ fill: "var(--text-faint)", fontSize: 11 }}
-                tickMargin={10}
-              />
-              <YAxis
-                width={54}
-                axisLine={false}
-                tickLine={false}
-                tick={{ fill: "var(--text-faint)", fontSize: 11 }}
-                tickFormatter={valueFormatter}
-                tickMargin={8}
-              />
-              <RechartsTooltip
-                cursor={{ fill: "color-mix(in srgb, var(--accent) 12%, transparent)" }}
-                content={(props) => (
-                  <MetricChartTooltip {...props} valueFormatter={valueFormatter} seriesLabel={label} />
-                )}
-              />
-              <Bar
-                dataKey="value"
-                fill={stroke}
-                radius={[5, 5, 2, 2]}
-                minPointSize={2}
-                maxBarSize={18}
-                isAnimationActive={false}
-              />
-            </RechartsBarChart>
           </ResponsiveContainer>
         </ChartMountGate>
       </div>
@@ -1276,103 +1076,6 @@ function TokenLedgerPanel({ tokens, tokenCost }) {
   );
 }
 
-function SignalDigestPanel({ tokens, tokenCost, traces, tools, workspaces }) {
-  const topCostModel = tokenCost?.byModel?.[0];
-  const topWorkspace = workspaces?.topWorkspaces?.[0];
-  const topTool = orderedToolRows(tools?.topTools, 1)[0];
-  const topToolShare = percentValue(topTool?.calls, tools?.totalCalls);
-  const inputSideTotal = inputSideToken(tokens) || finiteToken(tokens?.input);
-  const cacheCoverage = percentValue(cacheReadToken(tokens), inputSideTotal);
-  const traceDensity = traces?.traces ? Math.round((Number(traces.spans || 0) / Number(traces.traces || 1))) : 0;
-  const rows = [
-    {
-      label: "最贵模型",
-      value: topCostModel ? topCostModel.model : "-",
-      meta: topCostModel ? `${usdLabel(topCostModel.estimatedUsd)} · ${tokenLabel(topCostModel.knownTokenTotal)}` : "暂无成本覆盖",
-    },
-    {
-      label: "缓存节省",
-      value: percentLabel(cacheCoverage),
-      meta: `${tokenLabel(cacheReadToken(tokens))} 命中输入侧`,
-    },
-    {
-      label: "最高工作区",
-      value: topWorkspace ? clipText(topWorkspace.cwd, 34) : "-",
-      meta: topWorkspace ? `${formatNumber(topWorkspace.events)} 事件 · ${tokenLabel(topWorkspace.tokens || 0)}` : "暂无工作区数据",
-    },
-    {
-      label: "Trace 密度",
-      value: traceDensity ? `${formatNumber(traceDensity)} span/trace` : "-",
-      meta: `${formatNumber(traces?.llmSpans || 0)} LLM · ${formatNumber(traces?.toolSpans || 0)} tool`,
-    },
-    {
-      label: "主工具",
-      value: topTool?.key || "-",
-      meta: topTool ? `${formatNumber(topTool.calls)} 调用 · ${percentLabel(topToolShare)} 占比` : "暂无工具事件",
-    },
-  ];
-
-  return (
-    <div className="mc-signal-list">
-      {rows.map((row) => (
-        <div key={row.label} className="mc-signal-row">
-          <span>{row.label}</span>
-          <strong>{row.value}</strong>
-          <em>{row.meta}</em>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TokenEfficiencyPanel({ tokens, tokenCost }) {
-  const input = finiteToken(tokens?.input);
-  const inputSideTotal = inputSideToken(tokens) || input;
-  const output = finiteToken(tokens?.output);
-  const reasoning = finiteToken(tokens?.reasoningOutput);
-  const effectiveTotal = finiteToken(tokens?.effectiveTotal) || finiteToken(tokens?.total);
-  const topCostModel = tokenCost?.byModel?.[0];
-  const rows = [
-    {
-      label: "成本 / 百万有效 Token",
-      value: perMillionUsdLabel(tokenCost?.estimatedUsd, effectiveTotal),
-      meta: `${usdLabel(tokenCost?.estimatedUsd)} 总估算`,
-    },
-    {
-      label: "缓存覆盖输入侧",
-      value: percentLabel(percentValue(cacheReadToken(tokens), inputSideTotal)),
-      meta: `${tokenLabel(cacheReadToken(tokens))} 命中 · 写入 ${tokenLabel(cacheCreationToken(tokens))}`,
-    },
-    {
-      label: "输出占有效总量",
-      value: percentLabel(percentValue(output, effectiveTotal)),
-      meta: `${tokenLabel(output)} 输出`,
-    },
-    {
-      label: "推理占输出侧",
-      value: percentLabel(percentValue(reasoning, output)),
-      meta: `${tokenLabel(reasoning)} reasoning`,
-    },
-    {
-      label: "最高成本模型",
-      value: topCostModel?.model || "-",
-      meta: topCostModel ? `${usdLabel(topCostModel.estimatedUsd)} · ${tokenLabel(topCostModel.knownTokenTotal)}` : "暂无成本覆盖",
-    },
-  ];
-
-  return (
-    <div className="mc-efficiency-grid">
-      {rows.map((row) => (
-        <div key={row.label} className="mc-efficiency-tile">
-          <Text>{row.label}</Text>
-          <strong>{row.value}</strong>
-          <span>{row.meta}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function MetricTiles({ rows, className = "" }) {
   return (
     <div className={`mc-metric-tiles${className ? ` ${className}` : ""}`}>
@@ -1846,141 +1549,6 @@ function UsageStatisticsBoard({ stats, onOpenSessionDetail }) {
   );
 }
 
-function CoverageScorePanel({ health, tokens, tokenCost, traces, sources, activeOverview }) {
-  const sourceRows = Object.values(sources || {}).filter(Boolean);
-  const connectedSources = sourceRows.filter((source) => source.exists !== false && !source.error).length;
-  const pricedBase = sumBy(tokens?.byModel, (row) => row.total) || finiteToken(tokens?.effectiveTotal);
-  const topModel = topBy(tokens?.byModel, (row) => row.total);
-  const sourceLatest = sourceRows
-    .map((source) => source.updatedAt)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
-  const rows = [
-    {
-      label: "数据源",
-      value: `${formatNumber(connectedSources)}/${formatNumber(sourceRows.length || 0)}`,
-      meta: `最新 ${compactDateLabel(sourceLatest)}`,
-      tone: connectedSources ? "success" : "default",
-    },
-    {
-      label: "成本覆盖",
-      value: percentLabel(percentValue(tokenCost?.knownTokenTotal, pricedBase)),
-      meta: `${tokenLabel(tokenCost?.knownTokenTotal || 0)} 已计价`,
-      tone: "primary",
-    },
-    {
-      label: "Trace / 会话",
-      value: percentLabel(percentValue(traces?.traces, health?.sessionsTotal)),
-      meta: `${formatNumber(traces?.traces || 0)} traces · ${formatNumber(health?.sessionsTotal || 0)} 会话`,
-      tone: "accent",
-    },
-    {
-      label: "活跃占比",
-      value: percentLabel(percentValue(activeOverview?.total, health?.sessionsTotal)),
-      meta: `${formatNumber(activeOverview?.total || 0)} live · 窗口 ${formatNumber(activeOverview?.windowMinutes || 30)}m`,
-      tone: activeOverview?.total ? "success" : "default",
-    },
-    {
-      label: "模型集中度",
-      value: percentLabel(percentValue(topModel?.total, sumBy(tokens?.byModel, (row) => row.total))),
-      meta: topModel?.key || "暂无模型数据",
-      tone: "default",
-    },
-  ];
-
-  return <MetricTiles rows={rows} className="mc-metric-tiles--coverage" />;
-}
-
-function WorkspaceConcentrationPanel({ workspaces, tokens }) {
-  const workspaceRows = workspaces?.topWorkspaces || [];
-  const tokenTotal = finiteToken(tokens?.effectiveTotal) || sumBy(workspaceRows, (row) => row.tokens);
-  const topWorkspace = workspaceRows[0];
-  const rows = [
-    {
-      label: "Top 工作区占比",
-      value: percentLabel(percentValue(topWorkspace?.tokens || topWorkspace?.events, tokenTotal || sumBy(workspaceRows, (row) => row.events))),
-      meta: topWorkspace ? clipText(topWorkspace.cwd, 44) : "暂无工作区数据",
-      tone: "primary",
-    },
-    {
-      label: "覆盖工作区",
-      value: formatNumber(workspaces?.total || workspaceRows.length),
-      meta: `${formatNumber(sumBy(workspaceRows, (row) => row.sessions))} 会话在 Top 列表内`,
-    },
-    {
-      label: "平均 Token / 工作区",
-      value: tokenLabel((tokenTotal || 0) / Math.max(1, workspaces?.total || workspaceRows.length || 1)),
-      meta: `按 ${formatNumber(workspaces?.total || workspaceRows.length || 1)} 个工作区估算`,
-    },
-  ];
-
-  return (
-    <div className="mc-workspace-concentration">
-      <MetricTiles rows={rows} />
-      <div className="mc-workspace-concentration__list">
-        {workspaceRows.slice(0, 5).map((workspace) => (
-          <div key={workspace.cwd}>
-            <span>{clipText(workspace.cwd, 58)}</span>
-            <em>{formatNumber(workspace.events)} 事件 · {formatNumber(workspace.sessions)} 会话</em>
-            <strong>{tokenLabel(workspace.tokens || 0)}</strong>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CacheEconomyPanel({ tokens }) {
-  const inputSideTotal = inputSideToken(tokens);
-  const cacheRead = cacheReadToken(tokens);
-  const cacheCreation = cacheCreationToken(tokens);
-  const nonCache = finiteToken(tokens?.input);
-  const output = finiteToken(tokens?.output);
-  const reasoning = finiteToken(tokens?.reasoningOutput);
-  const rows = [
-    {
-      label: "命中覆盖",
-      value: percentLabel(percentValue(cacheRead, inputSideTotal)),
-      meta: `${tokenLabel(cacheRead)} cache read`,
-      tone: "success",
-    },
-    {
-      label: "读写杠杆",
-      value: ratioLabel(cacheRead, cacheCreation),
-      meta: `${tokenLabel(cacheCreation)} cache creation`,
-      tone: "primary",
-    },
-    {
-      label: "非缓存输入",
-      value: percentLabel(percentValue(nonCache, inputSideTotal)),
-      meta: `${tokenLabel(nonCache)} prompt/context`,
-    },
-    {
-      label: "输出压力",
-      value: percentLabel(percentValue(output, finiteToken(tokens?.effectiveTotal))),
-      meta: `输出 ${tokenLabel(output)} · 推理 ${tokenLabel(reasoning)}`,
-      tone: "accent",
-    },
-  ];
-
-  return (
-    <div className="mc-cache-economy">
-      <MetricTiles rows={rows} />
-      <div className="mc-cache-economy__bar" aria-hidden="true">
-        {[
-          ["非缓存", nonCache, "var(--accent)"],
-          ["命中", cacheRead, "#39d98a"],
-          ["写入", cacheCreation, "#14b8a6"],
-          ["输出", output, "var(--violet)"],
-        ].map(([label, value, color]) => (
-          value ? <span key={label} title={label} style={{ width: `${Math.max(2, percentValue(value, inputSideTotal + output))}%`, background: color }} /> : null
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function TokenWorkspacePanel({ tokens }) {
   const rows = (tokens?.byWorkspace || []).slice(0, 6);
   const total = sumBy(tokens?.byWorkspace, (row) => row.total) || finiteToken(tokens?.effectiveTotal);
@@ -2070,84 +1638,6 @@ function ModelCostMatrixPanel({ tokens, tokenCost }) {
           <em>{row.costPerMillion ? `${usdLabel(row.costPerMillion)}/M` : "-"}</em>
         </div>
       ))}
-    </div>
-  );
-}
-
-function TraceCompositionPanel({ traces }) {
-  const total = finiteToken(traces?.spans);
-  const rows = [
-    { key: "LLM", value: finiteToken(traces?.llmSpans), color: "var(--accent)" },
-    { key: "Tool", value: finiteToken(traces?.toolSpans), color: "var(--orange)" },
-    { key: "Token", value: finiteToken(traces?.tokenSpans), color: "#39d98a" },
-    { key: "Thinking", value: finiteToken(traces?.thinkingSpans), color: "var(--violet)" },
-  ];
-
-  return (
-    <div className="mc-trace-composition">
-      <div className="mc-trace-composition__head">
-        <strong>{formatNumber(total)}</strong>
-        <span>{formatNumber(traces?.traces || 0)} traces · 深度 {formatNumber(traces?.maxDepth || 0)}</span>
-      </div>
-      <div className="mc-trace-composition__bar" aria-hidden="true">
-        {rows.map((row) => row.value ? (
-          <span
-            key={row.key}
-            style={{
-              width: `${Math.max(3, percentValue(row.value, total))}%`,
-              background: row.color,
-            }}
-          />
-        ) : null)}
-      </div>
-      <div className="mc-trace-composition__rows">
-        {rows.map((row) => (
-          <div key={row.key}>
-            <span style={{ background: row.color }} />
-            <Text>{row.key}</Text>
-            <strong>{formatNumber(row.value)}</strong>
-            <em>{percentLabel(percentValue(row.value, total))}</em>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ActiveRatePanel({ overview }) {
-  const sessions = overview?.sessions || [];
-  const projectedHourlyTokens = sessions.reduce((sum, session) => sum + finiteToken(session.activity?.projectedHourlyTokens), 0);
-  const eventsPerMinute = sessions.reduce((sum, session) => sum + finiteToken(session.activity?.eventsPerMinute), 0);
-  const tokensPerMinute = sessions.reduce((sum, session) => sum + finiteToken(session.activity?.tokensPerMinute), 0);
-  const hottest = sessions.slice().sort((left, right) => (
-    finiteToken(right.activity?.projectedHourlyTokens) - finiteToken(left.activity?.projectedHourlyTokens)
-  ))[0];
-
-  return (
-    <div className="mc-active-rate">
-      <div className="mc-active-rate__summary">
-        <div>
-          <Text>预计小时 Token</Text>
-          <strong>{tokenLabel(projectedHourlyTokens)}</strong>
-        </div>
-        <div>
-          <Text>事件 / 分钟</Text>
-          <strong>{decimalLabel(eventsPerMinute, 1)}</strong>
-        </div>
-        <div>
-          <Text>Token / 分钟</Text>
-          <strong>{tokenLabel(tokensPerMinute)}</strong>
-        </div>
-      </div>
-      {hottest ? (
-        <div className="mc-active-rate__hottest">
-          <span>当前最高速率</span>
-          <strong>{clipText(hottest.title || hottest.sessionId, 54)}</strong>
-          <em>预计 {tokenLabel(hottest.activity?.projectedHourlyTokens || 0)}/h</em>
-        </div>
-      ) : (
-        <Text className="mc-empty">当前没有可估算速率的活跃会话。</Text>
-      )}
     </div>
   );
 }
@@ -2277,37 +1767,6 @@ function WorkspaceLoadPanel({ workspaces }) {
   );
 }
 
-function SessionLoadPanel({ activeOverview, tokenSessions }) {
-  const activeMap = new Map((activeOverview?.sessions || []).map((session) => [session.sessionId, session]));
-  const rows = (tokenSessions || []).slice(0, 6).map((session) => {
-    const active = activeMap.get(session.sessionId);
-    return {
-      ...session,
-      active,
-      projectedHourlyTokens: active?.activity?.projectedHourlyTokens || 0,
-    };
-  });
-  const peak = Math.max(1, ...rows.map((row) => finiteToken(row.tokens) + finiteToken(row.projectedHourlyTokens)));
-
-  return (
-    <div className="mc-session-load">
-      {rows.map((session) => {
-        const load = finiteToken(session.tokens) + finiteToken(session.projectedHourlyTokens);
-        return (
-          <div key={session.sessionId} className={session.active ? "is-live" : ""}>
-            <span>
-              <strong>{clipText(session.title || shortSessionId(session.sessionId), 52)}</strong>
-              <em>{platformLabel(session.sourceType)} · {shortSessionId(session.sessionId)} · {formatNumber(session.events || 0)} 事件</em>
-            </span>
-            <b>{tokenLabel(session.tokens || 0)}</b>
-            <i style={{ width: `${Math.max(7, Math.round((load / peak) * 100))}%` }} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function ActivityShapePanel({ hourly, today, tokenWindow }) {
   const totalHourlyEvents = sumBy(hourly, (row) => row.events);
   const peakHour = topBy(hourly, (row) => row.events);
@@ -2341,130 +1800,6 @@ function ActivityShapePanel({ hourly, today, tokenWindow }) {
   ];
 
   return <MetricTiles rows={rows} className="mc-metric-tiles--activity" />;
-}
-
-function InsightDigestPanel({ health, tokens, tools, workspaces, charts, activeOverview }) {
-  const hourly = charts?.hourly || [];
-  const daily = charts?.daily || [];
-  const peakHour = topBy(hourly, (row) => row.events);
-  const peakDay = topBy(daily, (row) => row.tokens);
-  const topWorkspace = workspaces?.topWorkspaces?.[0];
-  const topTool = orderedToolRows(tools?.topTools, 1)[0];
-  const inputSideTotal = inputSideToken(tokens) || finiteToken(tokens?.input);
-  const cacheCoverage = percentValue(cacheReadToken(tokens), inputSideTotal);
-  const activeTotal = finiteToken(activeOverview?.total);
-  const rows = [
-    {
-      label: "活动峰值",
-      value: peakHour ? peakHour.label : "-",
-      meta: peakHour ? `${formatNumber(peakHour.events || 0)} 事件，集中在最近 24h` : "暂无小时活动",
-      tone: "primary",
-    },
-    {
-      label: "主工作区",
-      value: topWorkspace ? clipText(topWorkspace.cwd, 42) : "-",
-      meta: topWorkspace ? `${formatNumber(topWorkspace.events || 0)} 事件 · ${tokenLabel(topWorkspace.tokens || 0)}` : "暂无工作区负载",
-    },
-    {
-      label: "主工具",
-      value: topTool?.key || "-",
-      meta: topTool ? `${formatNumber(topTool.calls || 0)} 调用，占 ${percentLabel(percentValue(topTool.calls, tools?.totalCalls))}` : "暂无工具调用",
-    },
-    {
-      label: "缓存覆盖",
-      value: percentLabel(cacheCoverage),
-      meta: `${tokenLabel(cacheReadToken(tokens))} 命中输入侧`,
-      tone: "success",
-    },
-    {
-      label: "活跃会话",
-      value: formatNumber(activeTotal),
-      meta: `窗口 ${formatNumber(activeOverview?.windowMinutes || 30)} 分钟 · 总会话 ${formatNumber(health?.sessionsTotal || 0)}`,
-      tone: activeTotal ? "success" : "default",
-    },
-    {
-      label: "Token 峰值日",
-      value: peakDay?.label || "-",
-      meta: peakDay ? `${tokenLabel(peakDay.tokens || 0)} · ${formatNumber(peakDay.events || 0)} 事件` : "暂无日趋势",
-      tone: "accent",
-    },
-  ];
-
-  return (
-    <Paper className="mc-panel mc-insight-digest" radius="xl" p="lg">
-      <div className="mc-insight-digest__head">
-        <div>
-          <Text className="mc-eyebrow">Findings</Text>
-          <Title order={3}>当前最值得关注的信号</Title>
-        </div>
-        <Text className="mc-muted-line">按活动、工具、工作区和 Token 口径汇总。</Text>
-      </div>
-      <div className="mc-insight-digest__grid">
-        {rows.map((row) => (
-          <div key={row.label} className={`mc-insight-finding${row.tone ? ` mc-insight-finding--${row.tone}` : ""}`}>
-            <span>{row.label}</span>
-            <strong title={row.value}>{row.value}</strong>
-            <em>{row.meta}</em>
-          </div>
-        ))}
-      </div>
-    </Paper>
-  );
-}
-
-function MemoryUsagePanel({ runtime }) {
-  const memory = runtime?.memory || {};
-  const heapUsed = finiteToken(memory.heapUsed);
-  const heapTotal = finiteToken(memory.heapTotal);
-  const heapShare = percentValue(heapUsed, heapTotal);
-  const rows = [
-    { label: "Heap Used", value: memory.heapUsed, detail: "活跃 JS 堆" },
-    { label: "Heap Total", value: memory.heapTotal, detail: "V8 已保留堆" },
-    { label: "External", value: memory.external, detail: "原生与 Buffer" },
-    { label: "Array Buffers", value: memory.arrayBuffers, detail: "二进制缓冲" },
-  ];
-
-  return (
-    <div className="mc-memory-panel">
-      <div className="mc-memory-panel__hero">
-        <div>
-          <Text className="mc-runtime__label">RSS</Text>
-          <Text className="mc-memory-panel__rss">{formatBytes(memory.rss)}</Text>
-        </div>
-        <Badge radius="xl" variant="light" color={heapShare > 70 ? "orange" : "blue"}>
-          Heap {percentLabel(heapShare)}
-        </Badge>
-      </div>
-      <Progress
-        value={heapShare}
-        radius="xl"
-        size="sm"
-        color={heapShare > 70 ? "orange" : "blue"}
-        className="mc-memory-panel__progress"
-      />
-      <div className="mc-memory-panel__grid">
-        {rows.map((row) => (
-          <div key={row.label} className="mc-memory-chip">
-            <span>{row.label}</span>
-            <strong>{formatBytes(row.value)}</strong>
-            <em>{row.detail}</em>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Pulse badge — animated indicator for live/active state.
- */
-function PulseBadge({ color = "blue", label }) {
-  return (
-    <Badge radius="xl" variant="light" color={color} className="mc-pulse-badge">
-      <span className="mc-pulse-dot" />
-      {label}
-    </Badge>
-  );
 }
 
 function ActiveSessionSnapshot({ overview, hourly, onOpenSessionDetail }) {
@@ -2758,416 +2093,58 @@ function TokenSessionTable({ sessions, onOpenSessionDetail }) {
   );
 }
 
-function ObservabilityWorkspaceLegacy({
-  payload,
-  view,
-  activeOverview,
-  loading,
-  onRefresh,
-  onOpenConversation,
-  onOpenSessionDetail,
-}) {
-  const summary = payload?.summary || {};
-  const health = summary.health || {};
-  const tokens = summary.tokens || {};
-  const tools = summary.tools || {};
-  const workspaces = summary.workspaces || {};
-  const charts = summary.charts || {};
-  const traces = summary.traces || {};
-  const hourlyChart = charts.hourly || [];
-  const dailyChart = charts.daily || [];
-  const dailySessionHeatmap = charts.dailySessions || [];
-  const tokenWindows = tokens.windows || { day: { total: 0, platforms: [] }, week: { total: 0, platforms: [] } };
-  const index = payload?.index;
-  const runtime = payload?.runtime;
-  const sources = payload?.sources;
-  const activeTotal = Number(activeOverview?.total || 0);
-  const activeWindowMinutes = activeOverview?.windowMinutes || 30;
-  const newestActiveAge = activeOverview?.sessions?.[0]?.ageMs;
-  const tokenCost = tokens.cost || {};
-  const overviewKpis = [
-    {
-      label: "事件总量",
-      value: formatNumber(health.eventsTotal),
-      meta: `最近 ${formatDateTime(health.lastEventAt)}`,
-      tone: "primary",
-    },
-    {
-      label: "会话覆盖",
-      value: formatNumber(health.sessionsTotal),
-      meta: `${formatNumber(health.platformCount)} 平台 · ${formatNumber(health.modelCount)} 模型`,
-    },
-    {
-      label: "活跃会话",
-      value: formatNumber(activeTotal),
-      meta: activeTotal ? `最近写入 ${formatAgeText(newestActiveAge)}` : `窗口 ${formatNumber(activeWindowMinutes)} 分钟`,
-      tone: activeTotal ? "success" : "default",
-    },
-    {
-      label: "Token 口径",
-      value: tokenLabel(tokens.effectiveTotal),
-      meta: `今日 ${tokenLabel(tokenWindows.day?.total || 0)} · 本周 ${tokenLabel(tokenWindows.week?.total || 0)}`,
-      tone: "accent",
-    },
-    {
-      label: "Trace Span",
-      value: formatNumber(traces.spans || 0),
-      meta: `${formatNumber(traces.traces || 0)} traces · 深度 ${formatNumber(traces.maxDepth || 0)}`,
-    },
-  ];
-  const layoutByView = {
-    overview: "overview-command-center",
-    tokens: "token-ledger-workbench",
-    insights: "insight-dossier",
+function DataQualityBudgetPanel({ quality, guardrails }) {
+  const budgetLabels = {
+    dailyTokens: "当天 Token",
+    weeklyTokens: "近 7 天 Token",
+    dailyCostUsd: "当天成本",
+    weeklyCostUsd: "近 7 天成本",
   };
-  const workspaceLabel = {
-    overview: "运行总览工作台",
-    tokens: "Token 账本工作台",
-    insights: "观测洞察工作台",
-  }[view] || "可观测工作台";
-
+  const budgetRows = guardrails?.rows || [];
   return (
-    <Stack
-      gap="md"
-      className={`workspace-stack mc-workspace mc-workspace--${view}`}
-      role="region"
-      aria-label={workspaceLabel}
-      data-layout={layoutByView[view]}
-    >
-      <ViewIntro view={view} loading={loading} index={index} onRefresh={onRefresh} />
-
-      {view === "overview" ? (
-        <>
-          <section className="command-center-ledger" aria-label="关键运行指标">
-            <OperationalKpiStrip rows={overviewKpis} />
-          </section>
-
-          <Paper className="mc-panel mc-overview-heatmap-card" radius="xl" p="lg">
-            <PanelHeader
-              eyebrow="Sessions"
-              title="会话热度图"
-              icon={IconClock}
-              tone="primary"
-              action={<Badge radius="xl" variant="light" tt="none">悬停查看明细</Badge>}
-            />
-            <DailySessionHeatmap data={dailySessionHeatmap} />
-          </Paper>
-
-          <div className="command-center-primary">
-            <ChartCard
-              eyebrow="Trend"
-              title="按天 Token 趋势"
-              icon={IconChartBar}
-              tone="primary"
-              className="mc-overview-card mc-overview-card--trend"
-            >
-              <MetricAreaChart data={dailyChart} valueKey="tokens" label="Token" testId="daily-token-chart" />
-            </ChartCard>
-
-            <Paper className="mc-panel mc-overview-card mc-overview-card--activity" radius="xl" p="lg">
-              <PanelHeader
-                eyebrow="Activity"
-                title="最近活跃会话"
-                icon={IconActivityHeartbeat}
-                tone={activeTotal ? "success" : "default"}
-                action={(
-                  <Badge radius="xl" variant="light" color={activeTotal ? "teal" : "gray"}>
-                    {formatNumber(activeTotal)} 活跃
-                  </Badge>
-                )}
-              />
-              <ActiveSessionSnapshot
-                overview={activeOverview}
-                tokenSessions={tokens.topSessions}
-                onOpenSessionDetail={onOpenSessionDetail || onOpenConversation}
-              />
-            </Paper>
-          </div>
-
-          <div className="command-center-systems">
-            <Paper className="mc-panel mc-overview-card mc-overview-card--runtime" radius="xl" p="lg">
-              <PanelHeader eyebrow="Runtime" title="运行健康" icon={IconGauge} tone="success" />
-              <Text className="mc-panel__lead">内存占用</Text>
-              <MemoryUsagePanel runtime={runtime} />
-              <div className="mc-runtime-grid">
-                <div>
-                  <Text className="mc-runtime__label">数据刷新</Text>
-                  <Text className="mc-runtime__value">{formatDateTime(payload?.generatedAt || index?.lastBuiltAt)}</Text>
-                </div>
-                <div>
-                  <Text className="mc-runtime__label">摘要缓存</Text>
-                  <Text className="mc-runtime__value">{formatNumber(index?.cachedFiles || 0)} 文件 · 复用 {formatNumber(index?.reusedFiles || 0)}</Text>
-                </div>
-                <div>
-                  <Text className="mc-runtime__label">服务运行</Text>
-                  <Text className="mc-runtime__value">{runtime?.uptimeSeconds ? `${formatNumber(runtime.uptimeSeconds)} 秒` : "未上报"}</Text>
-                </div>
-                <div>
-                  <Text className="mc-runtime__label">CLI 版本</Text>
-                  <Text className="mc-runtime__value">{runtime?.versions ? `Codex ${runtime.versions.codex || "-"} / Claude ${runtime.versions.claude || "-"}` : "-"}</Text>
-                </div>
-              </div>
-            </Paper>
-
-            <Paper className="mc-panel mc-overview-card mc-overview-card--sources" radius="xl" p="lg">
-              <PanelHeader eyebrow="Sources" title="数据源状态" icon={IconDatabase} tone="primary" />
-              <div className="mc-source-list">
-                {[
-                  ["Codex", sources?.codex],
-                  ["Claude Code", sources?.claude],
-                ].map(([label, source]) => (
-                  <div key={label} className="mc-source-row">
-                    <div>
-                      <Text className="mc-source-row__name">{label}</Text>
-                      <Text className="mc-source-row__path">{clipText(source?.path || "未配置数据源路径", 92)}</Text>
-                    </div>
-                    <div className="mc-source-row__side">
-                      <Badge radius="xl" variant="light" color={source?.exists === false ? "gray" : "teal"}>
-                        {getSourceState(source)}
-                      </Badge>
-                      <Text className="mc-source-row__meta">{source?.updatedAt ? formatDateTime(source.updatedAt) : "-"}</Text>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Paper>
-
-            <Paper className="mc-panel mc-overview-card mc-overview-card--workspaces" radius="xl" p="lg">
-              <PanelHeader eyebrow="Workspaces" title="工作区集中度" icon={IconDatabase} tone="default" />
-              <WorkspaceConcentrationPanel workspaces={workspaces} tokens={tokens} />
-            </Paper>
-          </div>
-
-          <div className="command-center-intelligence">
-            <Paper className="mc-panel mc-overview-card mc-overview-card--coverage" radius="xl" p="lg">
-              <PanelHeader eyebrow="Coverage" title="观测覆盖" icon={IconRoute} tone="primary" />
-              <CoverageScorePanel
-                health={health}
-                tokens={tokens}
-                tokenCost={tokenCost}
-                traces={traces}
-                sources={sources}
-                activeOverview={activeOverview}
-              />
-            </Paper>
-
-            <Paper className="mc-panel mc-overview-card mc-overview-card--signals" radius="xl" p="lg">
-              <PanelHeader eyebrow="Signals" title="关键观察" icon={IconGauge} tone="success" />
-              <SignalDigestPanel
-                tokens={tokens}
-                tokenCost={tokenCost}
-                traces={traces}
-                tools={tools}
-                workspaces={workspaces}
-              />
-            </Paper>
-          </div>
-        </>
-      ) : null}
-
-      {view === "tokens" ? (
-        <>
-          <TokenLedgerPanel tokens={tokens} tokenCost={tokenCost} />
-
-          <div className="token-workbench-grid">
-            <div className="token-workbench-grid__primary">
-              <ChartCard
-                eyebrow="Trend"
-                title="近 14 天 Token 消耗趋势"
-                icon={IconChartBar}
-                tone="primary"
-                className="mc-token-card mc-token-card--trend"
-                action={<Badge radius="xl" variant="light" color="blue">含缓存读</Badge>}
-              >
-                <MetricAreaChart data={dailyChart} valueKey="tokens" label="Token" testId="token-trend-chart" />
-              </ChartCard>
-
-              <ChartCard
-                eyebrow="Spend"
-                title="近 14 天金额花费趋势"
-                icon={IconGauge}
-                tone="success"
-                className="mc-token-card mc-token-card--cost-trend"
-                action={<Badge radius="xl" variant="light" color="teal">估算 USD</Badge>}
-              >
-                <MetricAreaChart
-                  data={dailyChart}
-                  valueKey="estimatedUsd"
-                  color="teal.6"
-                  label="金额"
-                  testId="token-cost-trend-chart"
-                  height={184}
-                />
-              </ChartCard>
-
-              <Paper className="mc-panel mc-panel--token mc-token-card mc-token-card--windows" radius="xl" p="lg">
-                <PanelHeader
-                  eyebrow="Token Windows"
-                  title="时间窗口"
-                  icon={IconClock}
-                  tone="primary"
-                  action={<Badge radius="xl" variant="light" color="blue">含缓存读</Badge>}
-                />
-                <div className="mc-token-window-grid">
-                  {[
-                    ["今日", tokenWindows.day],
-                    ["本周", tokenWindows.week],
-                  ].map(([label, window]) => {
-                    const codexTotal = getPlatformTotal(window?.platforms, "codex");
-                    const claudeTotal = getPlatformTotal(window?.platforms, "claude");
-                    const hasWindowBreakdown = ["input", "cachedInput", "output", "reasoningOutput", "rawTotal"].some((key) => (
-                      Object.prototype.hasOwnProperty.call(window || {}, key)
-                    ));
-                    return (
-                      <div key={label} className="mc-token-window">
-                        <Text className="mc-token-window__label">{label}</Text>
-                        <Text className="mc-token-window__value">{tokenLabel(window?.total || 0)}</Text>
-                        <Progress
-                          value={window?.total ? (codexTotal / window.total) * 100 : 0}
-                          size="sm"
-                          radius="xl"
-                          className="mc-token-window__progress"
-                        />
-                        <Text className="mc-token-window__meta">Codex {tokenLabel(codexTotal)} · Claude Code {tokenLabel(claudeTotal)}</Text>
-                        <Text className="mc-token-window__cost">估算 {usdLabel(window?.estimatedUsd || 0)}</Text>
-                        {hasWindowBreakdown ? (
-                          <div className="mc-token-window__detail">
-                            <span>输入侧 {tokenLabel(inputSideToken(window) || window?.input || 0)}</span>
-                            <span>非缓存 {tokenLabel(window?.input || 0)}</span>
-                            <span>命中 {tokenLabel(cacheReadToken(window))}</span>
-                            {cacheCreationToken(window) ? <span>写入 {tokenLabel(cacheCreationToken(window))}</span> : null}
-                            <span>输出 {tokenLabel(window?.output || 0)}</span>
-                            <span>推理 {tokenLabel(window?.reasoningOutput || 0)}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </Paper>
-
-              <Paper className="mc-panel mc-token-card mc-token-card--sessions" radius="xl" p="lg">
-                <PanelHeader eyebrow="Sessions" title="高消耗会话" icon={IconActivityHeartbeat} tone="success" />
-                <div className="mc-session-list">
-                  {(tokens.topSessions || []).slice(0, 8).map((session) => (
-                    <div key={session.sessionId} className="mc-session-row">
-                      <div>
-                        <Text className="mc-session-row__title">{session.title}</Text>
-                        <Text className="mc-session-row__meta">{platformLabel(session.sourceType)} · {shortSessionId(session.sessionId)} · {formatNumber(session.events)} 事件</Text>
-                      </div>
-                      <Text className="mc-session-row__value">
-                        <span>{tokenLabel(session.tokens)}</span>
-                        <em>{usdLabel(session.estimatedUsd || 0)}</em>
-                      </Text>
-                    </div>
-                  ))}
-                </div>
-              </Paper>
+    <Paper className="mc-panel v2-panel token-assurance" radius="md" p={0}>
+      <section className="token-assurance__quality">
+        <PanelHeader
+          eyebrow="CONFIDENCE"
+          title="统计可信度"
+          icon={IconGauge}
+          tone={quality?.level === "high" ? "success" : quality?.level === "medium" ? "primary" : "accent"}
+          action={<strong className={`token-assurance__score is-${quality?.level || "low"}`}>{formatNumber(quality?.score || 0)}</strong>}
+        />
+        <div className="token-assurance__metrics">
+          <div><span>成本覆盖</span><strong>{percentLabel(quality?.costCoverage || 0)}</strong><i style={{ width: `${quality?.costCoverage || 0}%` }} /></div>
+          <div><span>会话 Token 覆盖</span><strong>{percentLabel(quality?.sessionCoverage || 0)}</strong><i style={{ width: `${quality?.sessionCoverage || 0}%` }} /></div>
+          <div><span>摘要复用率</span><strong>{percentLabel(quality?.cacheReuse || 0)}</strong><i style={{ width: `${quality?.cacheReuse || 0}%` }} /></div>
+        </div>
+        <div className="token-assurance__foot">
+          <span>价格表 {quality?.pricingVersion || "builtin"}</span>
+          <span>{quality?.unknownModels?.length ? `${quality.unknownModels.length} 个模型缺少价格` : "所有活跃模型均可估价"}</span>
+        </div>
+      </section>
+      <section className="token-assurance__budgets">
+        <PanelHeader
+          eyebrow="GUARDRAILS"
+          title="预算与效率提醒"
+          icon={IconAlertTriangle}
+          tone={guardrails?.alerts?.length ? "accent" : "success"}
+          action={<span className="v2-panel-note">环境变量配置预算</span>}
+        />
+        <div className="token-budget-list">
+          {budgetRows.map((row) => (
+            <div key={row.key} className={`token-budget-row is-${row.state}`}>
+              <span>{budgetLabels[row.key] || row.key}</span>
+              <strong>{row.configured ? `${Math.round(row.percent)}%` : "未配置"}</strong>
+              <i><b style={{ width: `${Math.min(100, row.percent || 0)}%` }} /></i>
             </div>
-
-            <div className="token-workbench-grid__aside">
-              <Paper className="mc-panel mc-token-card mc-token-card--workspaces" radius="xl" p="lg">
-                <PanelHeader eyebrow="Workspaces" title="工作区消耗" icon={IconRoute} tone="primary" />
-                <TokenWorkspacePanel tokens={tokens} />
-              </Paper>
-
-              <Paper className="mc-panel mc-token-card mc-token-card--cost" radius="xl" p="lg">
-                <PanelHeader eyebrow="Cost" title="成本估算" icon={IconGauge} tone="success" />
-                <Text className="mc-panel__lead">{usdLabel(tokenCost.estimatedUsd)}</Text>
-                <Text className="mc-muted-line">
-                  {tokenCost.speedTier === "fast" ? "Codex fast" : "Codex standard"} · API 等价估算 · 已覆盖 {tokenLabel(tokenCost.knownTokenTotal || 0)}
-                  {tokenCost.unknownModels?.length ? ` · ${formatNumber(tokenCost.unknownModels.length)} 个模型缺少价格` : " · 价格表已覆盖"}
-                </Text>
-                <RankedRows
-                  rows={(tokenCost.byModel || []).slice(0, 5).map((row) => ({
-                    key: row.model,
-                    total: row.estimatedUsd,
-                    knownTokenTotal: row.knownTokenTotal,
-                  }))}
-                  renderLabel={(row) => row.key}
-                  renderMeta={(row) => tokenLabel(row.knownTokenTotal || 0)}
-                  valueFormatter={usdLabel}
-                />
-              </Paper>
-
-              <Paper className="mc-panel mc-token-card mc-token-card--model-cost" radius="xl" p="lg">
-                <PanelHeader eyebrow="Models" title="模型成本效率" icon={IconCpu} tone="accent" />
-                <ModelCostMatrixPanel tokens={tokens} tokenCost={tokenCost} />
-              </Paper>
-            </div>
+          ))}
+          <div className={`token-budget-row is-${guardrails?.cacheState || "unconfigured"}`}>
+            <span>缓存覆盖下限</span>
+            <strong>{percentLabel(guardrails?.cacheCoverage || 0)} / {percentLabel(guardrails?.minimumCacheCoverage || 0)}</strong>
+            <i><b style={{ width: `${Math.min(100, guardrails?.cacheCoverage || 0)}%` }} /></i>
           </div>
-        </>
-      ) : null}
-
-      {view === "insights" ? (
-        <>
-          <InsightDigestPanel
-            health={health}
-            tokens={tokens}
-            tools={tools}
-            workspaces={workspaces}
-            charts={charts}
-            activeOverview={activeOverview}
-          />
-
-          <div className="insight-dossier-grid">
-            <div className="insight-dossier-grid__primary">
-              <ChartCard
-                eyebrow="Activity"
-                title="24h 活动热度"
-                icon={IconActivityHeartbeat}
-                tone="primary"
-                className="mc-insight-card mc-insight-card--heat"
-              >
-                <MetricBarChart data={hourlyChart} valueKey="events" label="事件" testId="activity-heat-chart" height={292} />
-              </ChartCard>
-
-              <Paper className="mc-panel mc-insight-card mc-insight-card--workspaces" radius="xl" p="lg">
-                <PanelHeader eyebrow="Workspaces" title="工作区负载象限" icon={IconDatabase} tone="default" />
-                <WorkspaceLoadPanel workspaces={workspaces} />
-              </Paper>
-
-              <Paper className="mc-panel mc-insight-card mc-insight-card--activity" radius="xl" p="lg">
-                <PanelHeader
-                  eyebrow="Live"
-                  title="会话压力分布"
-                  icon={IconActivityHeartbeat}
-                  tone={activeTotal ? "success" : "default"}
-                  action={(
-                    <Badge radius="xl" variant="light" color={activeTotal ? "teal" : "gray"}>
-                      {formatNumber(activeTotal)} 活跃
-                    </Badge>
-                  )}
-                />
-                <SessionLoadPanel activeOverview={activeOverview} tokenSessions={tokens.topSessions} />
-              </Paper>
-            </div>
-
-            <div className="insight-dossier-grid__evidence">
-              <Paper className="mc-panel mc-insight-card mc-insight-card--tools" radius="xl" p="lg">
-                <PanelHeader eyebrow="Tools" title="工具调用结构" icon={IconTerminal2} tone="accent" />
-                <ToolReliabilityPanel tools={tools} />
-              </Paper>
-
-              <Paper className="mc-panel mc-insight-card mc-insight-card--trace" radius="xl" p="lg">
-                <PanelHeader eyebrow="Trace" title="Trace 组成" icon={IconRoute} tone="primary" />
-                <TraceCompositionPanel traces={traces} />
-              </Paper>
-
-              <Paper className="mc-panel mc-insight-card mc-insight-card--rate" radius="xl" p="lg">
-                <PanelHeader eyebrow="Burn Rate" title="活跃速率" icon={IconActivityHeartbeat} tone="success" />
-                <ActiveRatePanel overview={activeOverview} />
-              </Paper>
-
-              <Paper className="mc-panel mc-insight-card mc-insight-card--shape" radius="xl" p="lg">
-                <PanelHeader eyebrow="Shape" title="活动结构" icon={IconChartBar} tone="accent" />
-                <ActivityShapePanel health={health} charts={charts} tokens={tokens} />
-              </Paper>
-            </div>
-          </div>
-        </>
-      ) : null}
-    </Stack>
+        </div>
+      </section>
+    </Paper>
   );
 }
 
@@ -3399,6 +2376,8 @@ export function ObservabilityWorkspace({
           <TokenLedgerPanel tokens={scopedTokens} tokenCost={scopedTokenCost} />
 
           <TokenEfficiencyStrip tokens={scopedTokens} tokenCost={scopedTokenCost} sessionsTotal={scopedHealth.sessionsTotal} />
+
+          <DataQualityBudgetPanel quality={summary.dataQuality} guardrails={summary.guardrails} />
 
           <div className="v2-token-primary">
             <ChartCard

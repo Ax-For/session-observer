@@ -25,6 +25,11 @@ function rememberLocator(event) {
     sourceOffset: Number(event.sourceOffset),
     sourceLength: Number(event.sourceLength),
     lineEventIndex: Number(event.lineEventIndex) || 0,
+    sessionId: event.sessionId || "unknown",
+    model: event.model || "unknown",
+    cwd: event.cwd || "",
+    sessionTitle: event.sessionTitle || "",
+    sourceType: event.sourceType || "",
   });
   while (locatorCache.size > LOCATOR_CACHE_LIMIT) {
     const first = locatorCache.keys().next().value;

@@ -813,6 +813,8 @@
 }
 
 .session-chat-turn__body {
+  --session-chat-font-size: 0.78rem;
+  --session-chat-line-height: 1.62;
   display: grid;
   gap: 12px;
   padding: 12px 11px 16px;
@@ -854,9 +856,25 @@
 }
 
 .session-chat-turn__body .conv-message-plain,
-.session-chat-turn__body .markdown-content {
-  font-size: 0.67rem;
-  line-height: 1.58;
+.session-chat-turn__body .conv-markdown {
+  font-size: var(--session-chat-font-size);
+  line-height: var(--session-chat-line-height);
+}
+
+.session-chat-turn__body .conv-markdown h1,
+.session-chat-turn__body .conv-markdown h2,
+.session-chat-turn__body .conv-markdown h3,
+.session-chat-turn__body .conv-markdown h4,
+.session-chat-turn__body .conv-markdown h5,
+.session-chat-turn__body .conv-markdown h6 {
+  margin: 14px 0 6px;
+  font-size: 1em;
+  font-weight: 700;
+  line-height: var(--session-chat-line-height);
+}
+
+.session-chat-turn__body .conv-markdown table {
+  font-size: inherit;
 }
 
 .session-chat-process {
@@ -917,6 +935,42 @@
   width: calc(100% - 38px);
   border-radius: 4px;
   box-shadow: none;
+}
+
+.session-chat-process__entries .conv-surface--tool {
+  padding: 9px 10px;
+}
+
+.session-chat-process__entries .conv-tool-head {
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.session-chat-process__entries .conv-tool-head .conv-meta {
+  margin-top: 0;
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.session-chat-process__entries .conv-disclosure {
+  border-radius: 4px;
+}
+
+.session-chat-process__entries .conv-disclosure > summary {
+  min-height: 30px;
+  padding: 6px 9px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.session-chat-process__entries .conv-disclosure__body {
+  padding: 0 9px 9px;
+}
+
+.session-chat-process__entries .conv-code {
+  padding: 8px 9px 9px;
+  font-size: 0.69rem;
+  line-height: 1.55;
 }
 
 .session-chat-jump-latest {

@@ -11,6 +11,7 @@ const { createSessionExport } = require("./session-export");
 const recentEventsReader = require("./recent-events-reader");
 const sourceFiles = require("./source-files");
 const { listSourceAdapters } = require("../shared/source-adapters");
+const SessionInsights = require("../shared/session-insights");
 
 let _deps = null;
 
@@ -152,7 +153,46 @@ function queryEvents(filters) {
     ? getSummaryForRecords(records)
     : _deps.summaryStore.getLastSummary();
   const threadMeta = loadThreadMeta();
-  const recent = recentEventsReader.queryRecentEvents({
+  const useDiskSearch = Boolean(filters.query && _deps.dialogueSearchIndex?.state?.().enabled);
+  let recent;
+  if (useDiskSearch) {
+    _deps.dialogueSearchIndex.ensureArchives(records);
+    const archivePaths = new Set(_deps.dialogueSearchIndex.archiveRecords(records).map((record) => record.file));
+    const currentRecords = records.filter((record) => !archivePaths.has(record.file));
+    const pageEnd = filters.offset + filters.limit;
+    const current = recentEventsReader.queryRecentEvents({
+      files: currentRecords,
+      parsers: _deps.parsers,
+      threadMeta,
+      filters: { ...filters, offset: 0, limit: pageEnd },
+      limit: pageEnd,
+      offset: 0,
+      applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
+      eventMatchesModeCore: _deps.eventMatchesModeCore,
+      eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
+      sessionHints: filters.includeSummary ? summary.sessions.groups : _deps.summaryStore.getLastSummary()?.sessions?.groups,
+    });
+    const archived = _deps.dialogueSearchIndex.search(filters.query, { ...filters, limit: pageEnd });
+    const merged = [...current.events, ...archived].sort((left, right) => {
+      const difference = (_deps.toTimeMsCore(right.time) || 0) - (_deps.toTimeMsCore(left.time) || 0);
+      return filters.order === "asc" ? -difference : difference;
+    });
+    recent = {
+      ...current,
+      events: merged.slice(filters.offset, pageEnd),
+      totalMatching: merged.length,
+      totalVisible: merged.length,
+      page: {
+        ...current.page,
+        offset: filters.offset,
+        limit: filters.limit,
+        total: merged.length,
+        hasMore: merged.length > pageEnd,
+        nextOffset: pageEnd,
+      },
+      scan: { ...current.scan, searchMode: "sqlite-hybrid", indexedEvents: archived.length },
+    };
+  } else recent = recentEventsReader.queryRecentEvents({
     files: records,
     parsers: _deps.parsers,
     threadMeta,
@@ -195,14 +235,8 @@ function getEventDetail(eventId) {
   const locator = recentEventsReader.lookupEventLocator(eventId);
   if (locator?.sourceFile && (locator?.sourceLine || locator?.sourceOffset != null)) {
     const events = indexManager.parseEventLineFromIndex(locator, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
-    const found = events.find((event) => event.eventId === eventId);
-    if (found) return found;
-  }
-
-  const records = listSourceFileRecords();
-  for (const record of records) {
-    const events = indexManager.parseFullFileEvents(record.file, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
-    const found = events.find((event) => event.eventId === eventId);
+    const found = events.find((event) => event.eventId === eventId)
+      || events[Number(locator.lineEventIndex) || 0];
     if (found) return found;
   }
   return null;
@@ -256,7 +290,12 @@ function exportSession(sessionId, options = {}) {
 function querySessions() {
   const records = listSourceFileRecords();
   const summary = getSummaryForRecords(records);
-  const groups = summary.sessions.groups;
+  const annotationMap = new Map((_deps.annotationStore?.list?.() || []).map((item) => [item.sessionId, item]));
+  const groups = summary.sessions.groups.map((session) => ({
+    ...session,
+    annotation: annotationMap.get(session.sessionId) || null,
+    outcome: SessionInsights.deriveSessionOutcome(session, annotationMap.get(session.sessionId)),
+  }));
 
   _deps.applySessionTitleOverridesCore(groups, sessionMeta.loadClaudeSessionIndex(), "claude");
 
@@ -271,6 +310,65 @@ function querySessions() {
     generatedAt: new Date().toISOString(),
     total: groups.length,
     groups: Object.fromEntries(cwdGroups),
+  };
+}
+
+function getSessionAnnotation(sessionId) {
+  return _deps.annotationStore?.get?.(sessionId) || null;
+}
+
+function setSessionAnnotation(sessionId, annotation) {
+  return _deps.annotationStore?.set?.(sessionId, annotation) || null;
+}
+
+function querySessionComparison(leftId, rightId) {
+  const records = listSourceFileRecords();
+  const summary = getSummaryForRecords(records);
+  const resolve = (id) => {
+    const resolved = _deps.summaryStore.resolveSessionIdentifier(id, { files: records });
+    return summary.sessions.groups.find((session) => session.sessionId === resolved) || null;
+  };
+  const left = resolve(leftId);
+  const right = resolve(rightId);
+  if (!left || !right) return null;
+  const leftAnnotation = getSessionAnnotation(left.sessionId);
+  const rightAnnotation = getSessionAnnotation(right.sessionId);
+  return {
+    generatedAt: new Date().toISOString(),
+    left: { ...left, annotation: leftAnnotation, outcome: SessionInsights.deriveSessionOutcome(left, leftAnnotation) },
+    right: { ...right, annotation: rightAnnotation, outcome: SessionInsights.deriveSessionOutcome(right, rightAnnotation) },
+    comparison: SessionInsights.compareSessions(left, right),
+  };
+}
+
+function querySessionReplay(sessionId, limitValue) {
+  const records = listSourceFileRecords();
+  const summary = getSummaryForRecords(records);
+  const resolvedSessionId = _deps.summaryStore.resolveSessionIdentifier(sessionId, { files: records });
+  const session = summary.sessions.groups.find((item) => item.sessionId === resolvedSessionId);
+  if (!session) return null;
+  const limit = Math.min(config.MAX_PAGE_SIZE, Math.max(50, Number(limitValue) || 500));
+  const payload = querySessionEventsDirect({
+    mode: "raw",
+    platform: "",
+    model: "",
+    type: "",
+    sessionId: resolvedSessionId,
+    quickFilter: "all",
+    tokenThreshold: 0,
+    query: "",
+    startMs: null,
+    endMs: null,
+    order: "desc",
+    offset: 0,
+    limit,
+    includeSummary: false,
+  }, records);
+  return {
+    generatedAt: new Date().toISOString(),
+    session,
+    replay: SessionInsights.buildExecutionReplay(payload.events, { limit }),
+    page: payload.page,
   };
 }
 
@@ -299,6 +397,7 @@ function queryObservability() {
       codex: sessionOps.directoryStatus(config.SESSIONS_DIR),
       claude: sessionOps.directoryStatus(config.CLAUDE_PROJECTS_DIR),
       adapters: listSourceAdapters(),
+      dialogueSearch: _deps.dialogueSearchIndex?.state?.() || { enabled: false, mode: "scan" },
     },
     summary,
   };
@@ -341,6 +440,10 @@ module.exports = {
   exportSession,
   resolveSessionIdentifier,
   querySessions,
+  getSessionAnnotation,
+  setSessionAnnotation,
+  querySessionComparison,
+  querySessionReplay,
   queryObservability,
   serveStatic,
 };

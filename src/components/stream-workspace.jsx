@@ -26,7 +26,6 @@ import {
   callTypeLabel,
   clipText,
   formatCompactNumber,
-  formatDateTime,
   formatNumber,
   shortSessionId,
 } from "../lib/formatters";

@@ -131,3 +131,12 @@ test("forEachCompleteJsonlLineReverse truncates oversized lines for reverse list
   assert.ok(lines[1].line.length < large.length);
   assert.equal(readJsonlLineAtOffset(file, lines[1].locator.byteOffset), large);
 });
+
+test("readJsonlLineAtOffset refuses records larger than the detail byte limit", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-offset-limit-"));
+  const file = path.join(dir, "events.jsonl");
+  fs.writeFileSync(file, `${"x".repeat(1024)}\n`);
+
+  assert.equal(readJsonlLineAtOffset(file, 0, 128), "");
+  assert.equal(readJsonlLineAtOffset(file, 0, 2048), "x".repeat(1024));
+});

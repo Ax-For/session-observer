@@ -341,7 +341,8 @@ describe("SessionWorkspace", () => {
     expect(screen.getByText("会话目标")).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "会话聊天记录" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("你")).toBeInTheDocument();
+    expect(screen.getByLabelText("用户消息")).toBeInTheDocument();
+    expect(screen.queryByText("你")).not.toBeInTheDocument();
     expect(screen.getByText("Agent")).toBeInTheDocument();
     expect(screen.getAllByText(/用户输入 · 改造详情页/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Agent 回复 · 已补充详情布局/).length).toBeGreaterThan(0);
@@ -355,13 +356,12 @@ describe("SessionWorkspace", () => {
     fireEvent.click(screen.getByRole("tab", { name: "用量" }));
     expect(screen.getByText("完整会话 Token 构成")).toBeInTheDocument();
     expect(screen.getByText("模型")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "产物" }));
+    fireEvent.click(screen.getByRole("tab", { name: "成果" }));
     expect(screen.getByText("exec_command")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "在事件流聚焦当前会话" }));
     expect(onFocusStreamSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess-1" }));
-    fireEvent.click(screen.getByRole("tab", { name: "运行" }));
-    fireEvent.click(container.querySelector(".session-detail-run-list button"));
-    expect(onOpenEvent).toHaveBeenCalledWith(expect.objectContaining({ callType: "Token_Usage" }));
+    expect(screen.getByRole("tab", { name: "回放" })).toBeInTheDocument();
+    expect(screen.getByText("本地评估")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "取消当前会话聚焦" }));
     expect(onClearSessionFocus).toHaveBeenCalledOnce();
   });

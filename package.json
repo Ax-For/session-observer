@@ -37,7 +37,7 @@
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
-    "check": "npm run lint && npm test && npm run test:core && npm run build",
+    "check": "npm run lint:strict && npm test && npm run test:core && npm run build",
     "prepare": "husky"
   },
   "dependencies": {

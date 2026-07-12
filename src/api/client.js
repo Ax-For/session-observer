@@ -88,6 +88,28 @@ export const apiClient = {
     return request("/api/sessions");
   },
 
+  fetchSessionReplay(sessionId, limit = 500) {
+    const query = buildQuery({ limit });
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/replay?${query}`);
+  },
+
+  compareSessions(left, right) {
+    const query = buildQuery({ left, right });
+    return request(`/api/sessions/compare?${query}`);
+  },
+
+  fetchSessionAnnotation(sessionId) {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/annotation`);
+  },
+
+  saveSessionAnnotation(sessionId, annotation) {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/annotation`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(annotation || {}),
+    });
+  },
+
   fetchObservability() {
     return request("/api/observability");
   },

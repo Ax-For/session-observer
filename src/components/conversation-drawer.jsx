@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Drawer, Group, Paper, Progress, ScrollArea, Select, Slider, Stack, Text, TextInput, Title } from "@mantine/core";
-import { IconCopy } from "@tabler/icons-react";
+import { IconCopy, IconPhoto } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
+import { formatBytes, formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
 import { buildConversationTurns, looksLikeMarkdownContent } from "../lib/conversation-models";
 import { JsonCodeBlock } from "./json-code-block";
 
@@ -664,9 +664,12 @@ export function ConversationEntry({ entry, highlightQuery = "" }) {
   return (
     <div className={`conv-row conv-row--message conv-row--${entry.role} ${entry.grouped ? "is-grouped" : ""}`}>
       <div className={`conv-avatar conv-avatar--${entry.role}`}>{entry.role === "user" ? "U" : "A"}</div>
-      <div className={`conv-surface conv-surface--${entry.role}`}>
-        <div className="conv-message-head">
-          <Text className="conv-role-label">{entry.role === "user" ? "你" : "Agent"}</Text>
+      <div
+        className={`conv-surface conv-surface--${entry.role}`}
+        aria-label={entry.role === "user" ? "用户消息" : "Agent 消息"}
+      >
+        <div className={`conv-message-head${entry.role === "user" ? " conv-message-head--user" : ""}`}>
+          {entry.role === "agent" ? <Text className="conv-role-label">Agent</Text> : null}
           <Text className="conv-meta">{formatFullDateTime(entry.time)}</Text>
         </div>
         {entry.agentPrefix ? (
@@ -675,6 +678,21 @@ export function ConversationEntry({ entry, highlightQuery = "" }) {
         <div className="conv-message-body">
           <MarkdownOrPlainText content={entry.content} highlightQuery={highlightQuery} />
         </div>
+        {entry.attachments?.length ? (
+          <div className="conv-attachments" aria-label="图片附件">
+            {entry.attachments.map((attachment) => (
+              <div className="conv-attachment" key={`${attachment.name}-${attachment.path}`}>
+                <IconPhoto size={15} stroke={1.8} aria-hidden="true" />
+                <span>
+                  <strong>{attachment.name}</strong>
+                  <small>
+                    图片附件{attachment.sourceLength ? ` · 原始记录 ${formatBytes(attachment.sourceLength)}` : ""}
+                  </small>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );

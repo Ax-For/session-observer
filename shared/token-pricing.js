@@ -9,6 +9,8 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createTokenPricing() {
   "use strict";
 
+  const PRICING_VERSION = "2026-07-12";
+
   const MODEL_PRICE_HINTS = [
     { match: /gpt-5\.5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2.5, source: "codex-rate-card" },
     { match: /gpt-5\.4-mini/i, input: 0.75, output: 4.52, cacheRead: 0.075, cacheCreation: 0.75, source: "codex-rate-card" },
@@ -121,6 +123,7 @@
   }
 
   return {
+    PRICING_VERSION,
     estimateCostSummary,
     estimateTokenCost,
     findModelPrice,

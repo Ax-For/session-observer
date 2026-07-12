@@ -5,6 +5,7 @@
 const fs = require("fs");
 const config = require("./config");
 const fsScanner = require("./fs-scanner");
+const { loadCustomSources } = require("./custom-sources");
 
 function statFile(file) {
   const stat = fs.statSync(file);
@@ -20,6 +21,7 @@ function listSourceFiles() {
   return [
     ...fsScanner.listJsonlFiles(config.SESSIONS_DIR),
     ...fsScanner.listJsonlFiles(config.CLAUDE_PROJECTS_DIR),
+    ...loadCustomSources().flatMap((source) => source.directories.flatMap((directory) => fsScanner.listJsonlFiles(directory))),
   ];
 }
 

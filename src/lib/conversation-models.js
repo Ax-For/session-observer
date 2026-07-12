@@ -197,6 +197,25 @@ function cleanContent(content) {
   return content.replace(CONTEXT_BLOCK_PATTERN, "").trim();
 }
 
+export function parseConversationMessageContent(content) {
+  const text = cleanContent(content);
+  const wrapper = text.match(/# Files mentioned by the user:\s*([\s\S]*?)## My request for Codex:\s*([\s\S]*)/i);
+  if (!wrapper) return { content: text, attachments: [] };
+
+  const attachments = [...wrapper[1].matchAll(/^##\s+(.+?):\s+(.+)$/gm)]
+    .map((match) => ({ name: match[1].trim(), path: match[2].trim() }))
+    .filter((item) => /\.(?:avif|gif|jpe?g|png|webp)$/i.test(item.name));
+  const request = wrapper[2]
+    .replace(/<image\b[^>]*>[\s\S]*?<\/image>/gi, "")
+    .replace(/<image\b[^>]*\/?\s*>/gi, "")
+    .trim();
+
+  return {
+    content: request || "已附加图片",
+    attachments,
+  };
+}
+
 /** Check if content appears to contain Markdown formatting */
 export function looksLikeMarkdownContent(content) {
   const text = cleanContent(content);
@@ -430,7 +449,10 @@ export function buildConversationEntries(events) {
     }
 
     const role = event.callType === "Prompt" || event.callType === "User" ? "user" : "agent";
-    const parsed = role === "agent" ? parseAgentPrefix(event.content) : { agentPrefix: "", content: event.content };
+    const message = role === "user"
+      ? parseConversationMessageContent(event.content)
+      : { content: event.content, attachments: [] };
+    const parsed = role === "agent" ? parseAgentPrefix(message.content) : { agentPrefix: "", content: message.content };
     if (!parsed.content) return;
     if (hasDuplicateDialogueEntry(entries, role, parsed.content)) return;
     const previous = entries[entries.length - 1];
@@ -441,6 +463,10 @@ export function buildConversationEntries(events) {
       grouped: previous?.kind === "message" && previous.role === role,
       agentPrefix: parsed.agentPrefix,
       content: parsed.content,
+      attachments: message.attachments.map((attachment) => ({
+        ...attachment,
+        sourceLength: Number(event.sourceLength) || 0,
+      })),
       time: event.time,
     });
   });

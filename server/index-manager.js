@@ -208,9 +208,11 @@ function makeIndexedEvent(event) {
 
   const summary = String(event.summary || "");
   if (summary && summary !== contentPreview) indexed.summary = summary;
-  if (content.length > config.EVENT_CONTENT_PREVIEW_LENGTH) {
+  if (event.contentTruncated || content.length > config.EVENT_CONTENT_PREVIEW_LENGTH) {
     indexed.contentTruncated = true;
-    indexed.contentLength = content.length;
+    indexed.contentLength = Number(event.contentLength) > 0
+      ? Number(event.contentLength)
+      : content.length;
   }
   const compactUsage = compactTokenUsage(event.tokenUsage);
   if (compactUsage) indexed.tokenUsage = compactUsage;
@@ -508,9 +510,16 @@ function parseFullFileEvents(file, threadMeta, parsers, applyEventSessionMetaCor
 function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSessionMetaCore) {
   const sourceLine = Number(indexedEvent.sourceLine);
   const sourceOffset = Number(indexedEvent.sourceOffset);
-  const line = Number.isFinite(sourceLine) && sourceLine > 0
-    ? fsScanner.readJsonlLine(indexedEvent.sourceFile, sourceLine)
-    : fsScanner.readJsonlLineAtOffset(indexedEvent.sourceFile, sourceOffset);
+  const sourceLength = Number(indexedEvent.sourceLength);
+  if (Number.isFinite(sourceLength) && sourceLength > config.EVENT_DETAIL_MAX_LINE_BYTES) return [];
+  const maxBytes = Number.isFinite(sourceLength) && sourceLength > 0
+    ? Math.min(config.EVENT_DETAIL_MAX_LINE_BYTES, sourceLength + 1)
+    : config.EVENT_DETAIL_MAX_LINE_BYTES;
+  const line = Number.isFinite(sourceOffset) && sourceOffset >= 0
+    ? fsScanner.readJsonlLineAtOffset(indexedEvent.sourceFile, sourceOffset, maxBytes)
+    : Number.isFinite(sourceLine) && sourceLine > 0 && Number.isFinite(sourceLength)
+      ? fsScanner.readJsonlLine(indexedEvent.sourceFile, sourceLine)
+      : "";
   if (!line) return [];
   const { parser } = fsScanner.resolveParserForFile(indexedEvent.sourceFile, parsers);
   const context = {

@@ -8,6 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 const ObserverCore = require("../shared/observer-core");
+const SessionInsights = require("../shared/session-insights");
 const tokenPricing = require("../shared/token-pricing");
 const config = require("./config");
 const fsScanner = require("./fs-scanner");
@@ -1393,6 +1394,47 @@ function buildTokenRangeSnapshots(summary, nowMs) {
   ].map((definition) => [definition.key, buildTokenRangeSnapshot(summary, nowMs, definition)]));
 }
 
+function buildBudgetStatus(value, limit, label) {
+  const current = Number(value) || 0;
+  const configuredLimit = Number(limit) || 0;
+  const ratio = configuredLimit > 0 ? current / configuredLimit : 0;
+  return {
+    key: label,
+    value: current,
+    limit: configuredLimit,
+    configured: configuredLimit > 0,
+    percent: configuredLimit > 0 ? Math.max(0, ratio * 100) : 0,
+    state: configuredLimit <= 0 ? "unconfigured" : ratio >= 1 ? "exceeded" : ratio >= 0.8 ? "warning" : "ok",
+  };
+}
+
+function buildGuardrails(tokenRanges, budgets = {}) {
+  const today = tokenRanges.today?.tokens || {};
+  const week = tokenRanges.week?.tokens || {};
+  const inputSide = Number(week.inputTotal) || (Number(week.input) || 0) + (Number(week.cacheReadInput) || 0);
+  const cacheCoverage = inputSide > 0 ? (Number(week.cacheReadInput) || 0) / inputSide * 100 : 0;
+  const rows = [
+    buildBudgetStatus(today.effectiveTotal, budgets.dailyTokens, "dailyTokens"),
+    buildBudgetStatus(week.effectiveTotal, budgets.weeklyTokens, "weeklyTokens"),
+    buildBudgetStatus(today.cost?.estimatedUsd, budgets.dailyCostUsd, "dailyCostUsd"),
+    buildBudgetStatus(week.cost?.estimatedUsd, budgets.weeklyCostUsd, "weeklyCostUsd"),
+  ];
+  const minimumCacheCoverage = Number(budgets.minimumCacheCoverage) || 0;
+  const cacheState = inputSide <= 0 || minimumCacheCoverage <= 0
+    ? "unconfigured"
+    : cacheCoverage < minimumCacheCoverage ? "warning" : "ok";
+  return {
+    rows,
+    cacheCoverage,
+    minimumCacheCoverage,
+    cacheState,
+    alerts: [
+      ...rows.filter((row) => row.state === "warning" || row.state === "exceeded").map((row) => row.key),
+      ...(cacheState === "warning" ? ["cacheCoverage"] : []),
+    ],
+  };
+}
+
 function buildPublicSummary(summary, cacheStats, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
   const sessions = buildSessionsPayload(summary, options.threadMeta);
@@ -1454,6 +1496,17 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
 
   const costSummary = buildCostSummary(summary);
   const tokenRanges = buildTokenRangeSnapshots(summary, nowMs);
+  const dataQuality = SessionInsights.buildDataConfidence({
+    totalTokens: summary.usage.effectiveTotal,
+    knownTokenTotal: costSummary.knownTokenTotal,
+    sessionsTotal: sessions.groups.length,
+    sessionsWithTokens: sessions.groups.filter((session) => ObserverCore.hasTokenUsageData(session.aggregateToken)).length,
+    totalFiles: cacheStats.totalFiles || cacheStats.cachedFiles,
+    reusedFiles: cacheStats.reusedFiles,
+    unknownModels: costSummary.unknownModels,
+    pricingVersion: tokenPricing.PRICING_VERSION,
+  });
+  const guardrails = buildGuardrails(tokenRanges, options.budgets || config.USAGE_BUDGETS);
   const toolCategories = ObserverCore.buildToolCategories(topTools);
   const usageStats = ObserverCore.buildUsageStatistics({
     sessions: sessions.groups,
@@ -1514,6 +1567,8 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
       topSessions,
     },
     tokenRanges,
+    dataQuality,
+    guardrails,
     alerts: {
       total: summary.alerts.total,
       byType: sortedValueEntries(summary.alerts.byType, "count"),

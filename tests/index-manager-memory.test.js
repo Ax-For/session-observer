@@ -60,6 +60,22 @@ test("makeIndexedEvent stores a compact event without duplicate or empty fields"
   assert.deepEqual(indexed.tokenUsage, { input: 100, total: 100 });
 });
 
+test("makeIndexedEvent preserves source truncation metadata for detail hydration", () => {
+  const indexed = makeIndexedEvent({
+    time: "2026-07-12T15:38:09.415Z",
+    sessionId: "sess-image",
+    sourceFile: "/tmp/image-session.jsonl",
+    sourceType: "codex",
+    callType: "Prompt",
+    content: "Large user content omitted from event stream (249KB).",
+    contentTruncated: true,
+    contentLength: 254948,
+  });
+
+  assert.equal(indexed.contentTruncated, true);
+  assert.equal(indexed.contentLength, 254948);
+});
+
 test("parseFileEvents keeps file cache metadata without retaining per-file event arrays by default", () => {
   fileEventCache.clear();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-index-"));
@@ -157,6 +173,36 @@ test("parseEventLineFromIndex can read an event by byte offset", () => {
   assert.equal(events[0].content, "second");
   assert.equal(events[0].sourceLine, undefined);
   assert.equal(events[0].sourceOffset, Buffer.byteLength(`${first}\n`));
+});
+
+test("parseEventLineFromIndex reads a single detail larger than the stream preview limit", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-large-detail-"));
+  const file = path.join(dir, "events.jsonl");
+  const content = "x".repeat((8 * 1024 * 1024) + 1024);
+  const line = JSON.stringify({ timestamp: "2026-06-01T10:00:00.000Z", content });
+  fs.writeFileSync(file, `${line}\n`);
+
+  const parsers = {
+    parseCodexLineToEvent: (obj, context) => ({
+      time: obj.timestamp,
+      sessionId: context.sessionId,
+      sourceFile: context.sourceFile,
+      sourceType: "codex",
+      callType: "Agent",
+      content: obj.content,
+      summary: obj.content,
+    }),
+  };
+
+  const events = parseEventLineFromIndex({
+    sourceFile: file,
+    sourceOffset: 0,
+    sourceLength: Buffer.byteLength(line),
+    sessionId: "sess-large-detail",
+  }, new Map(), parsers, (event) => event);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].content.length, content.length);
 });
 
 test("sortEventsChronologically keeps missing timestamps before dated events and latest events last", () => {

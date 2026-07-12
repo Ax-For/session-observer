@@ -35,11 +35,8 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { apiClient } from "./api/client";
-import {
-  formatFullDateTime,
-  formatHumanNumber,
-  formatNumber,
-} from "./lib/formatters";
+import { formatNumber } from "./lib/formatters";
+import { hydrateDialogueEvents } from "./lib/conversation-hydration";
 import {
   DEFAULT_SESSION_FILTERS,
   DEFAULT_STREAM_FILTERS,
@@ -191,6 +188,8 @@ export function App() {
   const [streamFilters, setStreamFilters] = useState(initialUrlState.streamFilters || DEFAULT_STREAM_FILTERS);
   const [sessionFilters, setSessionFilters] = useState(initialUrlState.sessionFilters || DEFAULT_SESSION_FILTERS);
   const [selectedSessionId, setSelectedSessionId] = useState(initialUrlState.selectedSessionId);
+  const [sessionComparison, setSessionComparison] = useState(null);
+  const [sessionComparisonLoading, setSessionComparisonLoading] = useState(false);
   const dataSource = DATA_SOURCE;
   const localEvents = EMPTY_LOCAL_EVENTS;
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -251,7 +250,7 @@ export function App() {
       title: "当前页面按需读取摘要数据，使用刷新按钮重新加载。",
     };
   }, [sourceChangeStream.connected, tab]);
-  const { sessionsPayload, loadingSessions, loadSessions } = useSessionData({
+  const { sessionsPayload, loadSessions } = useSessionData({
     dataSource,
     notify,
   });
@@ -456,7 +455,9 @@ export function App() {
         boundaryAttempts += 1;
       }
       const nextOffset = offset + nextEvents.length;
-      setSessionDetailEvents((current) => (append ? [...current, ...nextEvents] : nextEvents)
+      const hydratedEvents = await hydrateDialogueEvents(nextEvents);
+      if (requestId !== sessionDetailRequestId.current) return;
+      setSessionDetailEvents((current) => (append ? [...current, ...hydratedEvents] : hydratedEvents)
         .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || ""))));
       setSessionDetailPage({
         total,
@@ -656,45 +657,6 @@ export function App() {
   }
 
   const canMutateSessions = true;
-  const headerMetrics = useMemo(() => {
-    if (isObservabilityTab) {
-      const health = observabilityPayload.summary?.health || {};
-      return {
-        status: `按需摘要 · 最近更新 ${formatFullDateTime(observabilityPayload.generatedAt)}`,
-        matching: Number(health.eventsTotal) || 0,
-        sessions: Number(health.sessionsTotal) || 0,
-      };
-    }
-
-    if (tab === "sessions") {
-      const eventTotal = sessionSections.reduce((sum, section) => (
-        sum + (section.sessions || []).reduce((sessionSum, session) => sessionSum + (Number(session.count) || 0), 0)
-      ), 0);
-      return {
-        status: `会话列表 · 最近更新 ${formatFullDateTime(sessionsPayload.generatedAt)}`,
-        matching: eventTotal,
-        sessions: sessionsPayload.total || sessionSections.reduce((sum, section) => sum + section.total, 0),
-      };
-    }
-
-    return {
-      status: `按需事件流 · 最近更新 ${formatFullDateTime(streamPayload.generatedAt)}`,
-      matching: currentStream.totalMatching || currentStream.events.length,
-      sessions: streamSummary.counts.sessions,
-    };
-  }, [
-    currentStream.events.length,
-    currentStream.totalMatching,
-    isObservabilityTab,
-    observabilityPayload.generatedAt,
-    observabilityPayload.summary?.health,
-    sessionSections,
-    sessionsPayload.generatedAt,
-    sessionsPayload.total,
-    streamPayload.generatedAt,
-    streamSummary.counts.sessions,
-    tab,
-  ]);
   const activeStreamFilters = [
     deferredQuery ? {
       key: "query",
@@ -758,6 +720,23 @@ export function App() {
       message: shortMessage(sessionId),
       color: "blue",
     });
+  }
+
+  async function compareSelectedSessions() {
+    if (selectedSessionIds.length !== 2) return;
+    setSessionComparisonLoading(true);
+    try {
+      const payload = await apiClient.compareSessions(selectedSessionIds[0], selectedSessionIds[1]);
+      setSessionComparison(payload);
+    } catch (error) {
+      notify({
+        title: "会话对比失败",
+        message: String(error.message || error),
+        color: "red",
+      });
+    } finally {
+      setSessionComparisonLoading(false);
+    }
   }
 
   async function openEventDetail(event) {
@@ -1109,6 +1088,17 @@ export function App() {
                     {selectedSessionIds.length > 0 ? (
                       <div className="session-selection-bar">
                         <Text>已选择 {formatNumber(selectedSessionIds.length)} 个原始会话</Text>
+                        <Button
+                          variant="light"
+                          radius="sm"
+                          color="teal"
+                          size="xs"
+                          onClick={compareSelectedSessions}
+                          loading={sessionComparisonLoading}
+                          disabled={selectedSessionIds.length !== 2}
+                        >
+                          对比会话
+                        </Button>
                         <Button variant="light" radius="sm" color="red" size="xs" onClick={batchDelete} disabled={!canMutateSessions}>
                           批量删除
                         </Button>
@@ -1143,6 +1133,10 @@ export function App() {
                       onCopySessionId={copySessionId}
                       onOpenEvent={openEventDetail}
                       onLoadMoreSessionDetail={() => loadSessionDetailEvents(selectedSessionId, { append: true })}
+                      onAnnotationSaved={loadSessions}
+                      comparison={sessionComparison}
+                      comparisonLoading={sessionComparisonLoading}
+                      onCloseComparison={() => setSessionComparison(null)}
                     />
                   </Suspense>
                 </>

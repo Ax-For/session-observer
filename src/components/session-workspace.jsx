@@ -8,10 +8,12 @@ import {
   Progress,
   ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Tabs,
   Text,
   TextInput,
+  Textarea,
   ThemeIcon,
   Title,
   Tooltip,
@@ -32,11 +34,11 @@ import {
   IconLayersIntersect,
   IconMessage2,
   IconCoin,
-  IconHistory,
+  IconPlayerTrackNext,
+  IconStar,
   IconRoute,
   IconSearch,
   IconTerminal2,
-  IconTools,
   IconTrash,
   IconX,
   IconZoomScan,
@@ -50,20 +52,14 @@ import {
   platformLabel,
   shortSessionId,
 } from "../lib/formatters";
-import { readableEventSummary } from "../lib/event-display";
-import {
-  buildActivityRuns,
-  buildSessionArtifacts,
-  buildSessionPresentation,
-} from "../lib/activity-models";
+import { buildSessionArtifacts, buildSessionPresentation } from "../lib/activity-models";
 import { buildConversationTurns } from "../lib/conversation-models";
 import { ConversationEntry } from "./conversation-drawer";
+import { apiClient } from "../api/client";
 
 const SESSION_VIRTUAL_THRESHOLD = 24;
 const SESSION_ROW_HEIGHT = 84;
 const SESSION_ROW_OVERSCAN = 4;
-const DIALOGUE_TYPES = new Set(["Prompt", "User", "Agent"]);
-
 function formatTokenText(value, hasTokenData = true) {
   return hasTokenData ? `${formatCompactNumber(value)} Tok` : "Token 未记录";
 }
@@ -99,82 +95,13 @@ function formatDurationText(start, end) {
   return rest ? `${formatNumber(hours)} 小时 ${formatNumber(rest)} 分钟` : `${formatNumber(hours)} 小时`;
 }
 
-function tokenCacheRead(tokenUsage) {
-  if (tokenUsage?.cacheReadInput != null) return toFiniteNumber(tokenUsage.cacheReadInput);
-  return toFiniteNumber(tokenUsage?.cachedInput);
-}
-
-function tokenCacheCreation(tokenUsage) {
-  return toFiniteNumber(tokenUsage?.cacheCreationInput);
-}
-
-function addTokenTotals(target, tokenUsage) {
-  if (!tokenUsage) return false;
-  const keys = ["input", "output", "total", "cachedInput", "reasoningOutput"];
-  let hasValue = false;
-  keys.forEach((key) => {
-    const value = toFiniteNumber(tokenUsage[key]);
-    if (value) hasValue = true;
-    target[key] += value;
-  });
-  const cacheRead = tokenCacheRead(tokenUsage);
-  const cacheCreation = tokenCacheCreation(tokenUsage);
-  if (cacheRead || cacheCreation) hasValue = true;
-  target.cacheReadInput += cacheRead;
-  target.cacheCreationInput += cacheCreation;
-  return hasValue;
-}
-
-function createTokenTotals() {
-  return {
-    input: 0,
-    output: 0,
-    total: 0,
-    cachedInput: 0,
-    cacheReadInput: 0,
-    cacheCreationInput: 0,
-    reasoningOutput: 0,
-  };
-}
-
-function countBy(items, selector) {
-  const counts = new Map();
-  for (const item of items || []) {
-    const key = selector(item);
-    if (!key) continue;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([key, value]) => ({ key, value }))
-    .sort((left, right) => {
-      if (right.value !== left.value) return right.value - left.value;
-      return String(left.key).localeCompare(String(right.key), "zh-CN");
-    });
-}
-
-function toolNameFromEvent(event) {
-  if (event?.toolName) return event.toolName;
-  const summary = `${event?.summary || ""} ${event?.extra || ""}`;
-  return summary.match(/tool=([^\s]+)/i)?.[1] || "";
-}
-
-function dialogueRoleLabel(event) {
-  if (event?.callType === "Agent") return "Agent";
-  if (event?.callType === "Prompt" || event?.callType === "User") return "用户";
-  return callTypeLabel(event?.callType);
-}
-
-function dedupeDialoguePreviewEvents(events) {
-  const seen = new Set();
-  const rows = [];
-  for (const event of events || []) {
-    const text = readableEventSummary(event, 360).trim().replace(/\s+/g, " ");
-    const signature = `${event?.callType || ""}:${text}`;
-    if (!text || seen.has(signature)) continue;
-    seen.add(signature);
-    rows.push(event);
-  }
-  return rows;
+function formatDurationMs(value) {
+  const milliseconds = Math.max(0, Number(value) || 0);
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} 秒`;
+  const minutes = Math.floor(milliseconds / 60000);
+  const seconds = Math.round((milliseconds % 60000) / 1000);
+  return seconds ? `${formatNumber(minutes)} 分 ${seconds} 秒` : `${formatNumber(minutes)} 分钟`;
 }
 
 function sessionMatchesId(session, selectedSessionId) {
@@ -189,52 +116,6 @@ function getSessionTitle(session, selectedSessionId) {
     || session?.fallbackTitle
     || shortSessionId(selectedSessionId)
     || "未选择会话";
-}
-
-function buildSessionDetailStats(session, events) {
-  const eventList = (events || []).slice().sort((left, right) => String(left.time || "").localeCompare(String(right.time || "")));
-  const eventTokens = createTokenTotals();
-  let hasEventTokens = false;
-  for (const event of eventList) {
-    hasEventTokens = addTokenTotals(eventTokens, event.tokenUsage) || hasEventTokens;
-  }
-
-  const sessionTokens = createTokenTotals();
-  addTokenTotals(sessionTokens, session?.aggregateToken);
-  if (!sessionTokens.total && session?.totalTokens) {
-    sessionTokens.total = toFiniteNumber(session.totalTokens);
-  }
-
-  const tokens = hasEventTokens ? eventTokens : sessionTokens;
-  const typeRows = countBy(eventList, (event) => event.callType || "Unknown").slice(0, 6);
-  const modelRows = eventList.length
-    ? countBy(eventList, (event) => event.model || "").slice(0, 5)
-    : (session?.models || []).map((model) => ({ key: model, value: 1 })).slice(0, 5);
-  const toolRows = countBy(
-    eventList.filter((event) => String(event.callType || "").includes("Tool_Call")),
-    toolNameFromEvent,
-  ).slice(0, 5);
-  const userEvents = eventList.filter((event) => ["Prompt", "User"].includes(event.callType)).length;
-  const agentEvents = eventList.filter((event) => event.callType === "Agent").length;
-  const first = eventList[0]?.time || session?.startedAt || session?.createdAt || "";
-  const latest = eventList[eventList.length - 1]?.time || session?.latest || "";
-  const dialoguePreview = dedupeDialoguePreviewEvents(eventList.filter((event) => DIALOGUE_TYPES.has(event.callType))).slice(-6);
-
-  return {
-    eventCount: eventList.length || toFiniteNumber(session?.count || session?.events),
-    rawSessionCount: Math.max(1, toFiniteNumber(session?.groupedCount || (session?.sessionIds || []).length || 1)),
-    tokens,
-    typeRows,
-    modelRows,
-    toolRows,
-    userEvents,
-    agentEvents,
-    dialoguePreview,
-    first,
-    latest,
-    duration: formatDurationText(first, latest),
-    recentEvents: eventList.slice(-6).reverse(),
-  };
 }
 
 function getSessionIds(session) {
@@ -453,6 +334,172 @@ function SessionChatTurn({ turn, defaultOpen, query }) {
   );
 }
 
+const OUTCOME_OPTIONS = [
+  { value: "unreviewed", label: "未评估" },
+  { value: "success", label: "已完成" },
+  { value: "partial", label: "部分完成" },
+  { value: "failed", label: "未完成" },
+];
+
+function SessionReplay({ payload, loading, error, onOpenEvent }) {
+  const replay = payload?.replay;
+  const slowest = new Set(replay?.slowestStepIds || []);
+  if (loading && !replay) return <Text className="session-detail-empty">正在构建执行回放...</Text>;
+  if (error) return <Text className="session-detail-empty is-error">{error}</Text>;
+  if (!replay?.steps?.length) return <Text className="session-detail-empty">当前加载范围没有可回放的执行步骤。</Text>;
+
+  return (
+    <div className="session-replay">
+      <div className="session-replay__summary">
+        <div><span>执行跨度</span><strong>{formatDurationMs(replay.durationMs)}</strong></div>
+        <div><span>工具步骤</span><strong>{formatNumber(replay.toolSteps)}</strong></div>
+        <div><span>失败步骤</span><strong className={replay.errors ? "is-error" : ""}>{formatNumber(replay.errors)}</strong></div>
+        <div><span>回放范围</span><strong>{formatNumber(replay.total)} 条</strong></div>
+      </div>
+      <div className="session-replay__timeline">
+        {replay.steps.map((step, index) => (
+          <button
+            key={step.id}
+            type="button"
+            className={`session-replay-step is-${step.kind}${step.status === "error" ? " is-error" : ""}${slowest.has(step.id) ? " is-slow" : ""}`}
+            onClick={() => step.eventId && onOpenEvent?.({ eventId: step.eventId, contentTruncated: true })}
+            disabled={!step.eventId}
+          >
+            <span className="session-replay-step__rail"><i />{index < replay.steps.length - 1 ? <b /> : null}</span>
+            <span className="session-replay-step__time">{formatDateTime(step.time)}</span>
+            <span className="session-replay-step__body">
+              <strong>{step.toolName || callTypeLabel(step.title)}</strong>
+              <em>{clipText(step.preview || "无正文摘要", 150)}</em>
+            </span>
+            <span className="session-replay-step__metrics">
+              {step.tokenTotal ? <b>{formatCompactNumber(step.tokenTotal)} Tok</b> : null}
+              {step.gapMs ? <small>{slowest.has(step.id) ? "等待 " : "+"}{formatDurationMs(step.gapMs)}</small> : null}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SessionAnnotationEditor({ sessionId, annotation, onSaved }) {
+  const [draft, setDraft] = useState(annotation || { outcome: "unreviewed", favorite: false, tags: [], note: "" });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    setDraft(annotation || { outcome: "unreviewed", favorite: false, tags: [], note: "" });
+  }, [annotation, sessionId]);
+
+  async function save() {
+    setSaving(true);
+    setSaveError("");
+    try {
+      const payload = await apiClient.saveSessionAnnotation(sessionId, draft);
+      setDraft(payload.annotation);
+      onSaved?.(payload.annotation);
+    } catch (error) {
+      setSaveError(String(error.message || error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="session-review-editor">
+      <div className="session-detail-section-head">
+        <Text>本地评估</Text>
+        <span>仅保存标签与备注，不复制对话正文</span>
+      </div>
+      <div className="session-review-editor__controls">
+        <Select
+          label="完成状态"
+          data={OUTCOME_OPTIONS}
+          value={draft.outcome || "unreviewed"}
+          onChange={(value) => setDraft((current) => ({ ...current, outcome: value || "unreviewed" }))}
+          size="xs"
+        />
+        <TextInput
+          label="标签"
+          placeholder="前端, 性能, 调试"
+          value={(draft.tags || []).join(", ")}
+          onChange={(event) => setDraft((current) => ({
+            ...current,
+            tags: event.currentTarget.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
+          }))}
+          size="xs"
+        />
+        <Checkbox
+          label="收藏会话"
+          checked={Boolean(draft.favorite)}
+          onChange={(event) => setDraft((current) => ({ ...current, favorite: event.currentTarget.checked }))}
+        />
+      </div>
+      <Textarea
+        label="复盘备注"
+        placeholder="记录完成情况、问题原因或后续动作"
+        value={draft.note || ""}
+        onChange={(event) => setDraft((current) => ({ ...current, note: event.currentTarget.value }))}
+        rows={3}
+      />
+      <div className="session-review-editor__actions">
+        <Button size="xs" color="teal" loading={saving} onClick={save}>保存评估</Button>
+        {saveError ? <span className="is-error">{saveError}</span> : annotation?.updatedAt ? <span>上次保存 {formatDateTime(annotation.updatedAt)}</span> : <span>尚未评估</span>}
+      </div>
+    </section>
+  );
+}
+
+function SessionComparisonPanel({ payload, loading, onClose }) {
+  const rows = [
+    ["Token", "tokens", (value) => formatTokenText(value, true)],
+    ["估算成本", "cost", (value) => `$${toFiniteNumber(value).toFixed(2)}`],
+    ["持续时间", "durationMs", formatDurationMs],
+    ["事件", "events", formatNumber],
+    ["工具调用", "toolCalls", formatNumber],
+    ["工具错误", "toolErrors", formatNumber],
+    ["编辑文件", "editedFiles", formatNumber],
+    ["上下文压缩", "compactions", formatNumber],
+  ];
+  if (loading) return <Paper className="session-detail-panel session-detail-panel--empty" p="lg"><Text>正在比较会话...</Text></Paper>;
+  if (!payload) return null;
+  return (
+    <Paper className="session-detail-panel session-comparison" radius="md" p="md">
+      <div className="session-comparison__head">
+        <div><Text className="eyebrow">会话对比</Text><Title order={3}>执行效率与成果差异</Title></div>
+        <ActionIcon variant="subtle" color="gray" onClick={onClose} aria-label="关闭会话对比"><IconX size={16} /></ActionIcon>
+      </div>
+      <div className="session-comparison__identity">
+        {[payload.left, payload.right].map((item, index) => (
+          <div key={item.sessionId}>
+            <span>{index ? "对照" : "基准"}</span>
+            <strong>{clipText(item.displayTitle || item.sessionTitle || item.sessionId, 52)}</strong>
+            <em>{shortSessionId(item.sessionId)} · {platformLabel(item.sourceType)}</em>
+          </div>
+        ))}
+      </div>
+      <div className="session-comparison__table">
+        <div className="session-comparison__row is-head"><span>指标</span><span>基准</span><span>对照</span><span>变化</span></div>
+        {rows.map(([label, key, formatter]) => {
+          const left = payload.comparison.left[key];
+          const right = payload.comparison.right[key];
+          const delta = payload.comparison.delta[key];
+          const deltaLabel = delta === 0
+            ? "0"
+            : `${delta > 0 ? "+" : "-"}${formatter(Math.abs(delta))}`;
+          return (
+            <div className="session-comparison__row" key={key}>
+              <span>{label}</span><strong>{formatter(left)}</strong><strong>{formatter(right)}</strong>
+              <b className={delta > 0 ? "is-up" : delta < 0 ? "is-down" : ""}>{deltaLabel}</b>
+            </div>
+          );
+        })}
+      </div>
+      <Text className="session-comparison__hint">变化值为对照减去基准；成本、耗时和错误数下降通常更有利。</Text>
+    </Paper>
+  );
+}
+
 function SessionDetailPanel({
   session,
   selectedSessionId,
@@ -464,18 +511,22 @@ function SessionDetailPanel({
   onLoadMore,
   onCopySessionId,
   onOpenEvent,
+  onAnnotationSaved,
 }) {
   const [detailTab, setDetailTab] = useState("conversation");
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationLimit, setConversationLimit] = useState(8);
   const [chatAwayFromLatest, setChatAwayFromLatest] = useState(false);
+  const [replayPayload, setReplayPayload] = useState(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError] = useState("");
+  const [annotation, setAnnotation] = useState(session?.annotation || null);
   const chatScrollRef = useRef(null);
   const chatSessionRef = useRef("");
   const latestConversationTimeRef = useRef("");
   const presentation = useMemo(() => buildSessionPresentation(session, events, page), [events, page, session]);
   const artifacts = useMemo(() => buildSessionArtifacts(session, events), [events, session]);
   const turns = useMemo(() => buildConversationTurns(events), [events]);
-  const runs = useMemo(() => buildActivityRuns(events, session ? [session] : []), [events, session]);
   const normalizedQuery = conversationQuery.trim().toLocaleLowerCase();
   const matchingTurns = useMemo(
     () => normalizedQuery ? turns.filter((turn) => conversationTurnText(turn).includes(normalizedQuery)) : turns,
@@ -500,7 +551,22 @@ function SessionDetailPanel({
     setConversationQuery("");
     setConversationLimit(8);
     setChatAwayFromLatest(false);
+    setReplayPayload(null);
+    setReplayError("");
+    setAnnotation(session?.annotation || null);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (detailTab !== "replay" || !selectedSessionId || replayPayload?.session?.sessionId === selectedSessionId) return undefined;
+    let active = true;
+    setReplayLoading(true);
+    setReplayError("");
+    apiClient.fetchSessionReplay(selectedSessionId)
+      .then((payload) => { if (active) setReplayPayload(payload); })
+      .catch((error) => { if (active) setReplayError(String(error.message || error)); })
+      .finally(() => { if (active) setReplayLoading(false); });
+    return () => { active = false; };
+  }, [detailTab, replayPayload?.session?.sessionId, selectedSessionId]);
 
   useEffect(() => {
     if (detailTab !== "conversation") return undefined;
@@ -598,9 +664,9 @@ function SessionDetailPanel({
       <Tabs value={detailTab} onChange={setDetailTab} className="session-detail-tabs" keepMounted={false}>
         <Tabs.List>
           <Tabs.Tab value="conversation" leftSection={<IconMessage2 size={14} />}>对话</Tabs.Tab>
-          <Tabs.Tab value="timeline" leftSection={<IconHistory size={14} />}>运行</Tabs.Tab>
+          <Tabs.Tab value="replay" leftSection={<IconPlayerTrackNext size={14} />}>回放</Tabs.Tab>
           <Tabs.Tab value="usage" leftSection={<IconCoin size={14} />}>用量</Tabs.Tab>
-          <Tabs.Tab value="artifacts" leftSection={<IconTools size={14} />}>产物</Tabs.Tab>
+          <Tabs.Tab value="artifacts" leftSection={<IconStar size={14} />}>成果</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="conversation" className="session-detail-tab-panel session-detail-tab-panel--chat">
@@ -663,20 +729,8 @@ function SessionDetailPanel({
           ) : null}
         </Tabs.Panel>
 
-        <Tabs.Panel value="timeline" className="session-detail-tab-panel">
-          <div className="session-detail-run-list">
-            {runs.slice(0, 40).map((run) => (
-              <button key={run.id} type="button" onClick={() => run.latestEvent && onOpenEvent?.(run.latestEvent)}>
-                <time>{formatDateTime(run.endedAt)}</time>
-                <span>
-                  <strong>{run.userPreview || run.assistantPreview || "工具或系统活动"}</strong>
-                  <em>{formatNumber(run.eventCount)} 事件 · {formatNumber(run.toolCalls)} 工具{run.toolErrors ? ` · ${formatNumber(run.toolErrors)} 错误` : ""}</em>
-                </span>
-                <b>{run.tokenTotal ? `${formatCompactNumber(run.tokenTotal)} Tok` : "-"}</b>
-              </button>
-            ))}
-            {!runs.length ? <Text className="session-detail-empty">当前加载范围没有可归组的活动。</Text> : null}
-          </div>
+        <Tabs.Panel value="replay" className="session-detail-tab-panel">
+          <SessionReplay payload={replayPayload} loading={replayLoading} error={replayError} onOpenEvent={onOpenEvent} />
         </Tabs.Panel>
 
         <Tabs.Panel value="usage" className="session-detail-tab-panel">
@@ -713,6 +767,14 @@ function SessionDetailPanel({
         </Tabs.Panel>
 
         <Tabs.Panel value="artifacts" className="session-detail-tab-panel">
+          <SessionAnnotationEditor
+            sessionId={selectedSessionId}
+            annotation={annotation}
+            onSaved={(nextAnnotation) => {
+              setAnnotation(nextAnnotation);
+              onAnnotationSaved?.(nextAnnotation);
+            }}
+          />
           <div className="session-detail-health-strip">
             <div><span>工具错误</span><strong>{formatNumber(artifacts.toolErrors)}</strong></div>
             <div><span>上下文压缩</span><strong>{formatNumber(artifacts.compactions)}</strong></div>
@@ -1097,6 +1159,10 @@ export function SessionWorkspace({
   onCopySessionId,
   onOpenEvent,
   onLoadMoreSessionDetail,
+  onAnnotationSaved,
+  comparison,
+  comparisonLoading,
+  onCloseComparison,
   workspaceIndex,
   workspaceTree,
 }) {
@@ -1119,6 +1185,10 @@ export function SessionWorkspace({
   useEffect(() => {
     setSideView(selectedSessionId ? "detail" : "workspace");
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (comparison || comparisonLoading) setSideView("compare");
+  }, [comparison, comparisonLoading]);
 
   function openSessionDetail(session) {
     setSideView("detail");
@@ -1213,13 +1283,19 @@ export function SessionWorkspace({
             data={[
               { label: selectedSessionId ? `详情 ${shortSessionId(selectedSessionId)}` : "会话详情", value: "detail" },
               { label: "工作目录", value: "workspace" },
+              ...(comparison || comparisonLoading ? [{ label: "会话对比", value: "compare" }] : []),
             ]}
             fullWidth
           />
         </div>
 
         <div className="session-side-content" data-side-view={sideView}>
-          {sideView === "detail" ? (
+          {sideView === "compare" ? (
+            <SessionComparisonPanel payload={comparison} loading={comparisonLoading} onClose={() => {
+              onCloseComparison?.();
+              setSideView(selectedSessionId ? "detail" : "workspace");
+            }} />
+          ) : sideView === "detail" ? (
             <SessionDetailPanel
               session={detailSession}
               selectedSessionId={selectedSessionId}
@@ -1231,6 +1307,7 @@ export function SessionWorkspace({
               onLoadMore={onLoadMoreSessionDetail}
               onCopySessionId={onCopySessionId}
               onOpenEvent={onOpenEvent}
+              onAnnotationSaved={onAnnotationSaved}
             />
           ) : (
             <Paper className="session-workspace-index" radius="xl" p="md">

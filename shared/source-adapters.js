@@ -45,6 +45,26 @@
     return SOURCE_ADAPTERS.map(cloneAdapter);
   }
 
+  function registerSourceAdapters(adapters) {
+    for (const adapter of adapters || []) {
+      const key = String(adapter?.key || "").trim();
+      if (!key || SOURCE_ADAPTERS.some((item) => item.key === key)) continue;
+      SOURCE_ADAPTERS.push({
+        key,
+        label: String(adapter.label || key),
+        sessionGlob: String(adapter.sessionGlob || "Custom JSONL"),
+        metadataSources: Array.isArray(adapter.metadataSources) ? adapter.metadataSources : [],
+        parserKey: String(adapter.parserKey || "parseGenericLineToEvent"),
+        pathMarkers: Array.isArray(adapter.pathMarkers) ? adapter.pathMarkers.filter(Boolean) : [],
+        capabilities: Array.isArray(adapter.capabilities)
+          ? adapter.capabilities
+          : ["events", "conversation", "tokens"],
+        directories: Array.isArray(adapter.directories) ? adapter.directories.filter(Boolean) : [],
+      });
+    }
+    return listSourceAdapters();
+  }
+
   function getSourceAdapter(sourceType) {
     return cloneAdapter(SOURCE_ADAPTERS.find((adapter) => adapter.key === sourceType) || DEFAULT_ADAPTER);
   }
@@ -60,6 +80,7 @@
   return {
     getSourceAdapter,
     listSourceAdapters,
+    registerSourceAdapters,
     resolveSourceAdapterForFile,
   };
 });

@@ -41,6 +41,8 @@ The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or 
 | **Event stream** | Semantic activity grouped by user turn, dedicated Q&A/tool/usage/raw views, explicit search, filters, highlighted dialogue matches, live follow/pause, and direct jumps into session detail |
 | **Session library** | Active sessions, workspace grouping, directory tree, stable full-session totals, start and latest timestamps, collapsible conversations, activity, usage, files/tools, commands, errors, compactions, and raw diagnostics |
 
+The session workbench also supports execution replay, deterministic two-session comparison, and local outcome annotations. Comparisons use compact summaries instead of loading complete transcripts.
+
 ## Why it is different
 
 ### Semantic activity instead of raw log noise
@@ -64,6 +66,12 @@ Token accounting separates:
 - reasoning output.
 
 The UI attributes usage by time window, model, platform, workspace, and session. Cost values are estimates based on the recognized model price table; they are not provider invoices.
+
+The Token ledger exposes a confidence score with pricing coverage, session Token coverage, summary-cache reuse, unknown models, and the bundled price-table version. Optional daily and weekly Token/cost budgets provide local warnings.
+
+### Replay, outcomes, and local review
+
+Session detail combines conversation, execution replay, usage, and outcomes in one workbench. Replay highlights slow gaps, tool steps, failures, and Token snapshots. Outcome review stores completion status, tags, favorites, and notes in `~/.session-observer/session-annotations.json`; prompt and response text is not copied.
 
 ### Designed for large local histories
 
@@ -146,10 +154,33 @@ The backend remains one local Node process. Vite builds the React interface, whi
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex transcript directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code project directory |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata database |
+| `OBSERVER_DAILY_TOKEN_BUDGET` | disabled | Daily Token warning threshold |
+| `OBSERVER_WEEKLY_TOKEN_BUDGET` | disabled | Seven-day Token warning threshold |
+| `OBSERVER_DAILY_COST_BUDGET_USD` | disabled | Daily estimated-cost warning threshold |
+| `OBSERVER_WEEKLY_COST_BUDGET_USD` | disabled | Seven-day estimated-cost warning threshold |
+| `OBSERVER_MIN_CACHE_COVERAGE` | `70` | Minimum cache-read coverage percentage |
+| `OBSERVER_DIALOGUE_SEARCH` | `scan` | Set to `sqlite` for optional disk-backed archive FTS |
+| `OBSERVER_SOURCE_ADAPTERS_FILE` | disabled | JSON manifest for additional generic JSONL sources |
 
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```
+
+Custom JSONL sources can be registered without changing the scanner:
+
+```json
+{
+  "sources": [{
+    "key": "local-agent",
+    "label": "Local Agent",
+    "directories": ["~/.local-agent/sessions"],
+    "pathMarkers": ["/.local-agent/"],
+    "parserKey": "parseGenericLineToEvent"
+  }]
+}
+```
+
+The generic parser recognizes common role, message, content, session, timestamp, model, working-directory, tool, and usage fields. With `OBSERVER_DIALOGUE_SEARCH=sqlite`, immutable pre-today dialogue is indexed on disk while today's growing files continue to use direct reverse scanning.
 
 ## Privacy model
 

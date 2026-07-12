@@ -76,9 +76,10 @@ function readJsonlLine(file, targetLine) {
  * Read a JSONL record by byte offset. Reverse event scans use this to avoid a
  * full line-count pass on very large active transcript files.
  */
-function readJsonlLineAtOffset(file, offset) {
+function readJsonlLineAtOffset(file, offset, maxBytes = 0) {
   const startOffset = Number(offset);
   if (!fs.existsSync(file) || !Number.isFinite(startOffset) || startOffset < 0) return "";
+  const byteLimit = Math.max(0, Number(maxBytes) || 0);
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   const parts = [];
@@ -97,6 +98,8 @@ function readJsonlLineAtOffset(file, offset) {
         }
       }
 
+      const collectedBytes = position - startOffset + segmentEnd;
+      if (byteLimit > 0 && collectedBytes > byteLimit) return "";
       if (segmentEnd > 0) parts.push(Buffer.from(buffer.subarray(0, segmentEnd)));
       if (segmentEnd < bytesRead) break;
       position += bytesRead;

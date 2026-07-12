@@ -147,3 +147,153 @@ test("queryEvents reads a recent page on demand and uses summary store metadata"
   assert.equal(payload.events[0].content, "second");
   assert.equal(payload.page.hasMore, true);
 });
+
+test("getEventDetail does not fall back to scanning every transcript", () => {
+  const routes = freshRoutes();
+  let fullFileScans = 0;
+  routes.init({
+    parsers: {},
+    applyEventSessionMetaCore: () => {},
+    mergeSessionMetaRecordsCore: (base, incoming) => ({ ...base, ...incoming }),
+    indexManager: {
+      parseFullFileEvents: () => {
+        fullFileScans += 1;
+        return [];
+      },
+    },
+    summaryStore: {},
+    sourceFileRecordsProvider: () => [{ file: "/tmp/large-session.jsonl" }],
+  });
+
+  assert.equal(routes.getEventDetail("missing-event"), null);
+  assert.equal(fullFileScans, 0);
+});
+
+test("getEventDetail falls back to the cached event position when an id is regenerated", () => {
+  const recentEventsReader = require("../server/recent-events-reader");
+  const originalLookup = recentEventsReader.lookupEventLocator;
+  recentEventsReader.lookupEventLocator = () => ({
+    sourceFile: "/tmp/session.jsonl",
+    sourceOffset: 10,
+    sourceLength: 100,
+    lineEventIndex: 1,
+  });
+
+  try {
+    const routes = freshRoutes();
+    routes.init({
+      parsers: {},
+      applyEventSessionMetaCore: () => {},
+      mergeSessionMetaRecordsCore: (base, incoming) => ({ ...base, ...incoming }),
+      indexManager: {
+        parseEventLineFromIndex: () => [
+          { eventId: "regenerated-first", content: "first" },
+          { eventId: "regenerated-second", content: "selected" },
+        ],
+      },
+      summaryStore: {},
+      sourceFileRecordsProvider: () => [],
+    });
+
+    assert.equal(routes.getEventDetail("listed-event").content, "selected");
+  } finally {
+    recentEventsReader.lookupEventLocator = originalLookup;
+  }
+});
+
+test("replay event locators retain the session context required by detail parsing", () => {
+  const routes = freshRoutes();
+  const dir = makeTempDir();
+  const file = path.join(dir, "events.jsonl");
+  writeJsonl(file, [{
+    timestamp: "2026-06-01T10:00:00.000Z",
+    sessionId: "sess-context",
+    content: "detail context",
+  }]);
+  const records = [statFile(file)];
+  const summary = minimalSummary({
+    sessions: [{
+      sessionId: "sess-context",
+      sessionTitle: "Context session",
+      cwd: "/tmp/context-project",
+      models: ["gpt-context"],
+      sourceFiles: [file],
+      sourceType: "codex",
+    }],
+  });
+
+  routes.init({
+    parsers: {
+      parseCodexLineToEvent: (obj, context) => ({
+        time: obj.timestamp,
+        sessionId: context.sessionId,
+        model: context.model,
+        cwd: context.cwd,
+        sessionTitle: context.sessionTitle,
+        sourceFile: context.sourceFile,
+        sourceType: "codex",
+        callType: "Agent",
+        content: obj.content,
+        summary: obj.content,
+      }),
+    },
+    applyEventSessionMetaCore: ObserverCore.applyEventSessionMeta,
+    mergeSessionMetaRecordsCore: ObserverCore.mergeSessionMetaRecords,
+    eventMatchesModeCore: ObserverCore.eventMatchesMode,
+    eventMatchesFiltersCore: ObserverCore.eventMatchesFilters,
+    toPositiveIntCore: ObserverCore.toPositiveInt,
+    toTimeMsCore: ObserverCore.toTimeMs,
+    applySessionTitleOverridesCore: (groups) => groups,
+    indexManager: require("../server/index-manager"),
+    summaryStore: {
+      getSummary: () => summary,
+      getLastSummary: () => summary,
+    },
+    sourceFileRecordsProvider: () => records,
+  });
+
+  const payload = routes.queryEvents(routes.parseRequestFilters(new URLSearchParams("limit=1")));
+  const detail = routes.getEventDetail(payload.events[0].eventId);
+
+  assert.equal(detail.sessionId, "sess-context");
+  assert.equal(detail.model, "gpt-context");
+  assert.equal(detail.cwd, "/tmp/context-project");
+  assert.equal(detail.sessionTitle, "Context session");
+});
+
+test("session annotations and comparisons use compact summaries", () => {
+  const routes = freshRoutes();
+  const saved = new Map();
+  const sessions = [
+    { sessionId: "left", count: 10, toolCalls: 2, aggregateToken: { effectiveTotal: 100 }, sourceType: "codex" },
+    { sessionId: "right", count: 14, toolCalls: 3, aggregateToken: { effectiveTotal: 80 }, sourceType: "codex" },
+  ];
+  const summary = minimalSummary({ sessions });
+  routes.init({
+    parsers: {},
+    applyEventSessionMetaCore: () => {},
+    mergeSessionMetaRecordsCore: (base, incoming) => ({ ...base, ...incoming }),
+    applySessionTitleOverridesCore: (groups) => groups,
+    toTimeMsCore: ObserverCore.toTimeMs,
+    indexManager: { signatureHash: (value) => value },
+    summaryStore: {
+      getSummary: () => summary,
+      resolveSessionIdentifier: (id) => id,
+    },
+    annotationStore: {
+      get: (id) => saved.get(id) || null,
+      list: () => [...saved.values()],
+      set: (id, value) => {
+        const annotation = { sessionId: id, ...value };
+        saved.set(id, annotation);
+        return annotation;
+      },
+    },
+    sourceFileRecordsProvider: () => [],
+  });
+  routes.setSessionAnnotation("left", { outcome: "success" });
+  const comparison = routes.querySessionComparison("left", "right");
+  assert.equal(comparison.left.annotation.outcome, "success");
+  assert.equal(comparison.comparison.delta.events, 4);
+  assert.equal(comparison.comparison.delta.tokens, -20);
+});

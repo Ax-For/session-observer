@@ -13,11 +13,20 @@ const ROOT = path.resolve(__dirname, "..");
 const DIST_ROOT = path.join(ROOT, "dist");
 const DIST_INDEX = path.join(DIST_ROOT, "index.html");
 const RUNTIME_DIR = process.env.OBSERVER_RUNTIME_DIR || path.join(ROOT, ".runtime");
+const DATA_DIR = process.env.OBSERVER_DATA_DIR || path.join(os.homedir(), ".session-observer");
 const SUMMARY_CACHE_FILE = process.env.OBSERVER_SUMMARY_CACHE_FILE || path.join(RUNTIME_DIR, "summary-cache.json");
 const CODEX_USAGE_CACHE_FILE = process.env.OBSERVER_CODEX_USAGE_CACHE_FILE
   || path.join(RUNTIME_DIR, "codex-usage.json");
 const SESSION_TITLE_OVERRIDES_FILE = process.env.OBSERVER_SESSION_TITLE_OVERRIDES_FILE
   || path.join(RUNTIME_DIR, "session-title-overrides.json");
+const SESSION_ANNOTATIONS_FILE = process.env.OBSERVER_SESSION_ANNOTATIONS_FILE
+  || path.join(DATA_DIR, "session-annotations.json");
+const DIALOGUE_SEARCH_DB = process.env.OBSERVER_DIALOGUE_SEARCH_DB
+  || path.join(DATA_DIR, "dialogue-search.sqlite");
+const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "scan").trim().toLowerCase() === "sqlite"
+  ? "sqlite"
+  : "scan";
+const SOURCE_ADAPTERS_FILE = process.env.OBSERVER_SOURCE_ADAPTERS_FILE || "";
 
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
@@ -34,6 +43,10 @@ const EVENT_STREAM_MAX_PARSE_LINE_BYTES = toNonNegativeInt(
   process.env.EVENT_STREAM_MAX_PARSE_LINE_BYTES,
   128 * 1024,
 );
+const EVENT_DETAIL_MAX_LINE_BYTES = toNonNegativeInt(
+  process.env.EVENT_DETAIL_MAX_LINE_BYTES,
+  32 * 1024 * 1024,
+);
 const INDEX_REFRESH_DEBOUNCE_MS = 400;
 const INDEX_WARMUP_INTERVAL_MS = 3000;
 
@@ -41,6 +54,11 @@ function toNonNegativeInt(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.floor(parsed);
+}
+
+function toNonNegativeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function normalizeCodexServiceTier(value) {
@@ -86,6 +104,13 @@ const SOURCE_CHANGE_HEARTBEAT_MS = Math.max(5000, toNonNegativeInt(
   25000,
 ));
 const CODEX_SERVICE_TIER = readCodexServiceTier();
+const USAGE_BUDGETS = {
+  dailyTokens: toNonNegativeNumber(process.env.OBSERVER_DAILY_TOKEN_BUDGET),
+  weeklyTokens: toNonNegativeNumber(process.env.OBSERVER_WEEKLY_TOKEN_BUDGET),
+  dailyCostUsd: toNonNegativeNumber(process.env.OBSERVER_DAILY_COST_BUDGET_USD),
+  weeklyCostUsd: toNonNegativeNumber(process.env.OBSERVER_WEEKLY_COST_BUDGET_USD),
+  minimumCacheCoverage: toNonNegativeNumber(process.env.OBSERVER_MIN_CACHE_COVERAGE, 70),
+};
 
 const HAS_PROJECT_PACKAGE = fs.existsSync(path.join(ROOT, "package.json"));
 const STATIC_ROOT = HAS_PROJECT_PACKAGE ? DIST_ROOT : ROOT;
@@ -123,9 +148,14 @@ module.exports = {
   PORT,
   ROOT,
   RUNTIME_DIR,
+  DATA_DIR,
   SUMMARY_CACHE_FILE,
   CODEX_USAGE_CACHE_FILE,
   SESSION_TITLE_OVERRIDES_FILE,
+  SESSION_ANNOTATIONS_FILE,
+  DIALOGUE_SEARCH_DB,
+  DIALOGUE_SEARCH_MODE,
+  SOURCE_ADAPTERS_FILE,
   STATIC_ROOT,
   ensureFrontendBuild,
   DIST_ROOT,
@@ -137,11 +167,13 @@ module.exports = {
   STATE_DB,
   CODEX_CONFIG_FILE,
   CODEX_SERVICE_TIER,
+  USAGE_BUDGETS,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   EVENT_CONTENT_PREVIEW_LENGTH,
   EVENT_SEARCH_TEXT_LENGTH,
   EVENT_STREAM_MAX_PARSE_LINE_BYTES,
+  EVENT_DETAIL_MAX_LINE_BYTES,
   INDEX_REFRESH_DEBOUNCE_MS,
   INDEX_WARMUP_INTERVAL_MS,
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS,
