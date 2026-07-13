@@ -313,7 +313,7 @@
       if (event.model && event.model !== "unknown") group.models.add(event.model);
       if (event.sourceFile) group.sourceFiles.add(event.sourceFile);
       if (event.callType === "Token_Usage" && hasTokenUsageData(event.tokenUsage)) {
-        group.latestToken = event.tokenUsage;
+        group.latestToken = event.reportedTokenUsage || event.tokenUsage;
         group.aggregateToken = addTokenUsage(group.aggregateToken, event.tokenUsage);
       }
       if (event.callType === "Prompt" || event.callType === "User") group.prompt += 1;
@@ -1394,7 +1394,13 @@
     }
 
     if (obj.type === "event_msg" && obj.payload?.type === "token_count") {
-      const usage = obj.payload?.info?.last_token_usage || {};
+      const info = obj.payload?.info || {};
+      const cumulativeTotal = finiteTokenOrNull(info.total_token_usage?.total_tokens);
+      const previousCumulativeTotal = finiteTokenOrNull(context.lastCodexCumulativeTotal);
+      if (cumulativeTotal != null) context.lastCodexCumulativeTotal = cumulativeTotal;
+      if (cumulativeTotal != null && previousCumulativeTotal === cumulativeTotal) return null;
+
+      const usage = info.last_token_usage || {};
       const inputTokens = finiteTokenOrNull(usage.input_tokens);
       const cacheReadTokens = finiteTokenOrNull(usage.cached_input_tokens);
       const nonCachedInput = inputTokens == null
@@ -1686,20 +1692,38 @@
 
       const buildTokenUsageEvent = (usage) => {
         if (!usage) return null;
-        const input = usage.input_tokens ?? null;
-        const output = usage.output_tokens ?? null;
-        const total = usage.input_tokens != null && usage.output_tokens != null
-          ? usage.input_tokens + usage.output_tokens
+        const usageId = String(msg.id || obj.requestId || uuid || "");
+        const snapshot = {
+          input: Number(usage.input_tokens) || 0,
+          output: Number(usage.output_tokens) || 0,
+          cacheReadInput: Number(usage.cache_read_input_tokens) || 0,
+          cacheCreationInput: Number(usage.cache_creation_input_tokens) || 0,
+        };
+        const previous = usageId && context.lastClaudeUsageMessageId === usageId
+          ? context.lastClaudeUsageSnapshot
           : null;
-        const cacheReadInput = usage.cache_read_input_tokens ?? null;
-        const cacheCreationInput = usage.cache_creation_input_tokens ?? null;
+        const delta = Object.fromEntries(Object.entries(snapshot).map(([key, value]) => [
+          key,
+          value - (Number(previous?.[key]) || 0),
+        ]));
+        if (usageId) {
+          context.lastClaudeUsageMessageId = usageId;
+          context.lastClaudeUsageSnapshot = snapshot;
+        }
+        if (Object.values(delta).every((value) => value === 0)) return null;
+
+        const input = delta.input;
+        const output = delta.output;
+        const total = input + output;
+        const cacheReadInput = delta.cacheReadInput;
+        const cacheCreationInput = delta.cacheCreationInput;
         const cachedInput = [cacheReadInput, cacheCreationInput].reduce((sum, value) => (
           value != null && Number.isFinite(Number(value)) ? sum + Number(value) : sum
         ), 0) || null;
         const reasoningOutput = null;
-        if (input == null && output == null && cachedInput == null) return null;
-        const contentText = `Token usage · In ${input ?? 0} · Out ${output ?? 0} · Total ${total ?? 0}` +
-          (cachedInput ? ` · Cache ${cachedInput}` : "");
+        const reportedCachedInput = snapshot.cacheReadInput + snapshot.cacheCreationInput;
+        const contentText = `Token usage · In ${snapshot.input} · Out ${snapshot.output} · Total ${snapshot.input + snapshot.output}` +
+          (reportedCachedInput ? ` · Cache ${reportedCachedInput}` : "");
         return {
           time: ts,
           sessionId,
@@ -1722,6 +1746,15 @@
             cachedInput,
             cacheReadInput,
             cacheCreationInput,
+            reasoningOutput,
+          },
+          reportedTokenUsage: {
+            input: snapshot.input,
+            output: snapshot.output,
+            total: snapshot.input + snapshot.output,
+            cachedInput: reportedCachedInput || null,
+            cacheReadInput: snapshot.cacheReadInput,
+            cacheCreationInput: snapshot.cacheCreationInput,
             reasoningOutput,
           },
         };
@@ -1820,7 +1853,7 @@
         return baseEvent;
       }
 
-      return {
+      const baseEvent = {
         time: ts,
         sessionId,
         model,
@@ -1838,6 +1871,8 @@
         content: "(empty response)",
         summary: "(empty response)",
       };
+      if (tokenEvent) return [baseEvent, tokenEvent];
+      return baseEvent;
     }
 
     return {

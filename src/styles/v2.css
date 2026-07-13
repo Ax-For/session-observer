@@ -1813,7 +1813,7 @@
 
 .v5-token-range {
   display: grid;
-  grid-template-columns: 150px auto minmax(170px, 0.72fr) minmax(290px, 1.15fr);
+  grid-template-columns: 140px auto minmax(180px, 0.72fr) minmax(380px, 1.3fr);
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1854,7 +1854,8 @@
 
 .v5-token-range__lead em,
 .v5-token-range__scope span,
-.v5-token-range__cache > span {
+.v5-token-range__cache span,
+.v5-token-range__cache em {
   overflow: hidden;
   color: var(--text-soft);
   font-size: 0.58rem;
@@ -1881,13 +1882,33 @@
 }
 
 .v5-token-range__cache {
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 12px;
 }
 
-.v5-token-range__cache .mantine-Badge-root {
+.v5-token-range__cache > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  gap: 2px 8px;
+}
+
+.v5-token-range__cache > div .mantine-Badge-root {
+  grid-row: 1 / span 2;
   justify-self: start;
+}
+
+.v5-token-range__cache > div span,
+.v5-token-range__cache > div em {
+  grid-column: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v5-token-range__cache .mantine-Button-root {
+  min-width: 94px;
 }
 
 .v2-token-trend .mc-chart-frame {

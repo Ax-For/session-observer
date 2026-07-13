@@ -76,6 +76,41 @@ test("queryObservability uses summary store without building the full index", ()
   assert.equal(payload.index.mode, "on-demand");
 });
 
+test("recalculateObservability forces a full summary rebuild", () => {
+  const routes = freshRoutes();
+  const records = [];
+  const summary = minimalSummary({
+    health: { eventsTotal: 18, sessionsTotal: 4 },
+    cache: { scannedFiles: 7, reusedFiles: 0, cachedFiles: 7 },
+  });
+  let rebuildInput = null;
+
+  routes.init({
+    parsers: {},
+    applyEventSessionMetaCore: () => {},
+    mergeSessionMetaRecordsCore: (base, incoming) => ({ ...base, ...incoming }),
+    indexManager: {
+      signatureHash: (value) => String(value).slice(0, 12),
+      trimHeapNow: () => {},
+    },
+    summaryStore: {
+      rebuild: (input) => {
+        rebuildInput = input;
+        return summary;
+      },
+    },
+    sourceFileRecordsProvider: () => records,
+  });
+
+  const payload = routes.recalculateObservability();
+
+  assert.deepEqual(rebuildInput.files, records);
+  assert.equal(payload.summary, summary);
+  assert.equal(payload.recalculation.scannedFiles, 7);
+  assert.equal(payload.recalculation.totalFiles, 0);
+  assert.match(payload.recalculation.completedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test("queryEvents reads a recent page on demand and uses summary store metadata", () => {
   const routes = freshRoutes();
   const dir = makeTempDir();

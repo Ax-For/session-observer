@@ -1397,11 +1397,12 @@ function TokenEfficiencyStrip({ tokens, tokenCost, sessionsTotal }) {
   );
 }
 
-function TokenRangeToolbar({ range, value, onChange }) {
+function TokenRangeToolbar({ range, value, onChange, onRecalculate, recalculating = false }) {
   const cachedHistoricalDays = finiteToken(range?.history?.cachedHistoricalDays);
   const cacheText = cachedHistoricalDays > 0
     ? `历史 ${formatNumber(cachedHistoricalDays)} 天直接读取缓存，今天增量更新`
     : "今天数据按追加内容增量更新";
+  const lastRecalculatedAt = range?.cache?.lastRecalculatedAt || "";
   const dateRange = range?.days === 1
     ? `${shortDateLabel(range?.startAt)} 00:00 - ${shortDateLabel(range?.endAt, true)}`
     : `${shortDateLabel(range?.startAt)} - ${shortDateLabel(range?.endAt)}`;
@@ -1431,8 +1432,25 @@ function TokenRangeToolbar({ range, value, onChange }) {
         <strong>{formatNumber(range?.health?.sessionsTotal || 0)} 会话 · {formatNumber(range?.health?.activeDays || 0)} 个活跃日</strong>
       </div>
       <div className="v5-token-range__cache">
-        <Badge radius="sm" variant="light" color="teal">持久化日汇总</Badge>
-        <span>{cacheText}</span>
+        <div>
+          <Badge radius="sm" variant="light" color="teal">持久化日汇总</Badge>
+          <span>{cacheText}</span>
+          <em>{lastRecalculatedAt ? `上次完整重算 ${formatDateTime(lastRecalculatedAt)}` : "尚未手动完整重算"}</em>
+        </div>
+        <Tooltip label="清空历史汇总缓存，并使用当前解析逻辑重新扫描全部会话文件" position="bottom-end">
+          <Button
+            size="xs"
+            radius="sm"
+            variant="light"
+            color="teal"
+            leftSection={<IconRefresh size={14} />}
+            loading={recalculating}
+            disabled={!onRecalculate}
+            onClick={onRecalculate}
+          >
+            {recalculating ? "重新计算中" : "重新计算"}
+          </Button>
+        </Tooltip>
       </div>
     </section>
   );
@@ -2155,8 +2173,10 @@ export function ObservabilityWorkspace({
   codexUsagePayload,
   loading,
   onQueryCodexUsage,
+  onRecalculate,
   onOpenConversation,
   onOpenSessionDetail,
+  recalculating,
 }) {
   const [usageMetric, setUsageMetric] = useState("tokens");
   const [tokenRangeKey, setTokenRangeKey] = useState("week");
@@ -2371,7 +2391,13 @@ export function ObservabilityWorkspace({
 
       {view === "tokens" ? (
         <>
-          <TokenRangeToolbar range={selectedTokenRange} value={tokenRangeKey} onChange={setTokenRangeKey} />
+          <TokenRangeToolbar
+            range={{ ...selectedTokenRange, cache: summary.cache }}
+            value={tokenRangeKey}
+            onChange={setTokenRangeKey}
+            onRecalculate={onRecalculate}
+            recalculating={recalculating}
+          />
 
           <TokenLedgerPanel tokens={scopedTokens} tokenCost={scopedTokenCost} />
 

@@ -5,6 +5,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 
 const { createSummaryStore } = require("../server/summary-store");
+const ObserverCore = require("../shared/observer-core");
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-summary-"));
@@ -684,4 +685,96 @@ test("summary store appends from persistent cache for a growing current file", (
   assert.equal(summary.cache.scannedFiles, 1);
   assert.equal(summary.cache.incrementalFiles, 1);
   assert.equal(summary.health.eventsTotal, 2);
+});
+
+test("summary store persists the Codex token checkpoint across incremental appends", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "codex-growing.jsonl");
+  const cacheFile = path.join(dir, ".runtime", "summary-cache.json");
+  const parsers = [{ sourceType: "codex", parseLine: ObserverCore.parseCodexLineToEvent }];
+  const tokenCount = (timestamp) => ({
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        total_token_usage: {
+          input_tokens: 100,
+          cached_input_tokens: 40,
+          output_tokens: 10,
+          reasoning_output_tokens: 2,
+          total_tokens: 110,
+        },
+        last_token_usage: {
+          input_tokens: 100,
+          cached_input_tokens: 40,
+          output_tokens: 10,
+          reasoning_output_tokens: 2,
+          total_tokens: 110,
+        },
+      },
+    },
+  });
+
+  writeJsonl(file, [
+    {
+      timestamp: "2026-06-01T00:00:00.000Z",
+      type: "session_meta",
+      payload: { id: "codex-session", cwd: "/repo" },
+    },
+    tokenCount("2026-06-01T00:01:00.000Z"),
+  ], Date.parse("2026-06-01T00:01:00.000Z"));
+
+  createSummaryStore({
+    parsers,
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  }).getSummary({ files: [file] });
+
+  fs.appendFileSync(file, `${JSON.stringify(tokenCount("2026-06-01T00:02:00.000Z"))}\n`);
+  const date = new Date(Date.parse("2026-06-01T00:02:00.000Z"));
+  fs.utimesSync(file, date, date);
+
+  const summary = createSummaryStore({
+    parsers,
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+    cacheFile,
+  }).getSummary({ files: [file] });
+
+  assert.equal(summary.cache.incrementalFiles, 1);
+  assert.equal(summary.tokens.effectiveTotal, 110);
+  assert.equal(summary.tokens.input, 60);
+  assert.equal(summary.tokens.cacheReadInput, 40);
+  assert.equal(summary.tokens.output, 10);
+});
+
+test("manual rebuild rescans unchanged files and persists the recalculation time", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "history.jsonl");
+  const cacheFile = path.join(dir, "summary-cache.json");
+  const nowMs = Date.parse("2026-07-13T08:30:00.000Z");
+  writeJsonl(file, [
+    {
+      id: "history",
+      time: "2026-07-10T10:00:00.000Z",
+      sessionId: "history-session",
+      model: "gpt-5.5",
+      callType: "Token_Usage",
+      tokenUsage: { input: 100, output: 20, total: 120 },
+    },
+  ], nowMs - 1000);
+
+  const store = createSummaryStore({ parsers: [parser], cacheFile, now: () => nowMs });
+  assert.equal(store.getSummary({ files: [file] }).cache.scannedFiles, 1);
+  assert.equal(store.getSummary({ files: [file] }).cache.reusedFiles, 1);
+
+  const rebuilt = store.rebuild({ files: [file] });
+  assert.equal(rebuilt.cache.scannedFiles, 1);
+  assert.equal(rebuilt.cache.reusedFiles, 0);
+  assert.equal(rebuilt.cache.lastRecalculatedAt, "2026-07-13T08:30:00.000Z");
+
+  const restored = createSummaryStore({ parsers: [parser], cacheFile, now: () => nowMs });
+  const cached = restored.getSummary({ files: [file] });
+  assert.equal(cached.cache.reusedFiles, 1);
+  assert.equal(cached.cache.lastRecalculatedAt, "2026-07-13T08:30:00.000Z");
 });

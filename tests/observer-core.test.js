@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  addTokenUsage,
   applyEventSessionMeta,
   applySessionTitleOverrides,
   buildObservabilitySummary,
@@ -132,6 +133,45 @@ test("parseCodexLineToEvent clamps inconsistent cached input to zero uncached in
   assert.equal(event.tokenUsage.cacheReadInput, 128);
 });
 
+test("parseCodexLineToEvent ignores repeated cumulative token snapshots", () => {
+  const context = {
+    model: "gpt-5.5",
+    sessionId: "sess-codex",
+    cwd: "/tmp/workspace",
+    sourceFile: "codex.jsonl",
+  };
+  const tokenCount = (timestamp) => ({
+    timestamp,
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        total_token_usage: {
+          input_tokens: 3970,
+          cached_input_tokens: 3200,
+          output_tokens: 48,
+          reasoning_output_tokens: 12,
+          total_tokens: 4018,
+        },
+        last_token_usage: {
+          input_tokens: 3970,
+          cached_input_tokens: 3200,
+          output_tokens: 48,
+          reasoning_output_tokens: 12,
+          total_tokens: 4018,
+        },
+      },
+    },
+  });
+
+  const first = parseCodexLineToEvent(tokenCount("2026-04-19T10:02:00.000Z"), context);
+  const repeated = parseCodexLineToEvent(tokenCount("2026-04-19T10:02:01.000Z"), context);
+
+  assert.equal(first.callType, "Token_Usage");
+  assert.equal(repeated, null);
+  assert.equal(context.lastCodexCumulativeTotal, 4018);
+});
+
 test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from assistant output", () => {
   const context = {
     model: "unknown",
@@ -176,6 +216,94 @@ test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from 
     cacheCreationInput: 3,
     reasoningOutput: null,
   });
+  assert.deepEqual(events[2].reportedTokenUsage, events[2].tokenUsage);
+});
+
+test("parseClaudeCodeLineToEvent aggregates repeated message snapshots as usage deltas", () => {
+  const context = {
+    model: "unknown",
+    sessionId: "sess-claude",
+    cwd: "/tmp/workspace",
+    sourceFile: "claude.jsonl",
+  };
+  const assistant = (timestamp, usage) => ({
+    timestamp,
+    sessionId: "sess-claude",
+    uuid: `row-${timestamp}`,
+    type: "assistant",
+    message: {
+      id: "msg-repeated",
+      model: "claude-sonnet-4-6",
+      usage,
+      content: [{ type: "text", text: "Working" }],
+    },
+  });
+  const first = parseClaudeCodeLineToEvent(assistant("1", {
+    input_tokens: 17865,
+    output_tokens: 0,
+  }), context);
+  const final = parseClaudeCodeLineToEvent(assistant("2", {
+    input_tokens: 1766,
+    cache_read_input_tokens: 24448,
+    output_tokens: 121,
+  }), context);
+  const repeated = parseClaudeCodeLineToEvent(assistant("3", {
+    input_tokens: 1766,
+    cache_read_input_tokens: 24448,
+    output_tokens: 121,
+  }), context);
+  const firstUsage = first.find((event) => event.callType === "Token_Usage");
+  const finalUsage = final.find((event) => event.callType === "Token_Usage");
+
+  assert.deepEqual(addTokenUsage(firstUsage.tokenUsage, finalUsage.tokenUsage), {
+    input: 1766,
+    output: 121,
+    total: 1887,
+    cachedInput: 24448,
+    cacheReadInput: 24448,
+    cacheCreationInput: 0,
+    reasoningOutput: null,
+  });
+  assert.deepEqual(finalUsage.reportedTokenUsage, {
+    input: 1766,
+    output: 121,
+    total: 1887,
+    cachedInput: 24448,
+    cacheReadInput: 24448,
+    cacheCreationInput: 0,
+    reasoningOutput: null,
+  });
+  const repeatedEvents = Array.isArray(repeated) ? repeated : [repeated];
+  assert.equal(repeatedEvents.some((event) => event.callType === "Token_Usage"), false);
+});
+
+test("parseClaudeCodeLineToEvent keeps usage from empty assistant snapshots", () => {
+  const events = parseClaudeCodeLineToEvent({
+    timestamp: "2026-04-19T10:05:00.000Z",
+    sessionId: "sess-claude",
+    uuid: "empty-row",
+    type: "assistant",
+    message: {
+      id: "msg-empty",
+      model: "claude-sonnet-4-6",
+      usage: {
+        input_tokens: 120,
+        output_tokens: 8,
+        cache_read_input_tokens: 64,
+      },
+      content: [],
+    },
+  }, {
+    model: "unknown",
+    sessionId: "sess-claude",
+    cwd: "/tmp/workspace",
+    sourceFile: "claude.jsonl",
+  });
+
+  assert.equal(events.length, 2);
+  assert.equal(events[0].callType, "Raw");
+  assert.equal(events[1].callType, "Token_Usage");
+  assert.equal(events[1].reportedTokenUsage.total, 128);
 });
 
 test("parseClaudeCodeLineToEvent captures Claude custom title records", () => {

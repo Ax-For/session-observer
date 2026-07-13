@@ -272,6 +272,8 @@ export function App() {
     observabilityPayload,
     loadingObservability,
     loadObservability,
+    recalculateObservability,
+    recalculatingObservability,
   } = useObservabilityData({
     dataSource,
     localEvents,
@@ -857,7 +859,9 @@ export function App() {
                     codexUsagePayload={codexUsagePayload}
                     onQueryCodexUsage={queryCodexUsage}
                     loading={loadingObservability}
+                    recalculating={recalculatingObservability}
                     onRefresh={loadObservability}
+                    onRecalculate={recalculateObservability}
                     onOpenConversation={openConversation}
                     onOpenSessionDetail={openSessionDetail}
                   />

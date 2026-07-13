@@ -114,6 +114,12 @@ export const apiClient = {
     return request("/api/observability");
   },
 
+  recalculateObservability() {
+    return request("/api/observability/recalculate", {
+      method: "POST",
+    });
+  },
+
   fetchCodexUsage() {
     return request("/api/codex-usage");
   },

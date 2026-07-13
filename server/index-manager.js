@@ -216,6 +216,8 @@ function makeIndexedEvent(event) {
   }
   const compactUsage = compactTokenUsage(event.tokenUsage);
   if (compactUsage) indexed.tokenUsage = compactUsage;
+  const compactReportedUsage = compactTokenUsage(event.reportedTokenUsage);
+  if (compactReportedUsage) indexed.reportedTokenUsage = compactReportedUsage;
   if (config.EVENT_SEARCH_TEXT_LENGTH > config.EVENT_CONTENT_PREVIEW_LENGTH && searchText !== contentPreview) {
     indexed.searchText = searchText;
   }

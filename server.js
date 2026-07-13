@@ -235,6 +235,12 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (u.pathname === "/api/observability/recalculate" && req.method === "POST") {
+      sendJson(req, res, 200, routes.recalculateObservability());
+      indexManager.trimHeapSoon();
+      return;
+    }
+
     if (u.pathname === "/api/codex-usage" && req.method === "GET") {
       codexUsageService.getSnapshot()
         .then((payload) => sendJson(req, res, 200, payload))

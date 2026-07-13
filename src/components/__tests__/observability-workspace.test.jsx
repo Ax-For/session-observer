@@ -301,6 +301,10 @@ const tokenRangePayload = {
   ...payload,
   summary: {
     ...payload.summary,
+    cache: {
+      ...payload.summary.cache,
+      lastRecalculatedAt: "2026-07-13T08:30:00.000Z",
+    },
     tokenRanges: {
       today: makeTokenRange({
         key: "today",
@@ -609,6 +613,7 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("数据范围")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "近 7 天" })).toBeChecked();
     expect(screen.getByText("历史 6 天直接读取缓存，今天增量更新")).toBeInTheDocument();
+    expect(screen.getByText(`上次完整重算 ${formatDateTime("2026-07-13T08:30:00.000Z")}`)).toBeInTheDocument();
     expect(screen.getByText("Token 构成")).toBeInTheDocument();
     expect(screen.getByText("Prompt 与上下文未命中输入")).toBeInTheDocument();
     expect(screen.getByText("有效 Token")).toBeInTheDocument();
@@ -649,5 +654,35 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getAllByText("month").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("radio", { name: "金额" }));
     expect(screen.getByRole("radio", { name: "金额" })).toBeChecked();
+  });
+
+  test("runs a full historical Token recalculation from the range toolbar", () => {
+    const onRecalculate = vi.fn();
+    const { rerender } = render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={tokenRangePayload}
+          view="tokens"
+          loading={false}
+          onRecalculate={onRecalculate}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "重新计算" }));
+    expect(onRecalculate).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={tokenRangePayload}
+          view="tokens"
+          loading
+          recalculating
+          onRecalculate={onRecalculate}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole("button", { name: "重新计算中" })).toBeDisabled();
   });
 });

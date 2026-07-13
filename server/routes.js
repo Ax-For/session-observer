@@ -378,6 +378,28 @@ function querySessionReplay(sessionId, limitValue) {
 function queryObservability() {
   const records = listSourceFileRecords();
   const summary = getSummaryForRecords(records);
+  return buildObservabilityPayload(records, summary);
+}
+
+function recalculateObservability() {
+  const records = listSourceFileRecords();
+  const startedAt = Date.now();
+  const summary = _deps.summaryStore.rebuild({
+    files: records,
+    stateSignature: sourceStateSignature(),
+    threadMeta: loadThreadMeta(),
+  });
+  return buildObservabilityPayload(records, summary, {
+    recalculation: {
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      scannedFiles: summary.cache?.scannedFiles || 0,
+      totalFiles: records.length,
+    },
+  });
+}
+
+function buildObservabilityPayload(records, summary, extra = {}) {
   const index = publicSourceState(records, summary);
   _deps.indexManager.trimHeapNow?.();
 
@@ -400,6 +422,7 @@ function queryObservability() {
       dialogueSearch: _deps.dialogueSearchIndex?.state?.() || { enabled: false, mode: "scan" },
     },
     summary,
+    ...extra,
   };
 }
 
@@ -445,5 +468,6 @@ module.exports = {
   querySessionComparison,
   querySessionReplay,
   queryObservability,
+  recalculateObservability,
   serveStatic,
 };

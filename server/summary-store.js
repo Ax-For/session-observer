@@ -15,7 +15,7 @@ const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 10;
+const SUMMARY_CACHE_VERSION = 12;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SESSION_MESSAGE_LENGTH = 320;
@@ -467,7 +467,7 @@ function touchSession(summary, event, costEstimate) {
   if (event?.sourceType) session.sourceType = event.sourceType;
   if (event?.callType === "Token_Usage" && ObserverCore.hasTokenUsageData(event?.tokenUsage)) {
     if (!session.latestTokenTime || String(event.time || "").localeCompare(session.latestTokenTime) >= 0) {
-      session.latestToken = event.tokenUsage;
+      session.latestToken = event.reportedTokenUsage || event.tokenUsage;
       session.latestTokenTime = event.time || "";
     }
     session.aggregateToken = ObserverCore.addTokenUsage(session.aggregateToken, event.tokenUsage);
@@ -1621,6 +1621,7 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
 function createSummaryStore(options = {}) {
   const fileCache = new Map();
   let lastSummary = null;
+  let lastRecalculatedAt = "";
   let persistentCacheLoaded = false;
   let persistentCacheDirty = false;
   const cacheFile = options.cacheFile || "";
@@ -1640,6 +1641,7 @@ function createSummaryStore(options = {}) {
       const payload = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
       if (payload?.version !== SUMMARY_CACHE_VERSION || !payload.files || typeof payload.files !== "object") return;
       if (tokenPricing.normalizeSpeedTier(payload.costSpeedTier) !== costSpeedTier) return;
+      lastRecalculatedAt = typeof payload.lastRecalculatedAt === "string" ? payload.lastRecalculatedAt : "";
       for (const [file, entry] of Object.entries(payload.files)) {
         const restored = deserializeCacheEntry(file, entry);
         if (restored) fileCache.set(file, restored);
@@ -1661,6 +1663,7 @@ function createSummaryStore(options = {}) {
         version: SUMMARY_CACHE_VERSION,
         costSpeedTier,
         savedAt: new Date(Number(now())).toISOString(),
+        lastRecalculatedAt,
         files,
       }));
       fs.renameSync(tmpFile, cacheFile);
@@ -1676,6 +1679,7 @@ function createSummaryStore(options = {}) {
   function clear() {
     fileCache.clear();
     lastSummary = null;
+    lastRecalculatedAt = "";
     persistentCacheLoaded = true;
     persistentCacheDirty = false;
     if (cacheFile) {
@@ -1685,6 +1689,13 @@ function createSummaryStore(options = {}) {
         // Runtime cache may not exist.
       }
     }
+  }
+
+  function rebuild(input = {}) {
+    clear();
+    lastRecalculatedAt = new Date(Number(now())).toISOString();
+    persistentCacheDirty = true;
+    return getSummary(input);
   }
 
   function getSummary(input = {}) {
@@ -1740,6 +1751,7 @@ function createSummaryStore(options = {}) {
       reusedFiles,
       cachedFiles: fileCache.size,
       incrementalFiles,
+      lastRecalculatedAt,
     };
     lastSummary = buildPublicSummary(aggregate, cacheStats, {
       nowMs: Number(now()),
@@ -1775,6 +1787,7 @@ function createSummaryStore(options = {}) {
     getSourceFilesForSession,
     getSummary,
     invalidate,
+    rebuild,
     resolveSessionIdentifier,
   };
 }
