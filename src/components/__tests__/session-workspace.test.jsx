@@ -254,7 +254,11 @@ describe("SessionWorkspace", () => {
           detailSession={{
             sessionId: "sess-1",
             sourceType: "codex",
-            title: "Session detail work",
+            title: "Codex app session name",
+            sessionTitle: "Codex app session name",
+            displayTitle: "Codex app session name",
+            titleSource: "codex-app",
+            currentTopic: "A later message that must not replace the title",
             latest: "2026-05-31T10:10:00.000Z",
             count: 4,
             totalTokens: 4200,
@@ -337,7 +341,9 @@ describe("SessionWorkspace", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText("Session detail work")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Codex app session name" })).toBeInTheDocument();
+    expect(screen.getByText("Codex 名称")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "A later message that must not replace the title" })).not.toBeInTheDocument();
     expect(screen.getByText("会话目标")).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "会话聊天记录" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "对话" })).toHaveAttribute("aria-selected", "true");

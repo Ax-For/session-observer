@@ -135,25 +135,37 @@ function loadCodexSessionIndexMeta(mergeSessionMetaRecordsCore) {
 /**
  * Load all Codex session metadata (merged from DB + index).
  */
-function loadCodexSessionMeta(mergeSessionMetaRecordsCore) {
+function loadCodexSessionMeta(mergeSessionMetaRecordsCore, indexed = loadCodexSessionIndexMeta(mergeSessionMetaRecordsCore)) {
   const merged = loadThreadMetadataMap();
-  const indexed = loadCodexSessionIndexMeta(mergeSessionMetaRecordsCore);
   for (const [id, meta] of indexed) {
     merged.set(id, mergeSessionMetaRecordsCore(merged.get(id), meta));
   }
   return merged;
 }
 
+function shouldApplySessionTitleOverride(authoritative, override) {
+  const authoritativeTitle = String(authoritative?.title || "").trim();
+  if (!authoritativeTitle) return true;
+  if (authoritativeTitle === String(override?.title || "").trim()) return false;
+  const authoritativeUpdatedAt = Number(authoritative?.updatedAtMs) || 0;
+  const overrideUpdatedAt = Number(override?.updatedAtMs) || 0;
+  return overrideUpdatedAt > authoritativeUpdatedAt;
+}
+
 /**
  * Load all merged thread metadata (Codex + Claude Code).
  */
 function loadMergedThreadMetadata(mergeSessionMetaRecordsCore) {
-  const threadMeta = loadCodexSessionMeta(mergeSessionMetaRecordsCore);
+  const codexIndexMeta = loadCodexSessionIndexMeta(mergeSessionMetaRecordsCore);
+  const threadMeta = loadCodexSessionMeta(mergeSessionMetaRecordsCore, codexIndexMeta);
   const claudeMeta = loadClaudeCodeSessionMeta();
+  const authoritativeTitles = new Map(codexIndexMeta);
   for (const [id, meta] of claudeMeta) {
     threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
+    authoritativeTitles.set(id, meta);
   }
   for (const [id, meta] of loadSessionTitleOverrides()) {
+    if (!shouldApplySessionTitleOverride(authoritativeTitles.get(id), meta)) continue;
     threadMeta.set(id, mergeSessionMetaRecordsCore(threadMeta.get(id), meta));
   }
   return threadMeta;
@@ -258,6 +270,7 @@ module.exports = {
   loadCodexSessionIndexMeta,
   loadCodexSessionMeta,
   loadMergedThreadMetadata,
+  shouldApplySessionTitleOverride,
   loadClaudeSessionIndex,
   loadSessionTitleOverrides,
   markSessionTitleOverride,

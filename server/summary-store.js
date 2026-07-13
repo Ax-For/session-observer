@@ -257,6 +257,7 @@ function resolveSessionDisplayTitle(session, meta) {
   const firstMessage = String(session?.firstUserMessage || "").trim();
   const fallbackTitle = String(session?.fallbackTitle || "").trim();
   if (meta?.explicitTitle && metaTitle) return { title: metaTitle, source: "custom" };
+  if (session?.sourceType === "codex" && metaTitle) return { title: metaTitle, source: "codex-app" };
   const sourceTitle = metaTitle || eventTitle;
   if (sourceTitle && (titlesShareTopic(sourceTitle, currentTopic) || titlesShareTopic(sourceTitle, firstMessage))) {
     return { title: sourceTitle, source: "source" };

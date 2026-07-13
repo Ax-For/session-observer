@@ -118,6 +118,13 @@ function getSessionTitle(session, selectedSessionId) {
     || "未选择会话";
 }
 
+function sessionTitleSourceLabel(session) {
+  if (session?.titleSource === "custom") return "自定义名称";
+  if (session?.titleSource === "codex-app") return "Codex 名称";
+  if (session?.titleSource === "current-topic") return "当前主题";
+  return "会话名称";
+}
+
 function getSessionIds(session) {
   const ids = Array.isArray(session?.sessionIds) && session.sessionIds.length
     ? session.sessionIds
@@ -615,7 +622,7 @@ function SessionDetailPanel({
     <Paper className="session-detail-panel session-detail-workbench" radius="md" p="md" data-session-detail-panel>
       <div className="session-detail-head">
         <div className="session-detail-head__copy">
-          <Text className="eyebrow">{session?.titleSource === "custom" ? "自定义名称" : "当前主题"}</Text>
+          <Text className="eyebrow">{sessionTitleSourceLabel(session)}</Text>
           <Title
             order={3}
             className="session-detail-title"

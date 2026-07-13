@@ -423,7 +423,7 @@ test("summary store reuses file summaries when metadata signature changes and ov
   assert.equal(summary.sessions.groups[0].sessionTitle, "New title");
 });
 
-test("summary store derives an accurate current topic and ignores internal title placeholders", () => {
+test("summary store uses the current topic only when Codex has no authoritative title", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "title-quality.jsonl");
 
@@ -463,10 +463,7 @@ test("summary store derives an accurate current topic and ignores internal title
   ], Date.parse("2026-06-01T00:03:00.000Z"));
 
   const store = createSummaryStore({ parsers: [parser], now: () => Date.parse("2026-06-06T00:00:00.000Z") });
-  const summary = store.getSummary({
-    files: [file],
-    threadMeta: new Map([["title-session", { title: "session-observer 管理", cwd: "/repo/session-observer" }]]),
-  });
+  const summary = store.getSummary({ files: [file] });
   const session = summary.sessions.groups[0];
 
   assert.equal(session.fallbackTitle, "为当前项目建立活跃会话面板");
@@ -475,6 +472,14 @@ test("summary store derives an accurate current topic and ignores internal title
   assert.equal(session.currentTopic, "我希望会话详情可以用聊天窗口查看完整对话过程");
   assert.equal(session.displayTitle, "会话详情可以用聊天窗口查看完整对话过程");
   assert.equal(session.titleSource, "current-topic");
+
+  const codexNamed = store.getSummary({
+    files: [file],
+    threadMeta: new Map([["title-session", { title: "session-observer 管理", cwd: "/repo/session-observer" }]]),
+  }).sessions.groups[0];
+  assert.equal(codexNamed.sessionTitle, "session-observer 管理");
+  assert.equal(codexNamed.displayTitle, "session-observer 管理");
+  assert.equal(codexNamed.titleSource, "codex-app");
 
   const renamed = store.getSummary({
     files: [file],
