@@ -692,7 +692,7 @@ test("summary store appends from persistent cache for a growing current file", (
   assert.equal(summary.health.eventsTotal, 2);
 });
 
-test("summary store persists the Codex token checkpoint across incremental appends", () => {
+test("summary store preserves repeated valid Codex usage across incremental appends", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "codex-growing.jsonl");
   const cacheFile = path.join(dir, ".runtime", "summary-cache.json");
@@ -747,10 +747,10 @@ test("summary store persists the Codex token checkpoint across incremental appen
   }).getSummary({ files: [file] });
 
   assert.equal(summary.cache.incrementalFiles, 1);
-  assert.equal(summary.tokens.effectiveTotal, 110);
-  assert.equal(summary.tokens.input, 60);
-  assert.equal(summary.tokens.cacheReadInput, 40);
-  assert.equal(summary.tokens.output, 10);
+  assert.equal(summary.tokens.effectiveTotal, 220);
+  assert.equal(summary.tokens.input, 120);
+  assert.equal(summary.tokens.cacheReadInput, 80);
+  assert.equal(summary.tokens.output, 20);
 });
 
 test("manual rebuild rescans unchanged files and persists the recalculation time", () => {

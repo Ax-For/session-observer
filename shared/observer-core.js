@@ -49,8 +49,23 @@
   }
 
   function finiteTokenOrNull(value) {
+    if (value == null || value === "") return null;
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeCodexTokenUsage(usage) {
+    if (!usage || typeof usage !== "object") return null;
+    const input = finiteTokenOrNull(usage.input_tokens);
+    const output = finiteTokenOrNull(usage.output_tokens);
+    const total = finiteTokenOrNull(usage.total_tokens);
+    const cachedInput = finiteTokenOrNull(usage.cached_input_tokens) ?? 0;
+    const reasoningOutput = finiteTokenOrNull(usage.reasoning_output_tokens);
+    const required = [input, output, total, cachedInput];
+    if (required.some((value) => value == null || value < 0)) return null;
+    if (cachedInput > input || total !== input + output) return null;
+    if (reasoningOutput != null && reasoningOutput < 0) return null;
+    return { input, output, total, cachedInput, reasoningOutput };
   }
 
   function hasTokenUsageData(tokenUsage) {
@@ -1395,24 +1410,16 @@
 
     if (obj.type === "event_msg" && obj.payload?.type === "token_count") {
       const info = obj.payload?.info || {};
-      const cumulativeTotal = finiteTokenOrNull(info.total_token_usage?.total_tokens);
-      const previousCumulativeTotal = finiteTokenOrNull(context.lastCodexCumulativeTotal);
-      if (cumulativeTotal != null) context.lastCodexCumulativeTotal = cumulativeTotal;
-      if (cumulativeTotal != null && previousCumulativeTotal === cumulativeTotal) return null;
-
-      const usage = info.last_token_usage || {};
-      const inputTokens = finiteTokenOrNull(usage.input_tokens);
-      const cacheReadTokens = finiteTokenOrNull(usage.cached_input_tokens);
-      const nonCachedInput = inputTokens == null
-        ? null
-        : Math.max(0, inputTokens - (cacheReadTokens || 0));
+      const usage = normalizeCodexTokenUsage(info.last_token_usage);
+      if (!usage) return null;
+      const nonCachedInput = usage.input - usage.cachedInput;
       const content = [
         "Token usage",
-        `In ${fmtTokenHuman(usage.input_tokens)} (${fmtNum(usage.input_tokens)})`,
-        `Out ${fmtTokenHuman(usage.output_tokens)} (${fmtNum(usage.output_tokens)})`,
-        `Total ${fmtTokenHuman(usage.total_tokens)} (${fmtNum(usage.total_tokens)})`,
-        `Cache ${fmtTokenHuman(usage.cached_input_tokens)} (${fmtNum(usage.cached_input_tokens)})`,
-        `Reason ${fmtTokenHuman(usage.reasoning_output_tokens)} (${fmtNum(usage.reasoning_output_tokens)})`,
+        `In ${fmtTokenHuman(usage.input)} (${fmtNum(usage.input)})`,
+        `Out ${fmtTokenHuman(usage.output)} (${fmtNum(usage.output)})`,
+        `Total ${fmtTokenHuman(usage.total)} (${fmtNum(usage.total)})`,
+        `Cache ${fmtTokenHuman(usage.cachedInput)} (${fmtNum(usage.cachedInput)})`,
+        `Reason ${fmtTokenHuman(usage.reasoningOutput)} (${fmtNum(usage.reasoningOutput)})`,
       ].join(" · ");
       return {
         time: ts,
@@ -1431,12 +1438,12 @@
         summary: clip(content, 220),
         tokenUsage: {
           input: nonCachedInput,
-          output: usage.output_tokens ?? null,
-          total: usage.total_tokens ?? null,
-          cachedInput: usage.cached_input_tokens ?? null,
-          cacheReadInput: usage.cached_input_tokens ?? null,
+          output: usage.output,
+          total: usage.total,
+          cachedInput: usage.cachedInput,
+          cacheReadInput: usage.cachedInput,
           cacheCreationInput: 0,
-          reasoningOutput: usage.reasoning_output_tokens ?? null,
+          reasoningOutput: usage.reasoningOutput,
         },
       };
     }

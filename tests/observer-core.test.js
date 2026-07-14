@@ -106,7 +106,7 @@ test("parseCodexLineToEvent splits cached input from uncached input tokens", () 
   });
 });
 
-test("parseCodexLineToEvent clamps inconsistent cached input to zero uncached input", () => {
+test("parseCodexLineToEvent rejects inconsistent cached input", () => {
   const event = parseCodexLineToEvent({
     timestamp: "2026-04-19T10:03:00.000Z",
     type: "event_msg",
@@ -129,11 +129,10 @@ test("parseCodexLineToEvent clamps inconsistent cached input to zero uncached in
     sourceFile: "codex.jsonl",
   });
 
-  assert.equal(event.tokenUsage.input, 0);
-  assert.equal(event.tokenUsage.cacheReadInput, 128);
+  assert.equal(event, null);
 });
 
-test("parseCodexLineToEvent ignores repeated cumulative token snapshots", () => {
+test("parseCodexLineToEvent keeps repeated valid usage records", () => {
   const context = {
     model: "gpt-5.5",
     sessionId: "sess-codex",
@@ -168,8 +167,34 @@ test("parseCodexLineToEvent ignores repeated cumulative token snapshots", () => 
   const repeated = parseCodexLineToEvent(tokenCount("2026-04-19T10:02:01.000Z"), context);
 
   assert.equal(first.callType, "Token_Usage");
-  assert.equal(repeated, null);
-  assert.equal(context.lastCodexCumulativeTotal, 4018);
+  assert.equal(repeated.callType, "Token_Usage");
+  assert.equal(repeated.tokenUsage.total, 4018);
+});
+
+test("parseCodexLineToEvent rejects malformed token placeholders", () => {
+  const event = parseCodexLineToEvent({
+    timestamp: "2026-04-19T10:04:00.000Z",
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: {
+        last_token_usage: {
+          input_tokens: 0,
+          cached_input_tokens: 0,
+          output_tokens: 0,
+          reasoning_output_tokens: 0,
+          total_tokens: 44402,
+        },
+      },
+    },
+  }, {
+    model: "gpt-5.5",
+    sessionId: "sess-codex",
+    cwd: "/tmp/workspace",
+    sourceFile: "codex.jsonl",
+  });
+
+  assert.equal(event, null);
 });
 
 test("parseClaudeCodeLineToEvent emits tool, agent, and token usage events from assistant output", () => {
