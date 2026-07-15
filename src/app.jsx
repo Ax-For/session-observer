@@ -221,36 +221,7 @@ export function App() {
     query: deferredQuery,
     notify,
   });
-  const sourceChangeStream = useSourceChangeStream({
-    enabled: dataSource === "server" && tab === "stream",
-    onChange: () => {
-      loadEvents();
-    },
-  });
-  const refreshStatus = useMemo(() => {
-    if (tab === "stream") {
-      return sourceChangeStream.connected
-        ? {
-            label: "实时连接",
-            color: "teal",
-            tone: "live",
-            title: "事件流已订阅本地文件变化，新事件会自动更新。",
-          }
-        : {
-            label: "等待实时",
-            color: "yellow",
-            tone: "pending",
-            title: "实时连接尚未建立，可使用右侧刷新按钮手动读取最新事件。",
-          };
-    }
-    return {
-      label: "按需读取",
-      color: "blue",
-      tone: "ondemand",
-      title: "当前页面按需读取摘要数据，使用刷新按钮重新加载。",
-    };
-  }, [sourceChangeStream.connected, tab]);
-  const { sessionsPayload, loadSessions } = useSessionData({
+  const { sessionsPayload, loadingSessions, loadSessions } = useSessionData({
     dataSource,
     notify,
   });
@@ -481,6 +452,72 @@ export function App() {
     }
   }
 
+  async function refreshActiveView() {
+    if (tab === "overview" || tab === "tokens") {
+      await loadObservability();
+      return;
+    }
+    if (tab === "sessions") {
+      const refreshes = [loadSessions()];
+      if (selectedSessionId) {
+        refreshes.push(loadSessionDetailEvents(selectedSessionId, {
+          append: false,
+          order: sessionDetailOrder,
+        }));
+      }
+      await Promise.all(refreshes);
+      return;
+    }
+    await loadEvents();
+  }
+
+  const sourceChangeStream = useSourceChangeStream({
+    enabled: dataSource === "server",
+    onChange: refreshActiveView,
+  });
+  const currentViewLoading = tab === "stream"
+    ? loadingEvents
+    : tab === "sessions"
+      ? loadingSessions || sessionDetailLoading
+      : loadingObservability;
+  const refreshStatus = useMemo(() => {
+    const refreshedAt = sourceChangeStream.lastRefreshAt
+      ? new Date(sourceChangeStream.lastRefreshAt).toLocaleTimeString("zh-CN", { hour12: false })
+      : "";
+    if (currentViewLoading) {
+      return {
+        label: "更新中",
+        color: "blue",
+        tone: "ondemand",
+        title: "正在读取当前页面的最新数据。",
+      };
+    }
+    if (sourceChangeStream.pending) {
+      return {
+        label: "待更新",
+        color: "blue",
+        tone: "ondemand",
+        title: "已检测到新数据；页面重新可见后会自动合并更新。",
+      };
+    }
+    if (sourceChangeStream.connected) {
+      return {
+        label: "自动更新",
+        color: "teal",
+        tone: "live",
+        title: refreshedAt
+          ? `已订阅本地文件变化，上次自动更新于 ${refreshedAt}。`
+          : "已订阅本地文件变化，检测到新数据后会自动更新当前页面。",
+      };
+    }
+    return {
+      label: "自动重试",
+      color: "yellow",
+      tone: "pending",
+      title: "实时连接暂不可用；系统会自动重连，并每 30 秒低频校验一次。",
+    };
+  }, [currentViewLoading, sourceChangeStream.connected, sourceChangeStream.lastRefreshAt, sourceChangeStream.pending]);
+
   useEffect(() => {
     if (!pendingWorkspaceKey || tab !== "sessions" || sessionFilters.groupBy !== "cwd") return undefined;
     const frame = window.requestAnimationFrame(() => {
@@ -534,13 +571,7 @@ export function App() {
       }
       if (event.key === "r" && !hasModifier && !isEditing && dataSource === "server") {
         event.preventDefault();
-        if (tab === "overview" || tab === "tokens") {
-          loadObservability();
-        } else if (tab === "sessions") {
-          loadSessions();
-        } else {
-          loadEvents();
-        }
+        void refreshActiveView();
       }
       if (event.key === "t" && !hasModifier && !isEditing) {
         event.preventDefault();
@@ -563,7 +594,7 @@ export function App() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dataSource, loadEvents, loadObservability, loadSessions, setThemeMode, tab]);
+  }, [dataSource, loadEvents, loadObservability, loadSessions, selectedSessionId, sessionDetailOrder, setThemeMode, tab]);
 
   function toggleTheme() {
     setThemeMode((value) => (value === "dark" ? "light" : "dark"));
@@ -582,15 +613,7 @@ export function App() {
   }
 
   function refreshCurrentView() {
-    if (tab === "overview" || tab === "tokens") {
-      loadObservability();
-      return;
-    }
-    if (tab === "sessions") {
-      loadSessions();
-      return;
-    }
-    loadEvents();
+    void refreshActiveView();
   }
 
   function submitStreamSearch(event) {
@@ -835,8 +858,16 @@ export function App() {
                   >
                     {refreshStatus.label}
                   </Badge>
-                  <ActionIcon aria-label="刷新当前视图" title="刷新当前视图" radius="sm" variant="subtle" color="teal" size="lg" onClick={refreshCurrentView}>
-                    <IconRefresh size={18} />
+                  <ActionIcon
+                    aria-label="刷新当前视图"
+                    title="立即刷新当前视图"
+                    radius="sm"
+                    variant="subtle"
+                    color="teal"
+                    size="lg"
+                    onClick={refreshCurrentView}
+                  >
+                    <IconRefresh className={currentViewLoading ? "refresh-action-icon is-loading" : "refresh-action-icon"} size={18} />
                   </ActionIcon>
                   <ActionIcon aria-label="切换主题" title="切换主题" radius="sm" variant="subtle" color="gray" size="lg" onClick={toggleTheme}>
                     {themeMode === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}

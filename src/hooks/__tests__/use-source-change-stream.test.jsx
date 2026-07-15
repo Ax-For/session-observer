@@ -43,6 +43,8 @@ class MockEventSource {
 
 describe("useSourceChangeStream", () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     MockEventSource.instances = [];
   });
@@ -54,6 +56,7 @@ describe("useSourceChangeStream", () => {
     const { result, unmount } = renderHook(() => useSourceChangeStream({
       enabled: true,
       onChange,
+      refreshDelayMs: 0,
     }));
 
     const source = MockEventSource.instances[0];
@@ -76,6 +79,112 @@ describe("useSourceChangeStream", () => {
 
     unmount();
     expect(source.closed).toBe(true);
+  });
+
+  test("coalesces rapid source changes into one refresh", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", MockEventSource);
+    const onChange = vi.fn();
+
+    renderHook(() => useSourceChangeStream({
+      enabled: true,
+      onChange,
+      refreshDelayMs: 200,
+    }));
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.open();
+      source.dispatch("source-changed", { version: 1, reason: "watch" });
+      source.dispatch("source-changed", { version: 2, reason: "rename" });
+      vi.advanceTimersByTime(199);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ version: 2, reason: "rename" });
+  });
+
+  test("catches up from the ready version after reconnecting", () => {
+    vi.stubGlobal("EventSource", MockEventSource);
+    const onChange = vi.fn();
+
+    renderHook(() => useSourceChangeStream({
+      enabled: true,
+      onChange,
+      refreshDelayMs: 0,
+    }));
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.open();
+      source.dispatch("ready", { version: 7 });
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    act(() => {
+      source.dispatch("source-changed", { version: 8, reason: "watch" });
+      source.error();
+      source.open();
+      source.dispatch("ready", { version: 10 });
+    });
+
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(onChange).toHaveBeenLastCalledWith({ version: 10, reason: "reconnect" });
+  });
+
+  test("defers refreshes while hidden and runs once when visible", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", MockEventSource);
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    visibility.mockReturnValue("hidden");
+    const onChange = vi.fn();
+
+    renderHook(() => useSourceChangeStream({
+      enabled: true,
+      onChange,
+      refreshDelayMs: 200,
+    }));
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.open();
+      source.dispatch("source-changed", { version: 1, reason: "watch" });
+      vi.advanceTimersByTime(500);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    visibility.mockReturnValue("visible");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ version: 1, reason: "watch" });
+  });
+
+  test("uses a low-frequency fallback while disconnected", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", MockEventSource);
+    const onChange = vi.fn();
+
+    renderHook(() => useSourceChangeStream({
+      enabled: true,
+      onChange,
+      refreshDelayMs: 0,
+      fallbackIntervalMs: 1_000,
+    }));
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ reason: "fallback" }));
   });
 
   test("does not open an EventSource while disabled", () => {

@@ -252,6 +252,16 @@ textarea {
   box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
 }
 
+.refresh-action-icon.is-loading {
+  animation: observer-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes observer-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .shell-tabs {
   justify-self: center;
   min-width: 330px;
