@@ -160,16 +160,25 @@ function forEachJsonlLine(file, onLine) {
  * of parsed, which avoids dropping data while a log file is still being written.
  */
 function forEachCompleteJsonlLine(file, onLine, options = {}) {
-  const result = { lineCount: 0, tailBuffer: "", endedWithNewline: false };
+  const startOffset = Math.max(0, Number(options.startOffset) || 0);
+  const initialLineNumber = Math.max(0, Number(options.initialLineNumber) || 0);
+  const initialTailBuffer = String(options.initialTailBuffer || "");
+  const result = {
+    lineCount: initialLineNumber,
+    tailBuffer: "",
+    endedWithNewline: options.initialEndedWithNewline === true,
+  };
   if (!fs.existsSync(file)) return result;
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   let parts = [];
   let partsLength = 0;
   let truncatedBytes = 0;
-  let lineNumber = 1;
-  let byteOffset = 0;
-  let lineByteOffset = 0;
+  let lineNumber = initialLineNumber + 1;
+  let byteOffset = startOffset;
+  let lineByteOffset = Number.isFinite(Number(options.initialLineByteOffset))
+    ? Math.max(0, Number(options.initialLineByteOffset))
+    : startOffset;
   const maxLineBytes = Number(options.maxLineBytes) || 0;
 
   const pushSegment = (segment) => {
@@ -204,9 +213,14 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
     return keepGoing;
   };
 
+  if (initialTailBuffer) {
+    pushSegment(Buffer.from(initialTailBuffer));
+    result.endedWithNewline = false;
+  }
+
   try {
     while (true) {
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, byteOffset);
       if (bytesRead <= 0) break;
 
       let segmentStart = 0;

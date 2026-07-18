@@ -544,6 +544,69 @@ test("summary store parses only appended lines for a growing current file", () =
   assert.equal(summary.cache.incrementalFiles, 1);
 });
 
+test("summary store streams large appended ranges with bounded reads", () => {
+  const dir = makeTempDir();
+  const file = path.join(dir, "large-growing.jsonl");
+  let parsedLines = 0;
+  const countingParser = {
+    ...parser,
+    parseLine: (json, context) => {
+      parsedLines += 1;
+      return parser.parseLine(json, context);
+    },
+  };
+
+  writeJsonl(file, [{
+    id: "first",
+    time: "2026-06-01T00:00:00.000Z",
+    sessionId: "large-growing-session",
+    cwd: "/repo",
+    content: "first",
+  }], Date.parse("2026-06-01T00:00:00.000Z"));
+
+  const store = createSummaryStore({
+    parsers: [countingParser],
+    now: () => Date.parse("2026-06-06T00:00:00.000Z"),
+  });
+  store.getSummary({ files: [file] });
+  assert.equal(parsedLines, 1);
+
+  const baseSize = fs.statSync(file).size;
+  const gapBytes = 8 * 1024 * 1024;
+  const nextLine = JSON.stringify({
+    id: "second",
+    time: "2026-06-01T00:01:00.000Z",
+    sessionId: "large-growing-session",
+    cwd: "/repo",
+    content: "second",
+  });
+  const fd = fs.openSync(file, "r+");
+  fs.ftruncateSync(fd, baseSize + gapBytes);
+  fs.writeSync(fd, `\n${nextLine}\n`, baseSize + gapBytes);
+  fs.closeSync(fd);
+  const date = new Date(Date.parse("2026-06-01T00:01:00.000Z"));
+  fs.utimesSync(file, date, date);
+
+  const originalReadSync = fs.readSync;
+  let maxReadLength = 0;
+  fs.readSync = (...args) => {
+    maxReadLength = Math.max(maxReadLength, Number(args[3]) || 0);
+    return originalReadSync(...args);
+  };
+
+  let summary;
+  try {
+    summary = store.getSummary({ files: [file] });
+  } finally {
+    fs.readSync = originalReadSync;
+  }
+
+  assert.equal(maxReadLength <= 64 * 1024, true);
+  assert.equal(parsedLines, 2);
+  assert.equal(summary.health.eventsTotal, 3);
+  assert.equal(summary.cache.incrementalFiles, 1);
+});
+
 test("summary store asks parsers for compact content previews", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "large-output.jsonl");

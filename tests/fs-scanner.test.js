@@ -55,6 +55,37 @@ test("forEachCompleteJsonlLine reports when a file ends on a line boundary", () 
   });
 });
 
+test("forEachCompleteJsonlLine resumes from a byte offset with an incomplete cached line", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-scan-offset-"));
+  const file = path.join(dir, "events.jsonl");
+  const firstLine = JSON.stringify({ id: 1 });
+  const partial = "{\"id\":";
+  fs.writeFileSync(file, `${firstLine}\n${partial}`);
+  const startOffset = fs.statSync(file).size;
+  fs.appendFileSync(file, `2}\n${JSON.stringify({ id: 3 })}\n`);
+
+  const lines = [];
+  const result = forEachCompleteJsonlLine(file, (line, lineNumber, locator) => {
+    lines.push({ line, lineNumber, locator });
+  }, {
+    startOffset,
+    initialLineNumber: 1,
+    initialTailBuffer: partial,
+    initialLineByteOffset: Buffer.byteLength(`${firstLine}\n`),
+  });
+
+  assert.deepEqual(lines.map(({ line, lineNumber }) => ({ line, lineNumber })), [
+    { line: JSON.stringify({ id: 2 }), lineNumber: 2 },
+    { line: JSON.stringify({ id: 3 }), lineNumber: 3 },
+  ]);
+  assert.equal(lines[0].locator.byteOffset, Buffer.byteLength(`${firstLine}\n`));
+  assert.deepEqual(result, {
+    lineCount: 3,
+    tailBuffer: "",
+    endedWithNewline: true,
+  });
+});
+
 test("forEachCompleteJsonlLineReverse streams complete lines from newest to oldest", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "session-observer-scan-"));
   const file = path.join(dir, "events.jsonl");

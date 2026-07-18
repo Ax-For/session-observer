@@ -1021,34 +1021,27 @@ function appendFileSummary(record, cached, deps) {
   const summary = cached.summary;
   const context = { ...cached.context, sourceFile: record.file };
   const parseDeps = { ...deps, parser, sourceType, file: record.file };
-  let tailBuffer = cached.tailBuffer || "";
-  let lineNumber = Number(cached.lineCount) || 0;
-  let endedWithNewline = cached.endedWithNewline !== false;
-  const length = Number(record.size) - Number(cached.size);
-  const fd = fs.openSync(record.file, "r");
-
-  try {
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, Number(cached.size));
-    const appendedText = buffer.toString("utf8");
-    const chunk = `${tailBuffer}${appendedText}`;
-    const lines = chunk.split(/\r?\n/);
-    tailBuffer = lines.pop() || "";
-    for (const line of lines) {
-      lineNumber += 1;
-      ingestJsonlLine(summary, line, context, parseDeps);
-    }
-    endedWithNewline = appendedText.endsWith("\n");
-  } finally {
-    fs.closeSync(fd);
-  }
+  const initialTailBuffer = cached.endedWithNewline === false ? cached.tailBuffer || "" : "";
+  const result = fsScanner.forEachCompleteJsonlLine(record.file, (line, _lineNumber, locator) => {
+    ingestJsonlLine(summary, line, context, parseDeps, locator);
+  }, {
+    startOffset: Number(cached.size) || 0,
+    initialLineNumber: Number(cached.lineCount) || 0,
+    initialTailBuffer,
+    initialLineByteOffset: Math.max(
+      0,
+      (Number(cached.size) || 0) - Buffer.byteLength(initialTailBuffer),
+    ),
+    initialEndedWithNewline: cached.endedWithNewline !== false,
+    maxLineBytes: config.EVENT_STREAM_MAX_PARSE_LINE_BYTES,
+  });
 
   return {
     summary,
     context: { ...context },
-    lineCount: lineNumber,
-    tailBuffer,
-    endedWithNewline,
+    lineCount: result.lineCount,
+    tailBuffer: result.tailBuffer,
+    endedWithNewline: result.endedWithNewline,
     incremental: true,
   };
 }
