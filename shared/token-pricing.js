@@ -9,9 +9,19 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createTokenPricing() {
   "use strict";
 
-  const PRICING_VERSION = "2026-07-12";
+  const PRICING_VERSION = "2026-09-24";
 
   const MODEL_PRICE_HINTS = [
+    { match: /gpt-6-astra/i, input: 10, output: 50, cacheRead: 1, cacheCreation: 12.5, source: "custom-pricing" },
+    { match: /gpt-6-sol/i, input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, source: "custom-pricing" },
+    { match: /gpt-6-luna/i, input: 0.1, output: 0.5, cacheRead: 0.01, cacheCreation: 0.125, source: "custom-pricing" },
+    { match: /gpt-5\.6-sol/i, input: 4, output: 20, cacheRead: 0.4, cacheCreation: 5, source: "custom-pricing" },
+    { match: /gpt-5\.6-terra/i, input: 2, output: 12, cacheRead: 0.2, cacheCreation: 2.5, source: "custom-pricing" },
+    { match: /gpt-5\.6-luna/i, input: 0.2, output: 1.2, cacheRead: 0.02, cacheCreation: 0.25, source: "custom-pricing" },
+    { match: /grok-4\.7/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
+    { match: /grok-4\.6/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
+    { match: /grok-4\.3/i, input: 1.25, output: 2.5, cacheRead: 0.2, cacheCreation: 2, source: "custom-pricing" },
+    { match: /grok/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
     { match: /gpt-5\.5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2.5, source: "codex-rate-card" },
     { match: /gpt-5\.4-mini/i, input: 0.75, output: 4.52, cacheRead: 0.075, cacheCreation: 0.75, source: "codex-rate-card" },
     { match: /gpt-5\.4/i, input: 2.5, output: 15, cacheRead: 0.25, cacheCreation: 2.5, fastMultiplier: 2, source: "codex-rate-card" },

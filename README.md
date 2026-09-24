@@ -22,15 +22,25 @@ Session Observer is built for developers who use multiple local coding agents an
 
 ## Start in 30 seconds
 
+**Linux/macOS:**
 ```bash
 npm install
 ./manage.sh start
 ./manage.sh open
 ```
 
+**Windows:**
+```cmd
+pnpm install
+
+pnpm run build
+
+node server.js
+```
+
 The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or external database is required.
 
-`manage.sh` builds the Vite frontend when needed and runs the Node service with a constrained heap. For UI-only development, use `npm run dev`.
+`manage.sh` (Linux/macOS) and `manage.bat` (Windows) build the Vite frontend when needed and run the Node service with a constrained heap. For UI-only development, use `npm run dev`.
 
 ## Product surfaces
 
@@ -116,13 +126,26 @@ Source changes are observed through filesystem notifications and streamed to the
 
 ## Commands
 
+**Linux/macOS:**
 ```bash
 ./manage.sh start      # Start the observer in the background
 ./manage.sh status     # Show PID and local URL
 ./manage.sh logs -f    # Follow runtime logs
 ./manage.sh stop       # Stop the service
 ./manage.sh run        # Run in the foreground
+```
 
+**Windows:**
+```cmd
+manage.bat start       # Start the observer in the background
+manage.bat status      # Show PID and local URL
+manage.bat logs -f     # Follow runtime logs
+manage.bat stop        # Stop the service
+manage.bat run         # Run in the foreground
+```
+
+**Cross-platform:**
+```bash
 npm test               # Frontend Vitest suite
 npm run test:core      # Parser, aggregation, cache, and route tests
 npm run build          # Production frontend build
@@ -162,8 +185,16 @@ The backend remains one local Node process. Vite builds the React interface, whi
 | `OBSERVER_DIALOGUE_SEARCH` | `scan` | Set to `sqlite` for optional disk-backed archive FTS |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | disabled | JSON manifest for additional generic JSONL sources |
 
+**Linux/macOS:**
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
+```
+
+**Windows:**
+```cmd
+set PORT=8790
+set CODEX_SESSIONS_DIR=C:\path\to\codex\sessions
+manage.bat start
 ```
 
 Custom JSONL sources can be registered without changing the scanner:
@@ -193,8 +224,15 @@ Session transcripts may contain prompts, source code, tool output, filesystem pa
 
 Only bind to a non-local interface when you understand the exposure risk:
 
+**Linux/macOS:**
 ```bash
 HOST=0.0.0.0 ./manage.sh start
+```
+
+**Windows:**
+```cmd
+set HOST=0.0.0.0
+manage.bat start
 ```
 
 ## Project
