@@ -450,7 +450,7 @@ describe("ObservabilityWorkspace", () => {
     cleanup();
   });
 
-  test("renders the V2 overview pulse, activity, runtime, workspace, and tool panels", () => {
+  test("prioritizes today's activity and reveals secondary analyses on demand", () => {
     render(
       <MantineProvider>
         <ObservabilityWorkspace
@@ -466,8 +466,8 @@ describe("ObservabilityWorkspace", () => {
     );
 
     expect(screen.getByRole("region", { name: "运行总览工作台" })).toHaveAttribute("data-layout", "overview-pulse-v2");
-    expect(screen.getByText("运行健康")).toBeInTheDocument();
-    expect(screen.getByText("今日概览")).toBeInTheDocument();
+    expect(screen.getByLabelText("运行健康")).toBeInTheDocument();
+    expect(screen.getByLabelText("当前运行摘要")).toBeInTheDocument();
     expect(screen.getByText("Codex 使用额度")).toBeInTheDocument();
     expect(screen.getByText("5 小时额度")).toBeInTheDocument();
     expect(screen.getByText("剩余 65%")).toBeInTheDocument();
@@ -480,7 +480,7 @@ describe("ObservabilityWorkspace", () => {
     }
     expect(screen.getByRole("button", { name: "重新查询 Codex 使用额度" })).toBeInTheDocument();
     expect(screen.getByText("今日会话")).toBeInTheDocument();
-    expect(screen.getByText("当前活跃")).toBeInTheDocument();
+    expect(screen.getByText("近期会话")).toBeInTheDocument();
     expect(screen.getByText("今日对话")).toBeInTheDocument();
     expect(screen.getByText("今日 Token")).toBeInTheDocument();
     expect(screen.getByText("今日成本")).toBeInTheDocument();
@@ -494,32 +494,64 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("当前连续")).toBeInTheDocument();
     expect(screen.getByText("主要工作区")).toBeInTheDocument();
     expect(screen.getByText("高值日期")).toBeInTheDocument();
-    expect(screen.getByText("正在写入的会话")).toBeInTheDocument();
+    expect(screen.getByText("最近活跃的主会话")).toBeInTheDocument();
     expect(screen.getAllByText("Active Codex session").length).toBeGreaterThan(0);
-    expect(screen.getByText("预计 2,400/h")).toBeInTheDocument();
-    expect(screen.getByText("事件 / 分钟")).toBeInTheDocument();
-    expect(screen.getByText("Token / 分钟")).toBeInTheDocument();
+    expect(screen.queryByText("预计 2,400/h")).not.toBeInTheDocument();
+    expect(screen.queryByText("事件 / 分钟")).not.toBeInTheDocument();
+    expect(screen.queryByText("Token / 分钟")).not.toBeInTheDocument();
+    expect(screen.getByText("工作区负载")).toBeInTheDocument();
+    expect(screen.queryByText("工具调用结构")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "对话统计" }));
     expect(screen.getByText("使用统计")).toBeInTheDocument();
     expect(screen.getByText("累计提问")).toBeInTheDocument();
     expect(screen.getByText("中位会话跨度")).toBeInTheDocument();
     expect(screen.getByText("近 7 天节奏")).toBeInTheDocument();
     expect(screen.getByText("最近 5 小时")).toBeInTheDocument();
-    expect(screen.getByText("工作方式")).toBeInTheDocument();
     expect(screen.queryByText("/Users/me/.codex/sessions")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "服务状态" }));
     expect(screen.getByText("服务与数据源")).toBeInTheDocument();
     expect(screen.getByText("进程 RSS")).toBeInTheDocument();
     expect(screen.getByText("数据延迟")).toBeInTheDocument();
     expect(screen.getByText("缓存复用")).toBeInTheDocument();
     expect(screen.getByText("监控文件")).toBeInTheDocument();
     expect(screen.getAllByText("135.8 MB").length).toBeGreaterThan(0);
-    expect(screen.getByText("工作区负载")).toBeInTheDocument();
-    expect(screen.getByText("工具调用结构")).toBeInTheDocument();
     expect(screen.getByText("今日负载")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "工具调用" }));
+    expect(screen.getByText("工作方式")).toBeInTheDocument();
+    expect(screen.getByText("工具调用结构")).toBeInTheDocument();
     expect(screen.getByText("每会话调用")).toBeInTheDocument();
     expect(screen.getAllByText("Shell").length).toBeGreaterThan(0);
     expect(screen.queryByText("Trace Span")).not.toBeInTheDocument();
     expect(screen.queryByText("观测覆盖")).not.toBeInTheDocument();
     expect(screen.queryByText("按天 Token 趋势")).not.toBeInTheDocument();
+  });
+
+  test("uses today's cache coverage rather than lifetime totals and does not imply unpriced use is free", () => {
+    const todayPayload = structuredClone(payload);
+    todayPayload.summary.tokens.windows.day = { total: 1000, input: 100, inputTotal: 1000, cacheReadInput: 900, knownTokenTotal: 0, estimatedUsd: 0 };
+    render(<MantineProvider><ObservabilityWorkspace payload={todayPayload} view="overview" /></MantineProvider>);
+    const kpis = screen.getByLabelText("当前运行摘要");
+    expect(within(kpis).getByText("90%")).toBeInTheDocument();
+    expect(within(kpis).getByText("900 今日命中输入")).toBeInTheDocument();
+    expect(within(kpis).getByText("未计价")).toBeInTheDocument();
+    expect(within(kpis).queryByText("$0")).not.toBeInTheDocument();
+  });
+
+  test("keeps unavailable costs and undefined cache ratios honest across token attribution", () => {
+    const unpricedPayload = structuredClone(payload);
+    const tokens = unpricedPayload.summary.tokens;
+    tokens.cacheCreationInput = 0;
+    tokens.cost = { ...tokens.cost, estimatedUsd: 0, knownTokenTotal: 0, byModel: [] };
+    tokens.byWorkspace = tokens.byWorkspace.map((row) => ({ ...row, estimatedUsd: 0, knownTokenTotal: 0 }));
+    tokens.topSessions = tokens.topSessions.map((row) => ({ ...row, estimatedUsd: 0, knownTokenTotal: 0 }));
+    const { container } = render(<MantineProvider><ObservabilityWorkspace payload={unpricedPayload} view="tokens" /></MantineProvider>);
+    expect(screen.getByText("未计价 范围估算")).toBeInTheDocument();
+    expect(screen.getByText("无写入记录")).toBeInTheDocument();
+    expect(screen.queryByText("0x")).not.toBeInTheDocument();
+    for (const selector of [".mc-model-cost-matrix", ".mc-token-workspaces", ".v2-token-session-table"]) {
+      expect(container.querySelector(selector).textContent).toContain("未计价");
+      expect(container.querySelector(selector).textContent).not.toContain("$0");
+    }
   });
 
   test("warns prominently when a reset credit expires within three days", () => {
@@ -553,6 +585,26 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(formatDateTime(urgentExpiry));
   });
 
+  test("shows refresh failures alongside cached quota windows and permits retry", () => {
+    const onQueryCodexUsage = vi.fn();
+    render(
+      <MantineProvider>
+        <ObservabilityWorkspace
+          payload={payload}
+          view="overview"
+          activeOverview={activeOverview}
+          codexUsagePayload={{ ...codexUsagePayload, error: "未找到 Codex 可执行文件；当前显示上次结果" }}
+          onQueryCodexUsage={onQueryCodexUsage}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole("alert", { name: "Codex 额度查询失败" })).toHaveTextContent("未找到 Codex 可执行文件");
+    expect(screen.getByText("剩余 65%")).toBeInTheDocument();
+    expect(screen.getByText(`上次刷新 ${formatDateTime(codexUsagePayload.updatedAt)}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新查询 Codex 使用额度" }));
+    expect(onQueryCodexUsage).toHaveBeenCalledTimes(1);
+  });
+
   test("keeps Codex account usage idle until the query button is pressed", () => {
     const onQueryCodexUsage = vi.fn();
     render(
@@ -570,6 +622,28 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("尚未查询账户额度")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "查询 Codex 使用额度" }));
     expect(onQueryCodexUsage).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps cached quota readable during refresh with accessible progress and explicit pending state", () => {
+    const onQuery = vi.fn();
+    render(<MantineProvider><ObservabilityWorkspace payload={payload} view="overview"
+      codexUsagePayload={{ ...codexUsagePayload, status: "loading" }} onQueryCodexUsage={onQuery} /></MantineProvider>);
+    const band = screen.getByLabelText("Codex 使用额度");
+    expect(band).toHaveAttribute("aria-busy", "true");
+    expect(within(band).getByRole("status", { name: "额度查询状态" })).toHaveTextContent("查询中");
+    expect(within(band).getByRole("progressbar", { name: "5 小时额度剩余额度" })).toHaveAttribute("aria-valuenow", "65");
+    expect(within(band).getByRole("button", { name: "重新查询 Codex 使用额度" })).toBeDisabled();
+    expect(within(band).getByText("剩余 65%")).toBeInTheDocument();
+    expect(onQuery).not.toHaveBeenCalled();
+  });
+
+  test("uses skeletons for the first quota query without inventing quota values", () => {
+    render(<MantineProvider><ObservabilityWorkspace payload={payload} view="overview"
+      codexUsagePayload={{ status: "loading", installed: true, limits: [] }} onQueryCodexUsage={() => {}} /></MantineProvider>);
+    const band = screen.getByLabelText("Codex 使用额度");
+    expect(band.querySelector(".mantine-Skeleton-root")).toBeInTheDocument();
+    expect(within(band).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(band).getByRole("status", { name: "额度查询状态" })).toHaveTextContent("查询中");
   });
 
   test("switches the daily session heatmap color metric", () => {
@@ -610,13 +684,12 @@ describe("ObservabilityWorkspace", () => {
     );
 
     expect(screen.getByRole("region", { name: "Token 账本工作台" })).toHaveAttribute("data-layout", "token-ledger-v2");
-    expect(screen.getByText("数据范围")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Token 数据范围" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "近 7 天" })).toBeChecked();
-    expect(screen.getByText("历史 6 天直接读取缓存，今天增量更新")).toBeInTheDocument();
-    expect(screen.getByText(`上次完整重算 ${formatDateTime("2026-07-13T08:30:00.000Z")}`)).toBeInTheDocument();
+    expect(screen.getByText("6 天历史缓存")).toBeInTheDocument();
     expect(screen.getByText("Token 构成")).toBeInTheDocument();
     expect(screen.getByText("Prompt 与上下文未命中输入")).toBeInTheDocument();
-    expect(screen.getByText("有效 Token")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /^有效 Token / })).toBeInTheDocument();
     expect(screen.getAllByText("非缓存输入").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存命中").length).toBeGreaterThan(0);
     expect(screen.getAllByText("缓存写入").length).toBeGreaterThan(0);
@@ -624,7 +697,7 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getAllByText("推理输出").length).toBeGreaterThan(0);
     expect(screen.getByText("成本估算")).toBeInTheDocument();
     expect(screen.getAllByText("$0.0525").length).toBeGreaterThan(0);
-    expect(screen.getByText("效率指标")).toBeInTheDocument();
+    expect(screen.getByLabelText("Token 效率指标")).toBeInTheDocument();
     expect(screen.getByText("每会话 Token")).toBeInTheDocument();
     expect(screen.getByText("每会话成本")).toBeInTheDocument();
     expect(screen.getByText("百万 Token 成本")).toBeInTheDocument();

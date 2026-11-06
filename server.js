@@ -6,7 +6,20 @@
 const http = require("http");
 const ObserverCore = require("./shared/observer-core");
 const config = require("./server/config");
-config.ensureFrontendBuild();
+const isQueryWorker = process.argv.includes("--query-worker");
+if (!isQueryWorker) config.ensureFrontendBuild();
+const { createQueryExecutor } = require("./server/query-executor");
+const { policyError, readBody } = require("./server/http-policy");
+const { createSourceWatchers } = require("./server/source-watchers");
+const { createLiveSpeedMonitor } = require("./server/live-speed-monitor");
+const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: [
+  { path: config.SESSIONS_DIR, sourceType: "codex" },
+  { path: config.CLAUDE_PROJECTS_DIR, sourceType: "claude" },
+] });
+const executor = isQueryWorker ? null : createQueryExecutor();
+const { createPerformanceBaselineService } = require("./server/performance-baseline-service");
+const performanceBaseline = isQueryWorker ? null : createPerformanceBaselineService({ executor, onUpdate: liveSpeed.setBaseline });
+let watchers = null;
 const indexManager = require("./server/index-manager");
 const routes = require("./server/routes");
 const sessionOps = require("./server/session-ops");
@@ -15,6 +28,9 @@ const { createSummaryStore } = require("./server/summary-store");
 const { createCodexUsageService } = require("./server/codex-usage");
 const { createSessionAnnotationStore } = require("./server/session-annotations");
 const { createDialogueSearchIndex } = require("./server/dialogue-search-index");
+const { createAnalysisServices } = require("./server/analysis-services");
+const analysisServices = createAnalysisServices(config.RUNTIME_DIR);
+let activeJobId;
 const { parseGenericLineToEvent } = require("./shared/generic-event-parser");
 require("./server/custom-sources").loadCustomSources();
 
@@ -45,7 +61,9 @@ const summaryStore = createSummaryStore({
   parsers,
   applyEventSessionMetaCore,
   cacheFile: config.SUMMARY_CACHE_FILE,
-  costSpeedTier: config.CODEX_SERVICE_TIER,
+  costSpeedTier: process.env.OBSERVER_CODEX_SERVICE_TIER || "standard",
+  loadPrices: () => analysisServices.loadPrices(),
+  onProgress: (progress) => { if (isQueryWorker && activeJobId) process.send?.({ id: activeJobId, progress }); },
 });
 const sourceChangeBus = createSourceChangeBus({
   debounceMs: config.SOURCE_CHANGE_DEBOUNCE_MS,
@@ -61,6 +79,7 @@ const dialogueSearchIndex = createDialogueSearchIndex({
   enabled: config.DIALOGUE_SEARCH_MODE === "sqlite",
   file: config.DIALOGUE_SEARCH_DB,
   parsers,
+  onProgress: (progress) => { if (isQueryWorker && activeJobId) process.send?.({ id: activeJobId, progress }); },
 });
 
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
@@ -106,32 +125,79 @@ routes.init({
   applySessionTitleOverridesCore,
   summaryStore,
   annotationStore,
+  analysisServices,
   dialogueSearchIndex,
 });
 
 // The default data path uses on-demand reads plus lightweight summary caching.
 const boundScheduleSourceRefresh = (reason = "source-change") => {
   routes.invalidateCaches();
+  executor?.invalidate();
   sourceChangeBus.notify(reason);
 };
 
 function readJsonBody(req, res, onPayload) {
-  let body = "";
-  req.on("data", (chunk) => { body += chunk; });
-  req.on("end", () => {
-    try {
-      onPayload(body ? JSON.parse(body) : {});
-    } catch {
-      sendJson(req, res, 400, { error: "Invalid JSON body" });
+  readBody(req, res, sendJson, onPayload);
+}
+
+function runQuery(req, res, operation, args = []) {
+  const controller = new AbortController();
+  res.on("close", () => { if (!res.writableEnded) controller.abort(); });
+  executor.run(operation, args, { signal: controller.signal }).then((payload) => {
+    if (res.destroyed) return;
+    if (payload?.runtime) {
+      payload.runtime.workerMemory = payload.runtime.memory;
+      payload.runtime.memory = { ...process.memoryUsage(), rss: executor.state().combinedRss };
+      payload.runtime.diagnostics = executor.state();
     }
+    if (operation === "getEventDetail") {
+      if (!payload) return sendJson(req, res, 404, { error: "Event not found or source was removed" });
+      return sendJson(req, res, 200, { event: payload });
+    }
+    if (payload == null && operation.startsWith("querySession")) return sendJson(req, res, 404, { error: "Session not found" });
+    sendJson(req, res, 200, payload);
+  }).catch((error) => {
+    if (!res.destroyed) sendJson(req, res, 503, { error: String(error.message || error) });
   });
 }
 
 // Create HTTP server
 const server = http.createServer((req, res) => {
-  const u = new URL(req.url, `http://${req.headers.host}`);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  const denied = policyError(req, { host: config.HOST, port: config.PORT,
+    token: process.env.OBSERVER_ACCESS_TOKEN,
+    allowedHosts: (process.env.OBSERVER_ALLOWED_HOSTS || "").split(",").filter(Boolean),
+    allowSourceMutations: process.env.OBSERVER_ALLOW_SOURCE_MUTATIONS === "1" });
+  if (denied) {
+    if (denied[0] === 401) res.setHeader("WWW-Authenticate", 'Basic realm="Session Observer", charset="UTF-8"');
+    return sendJson(req, res, denied[0], { error: denied[1] });
+  }
 
   try {
+    const u = new URL(req.url, `http://${req.headers.host}`);
+    if (u.pathname === "/api/library" && req.method === "GET") return runQuery(req, res, "library");
+    if (u.pathname === "/api/library" && req.method === "POST") return readJsonBody(req, res, (value) => runQuery(req, res, "saveLibrary", [value.kind, value]));
+    if (u.pathname === "/api/audit" && req.method === "GET") return runQuery(req, res, "audit");
+    if (u.pathname === "/api/pricebook" && req.method === "GET") return runQuery(req, res, "pricebook");
+    if (u.pathname === "/api/pricebook" && req.method === "PUT") return readJsonBody(req, res, (value) => runQuery(req, res, "savePrices", [value]));
+    if (/^\/api\/sessions\/[^/]+\/analysis$/.test(u.pathname) && req.method === "GET") {
+      return runQuery(req, res, "querySessionAnalysis", [decodeURIComponent(u.pathname.split("/")[3])]);
+    }
+    if (u.pathname === "/api/diagnostics" && req.method === "GET") {
+      return sendJson(req, res, 200, { ...executor.state(), watchers: watchers?.state(), source: sourceChangeBus.state(),
+        allowSourceMutations: process.env.OBSERVER_ALLOW_SOURCE_MUTATIONS === "1" });
+    }
+    if (u.pathname === "/api/diagnostics/recover" && req.method === "POST") {
+      executor.reset();
+      watchers?.reconcile();
+      boundScheduleSourceRefresh("recovery");
+      return sendJson(req, res, 200, { recoveredAt: new Date().toISOString() });
+    }
+    if (u.pathname === "/api/diagnostics/cancel" && req.method === "POST") {
+      return readJsonBody(req, res, (value) => sendJson(req, res, 200, { cancelled: executor.cancel(Number(value.id)) }));
+    }
     if (u.pathname === "/api/index-window" && req.method === "GET") {
       return sendJson(req, res, 200, {
         generatedAt: new Date().toISOString(),
@@ -139,6 +205,13 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    if (u.pathname === "/api/performance-baseline" && req.method === "GET") return sendJson(req, res, 200, performanceBaseline.state());
+    if (u.pathname === "/api/performance-baseline/refresh" && req.method === "POST") {
+      performanceBaseline.refresh();
+      return sendJson(req, res, 202, performanceBaseline.state());
+    }
+    if (u.pathname === "/api/live-speed" && req.method === "GET") return liveSpeed.stream(req, res);
+    if (u.pathname === "/api/live-speed/snapshot" && req.method === "GET") return sendJson(req, res, 200, liveSpeed.snapshot());
     if (u.pathname === "/api/source-events" && req.method === "GET") {
       streamSourceEvents(req, res);
       return;
@@ -162,52 +235,50 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (u.pathname === "/api/events/body" && req.method === "GET") {
+      return runQuery(req, res, "getDialogueBody", [u.searchParams.get("eventId"), {
+        offset: Number(u.searchParams.get("offset")) || 0, limit: Number(u.searchParams.get("limit")) || 65536,
+      }]);
+    }
+    if (u.pathname === "/api/events/context" && req.method === "GET") {
+      return runQuery(req, res, "getDialogueContext", [u.searchParams.get("eventId")]);
+    }
     if (u.pathname === "/api/events/detail" && req.method === "GET") {
       const eventId = u.searchParams.get("eventId") || "";
       if (!eventId) return sendJson(req, res, 400, { error: "eventId required" });
-      const event = routes.getEventDetail(eventId);
-      if (!event) return sendJson(req, res, 404, { error: "Event not found" });
-      sendJson(req, res, 200, { event });
-      indexManager.trimHeapSoon();
-      return;
+      return runQuery(req, res, "getEventDetail", [eventId]);
     }
 
-    if (u.pathname === "/api/events") {
+    if (u.pathname === "/api/events" && req.method === "GET") {
       const filters = routes.parseRequestFilters(u.searchParams);
-      sendJson(req, res, 200, routes.queryEvents(filters));
-      indexManager.trimHeapSoon();
-      return;
+      return runQuery(req, res, "queryEvents", [filters]);
     }
 
     if (u.pathname === "/api/sessions" && req.method === "GET") {
-      return sendJson(req, res, 200, routes.querySessions());
+      return runQuery(req, res, "querySessions");
     }
 
     if (u.pathname === "/api/sessions/compare" && req.method === "GET") {
       const left = u.searchParams.get("left") || "";
       const right = u.searchParams.get("right") || "";
       if (!left || !right) return sendJson(req, res, 400, { error: "left and right session ids required" });
-      const comparison = routes.querySessionComparison(left, right);
-      if (!comparison) return sendJson(req, res, 404, { error: "Session not found" });
-      return sendJson(req, res, 200, comparison);
+      return runQuery(req, res, "querySessionComparison", [left, right]);
     }
 
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/replay") && req.method === "GET") {
       const sessionId = decodeURIComponent(u.pathname.split("/").filter(Boolean)[2] || "");
       if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-      const replay = routes.querySessionReplay(sessionId, u.searchParams.get("limit"));
-      if (!replay) return sendJson(req, res, 404, { error: "Session not found" });
-      return sendJson(req, res, 200, replay);
+      return runQuery(req, res, "querySessionReplay", [sessionId, u.searchParams.get("limit")]);
     }
 
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/annotation")) {
       const sessionId = decodeURIComponent(u.pathname.split("/").filter(Boolean)[2] || "");
       if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-      if (req.method === "GET") return sendJson(req, res, 200, { annotation: routes.getSessionAnnotation(sessionId) });
+      if (req.method === "GET") return runQuery(req, res, "readAnnotation", [sessionId]);
       if (req.method === "PUT" || req.method === "POST") {
         return readJsonBody(req, res, (payload) => {
           try {
-            sendJson(req, res, 200, { annotation: routes.setSessionAnnotation(sessionId, payload) });
+            runQuery(req, res, "writeAnnotation", [sessionId, payload]);
           } catch (error) {
             sendJson(req, res, 400, { error: String(error.message || error) });
           }
@@ -216,29 +287,15 @@ const server = http.createServer((req, res) => {
     }
 
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/export") && req.method === "GET") {
-      const parts = u.pathname.split("/").filter(Boolean);
-      const sessionId = decodeURIComponent(parts[2] || "");
-      if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-      const exported = routes.exportSession(sessionId, {
-        format: u.searchParams.get("format") || "markdown",
-        sanitize: u.searchParams.get("sanitize") !== "0",
-      });
-      if (!exported) return sendJson(req, res, 404, { error: "Session not found" });
-      sendDownload(res, 200, exported);
-      indexManager.trimHeapSoon();
-      return;
+      return sendJson(req, res, 410, { error: "Transcript export is no longer provided" });
     }
 
     if (u.pathname === "/api/observability" && req.method === "GET") {
-      sendJson(req, res, 200, routes.queryObservability());
-      indexManager.trimHeapSoon();
-      return;
+      return runQuery(req, res, "queryObservability");
     }
 
     if (u.pathname === "/api/observability/recalculate" && req.method === "POST") {
-      sendJson(req, res, 200, routes.recalculateObservability());
-      indexManager.trimHeapSoon();
-      return;
+      return runQuery(req, res, "recalculateObservability");
     }
 
     if (u.pathname === "/api/codex-usage" && req.method === "GET") {
@@ -259,11 +316,9 @@ const server = http.createServer((req, res) => {
     }
 
     if (u.pathname === "/api/sessions/rename" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
+      readJsonBody(req, res, (payload) => {
         try {
-          const { sessionId, newName } = JSON.parse(body);
+          const { sessionId, newName } = payload;
           if (!sessionId || !newName) return sendJson(req, res, 400, { error: "sessionId and newName required" });
           const result = sessionOps.renameSession(sessionId, newName, boundScheduleSourceRefresh);
           if (!result.success) return sendJson(req, res, 404, { error: result.error });
@@ -276,11 +331,9 @@ const server = http.createServer((req, res) => {
     }
 
     if (u.pathname === "/api/sessions/batch-delete" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
+      readJsonBody(req, res, (payload) => {
         try {
-          const { sessionIds } = JSON.parse(body);
+          const { sessionIds } = payload;
           if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
             return sendJson(req, res, 400, { error: "sessionIds array required" });
           }
@@ -300,12 +353,11 @@ const server = http.createServer((req, res) => {
       if (!result.success) return sendJson(req, res, 404, { error: result.error });
       return sendJson(req, res, 200, result);
     }
+    return routes.serveStatic(u.pathname, res);
   } catch (err) {
-    console.error(`[server] Unhandled error for ${req.method} ${u.pathname}:`, err);
+    console.error(`[server] Unhandled error for ${req.method}:`, err);
     return sendJson(req, res, 500, { error: "Internal server error" });
   }
-
-  return routes.serveStatic(u.pathname, res);
 });
 
 const JSON_HEAP_PRESSURE_BYTES = 128 * 1024 * 1024;
@@ -327,7 +379,8 @@ function trimHeapBeforeJson(options = {}) {
 
 function sendJson(req, res, status, data) {
   const zlib = require("zlib");
-  trimHeapBeforeJson({ force: true });
+  if (res.destroyed || res.writableEnded) return;
+  trimHeapBeforeJson();
   const body = JSON.stringify(data);
   const acceptsGzip = /\bgzip\b/i.test(req?.headers?.["accept-encoding"] || "");
   const bodyLength = Buffer.byteLength(body);
@@ -391,18 +444,6 @@ function streamSourceEvents(req, res) {
   });
 }
 
-function sendDownload(res, status, exported) {
-  const payload = Buffer.from(exported.body || "");
-  const filename = String(exported.filename || "session-export.txt").replace(/["\\]/g, "");
-  res.writeHead(status, {
-    "Content-Type": exported.contentType || "application/octet-stream",
-    "Content-Disposition": `attachment; filename="${filename}"`,
-    "Cache-Control": "no-store",
-    "Content-Length": payload.length,
-  });
-  res.end(payload);
-}
-
 // Handle uncaught errors gracefully
 process.on("uncaughtException", (err) => {
   console.error("[server] Uncaught exception:", err);
@@ -412,9 +453,54 @@ process.on("unhandledRejection", (reason) => {
   console.error("[server] Unhandled rejection:", reason);
 });
 
-server.listen(config.PORT, config.HOST, () => {
+if (isQueryWorker) {
+  const performanceHistory = require("./server/performance-history").createPerformanceHistory({
+    file: require("path").join(config.RUNTIME_DIR, "performance-history.sqlite"),
+    listFiles: require("./server/source-files").listSourceFileRecords,
+    roots: [{ path: config.SESSIONS_DIR, sourceType: "codex" }, { path: config.CLAUDE_PROJECTS_DIR, sourceType: "claude" }],
+    onProgress: (progress) => { if (activeJobId) process.send?.({ id: activeJobId, progress }); },
+  });
+  const operations = {
+    performanceBaseline: performanceHistory.refresh,
+    queryEvents: routes.queryEvents, querySessions: routes.querySessions,
+    queryObservability: routes.queryObservability, recalculateObservability: routes.recalculateObservability,
+    querySessionReplay: routes.querySessionReplay, querySessionComparison: routes.querySessionComparison,
+    getEventDetail: routes.getEventDetail,
+    getDialogueBody: routes.getDialogueBody, getDialogueContext: routes.getDialogueContext,
+    querySessionAnalysis: routes.querySessionAnalysis,
+    library: analysisServices.library, saveLibrary: analysisServices.saveLibrary,
+    audit: () => ({ runs: analysisServices.audit().runs }),
+    pricebook: analysisServices.pricebook,
+    savePrices: (value) => { const result = analysisServices.savePrices(value); routes.invalidateCaches(); return result; },
+    readAnnotation: (id) => ({ annotation: routes.getSessionAnnotation(id) }),
+    writeAnnotation: (id, value) => ({ annotation: routes.setSessionAnnotation(id, value) }),
+  };
+  process.on("message", (message) => {
+    if (message.operation === "invalidate") { routes.invalidateCaches(); return; }
+    try {
+      activeJobId = message.id;
+      if (!Object.hasOwn(operations, message.operation)) throw new Error("Unsupported query operation");
+      const result = operations[message.operation](...message.args);
+      activeJobId = null;
+      process.send?.({ id: message.id, result, memory: process.memoryUsage() }, () => indexManager.trimHeapNow());
+    } catch (error) { process.send?.({ id: message.id, error: String(error.message || error) }); }
+  });
+  process.on("disconnect", () => process.exit(0));
+} else {
+  if (!["localhost", "127.0.0.1", "::1"].includes(config.HOST) && !process.env.OBSERVER_ACCESS_TOKEN) {
+    console.error("LAN binding requires OBSERVER_ACCESS_TOKEN and OBSERVER_ALLOWED_HOSTS");
+    executor.close();
+    process.exit(1);
+  }
+  const shutdown = () => { watchers?.close(); performanceBaseline.close(); liveSpeed.close(); executor.close(); server.close(); };
+  process.on("SIGTERM", () => { shutdown(); process.exit(0); });
+  process.on("SIGINT", () => { shutdown(); process.exit(0); });
+  server.listen(config.PORT, config.HOST, () => {
   console.log(`Session Observer running at http://${config.HOST}:${config.PORT}`);
   console.log(`Codex sessions: ${config.SESSIONS_DIR}`);
   console.log(`Claude Code sessions: ${config.CLAUDE_PROJECTS_DIR}`);
-  indexManager.startIndexWatchers(boundScheduleSourceRefresh);
-});
+    watchers = createSourceWatchers(boundScheduleSourceRefresh, { onFileChange: liveSpeed.notify, onRecords: liveSpeed.discover });
+    liveSpeed.start();
+    performanceBaseline.start();
+  });
+}

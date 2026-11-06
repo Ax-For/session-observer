@@ -162,10 +162,14 @@ describe("StreamWorkspace", () => {
     expect(container.querySelector(".overview-board")).not.toBeInTheDocument();
     expect(screen.queryByText("今日 Token")).not.toBeInTheDocument();
     expect(screen.getAllByText("gpt-5.4").length).toBeGreaterThan(0);
-    expect(screen.getByText("SEMANTIC ACTIVITY")).toBeInTheDocument();
+    expect(screen.queryByText("SEMANTIC ACTIVITY")).not.toBeInTheDocument();
     expect(screen.getAllByText("用户回合").length).toBeGreaterThan(0);
     expect(screen.getByText("这里需要突出用户消息")).toBeInTheDocument();
     expect(screen.getByText("我会优先展示对话内容")).toBeInTheDocument();
+    const activityToggle = screen.getByText("这里需要突出用户消息").closest("button");
+    expect(activityToggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(activityToggle);
+    expect(activityToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("region", { name: "当前窗口分析" })).toBeInTheDocument();
     expect(screen.getByText("2 个活动")).toBeInTheDocument();
     expect(screen.getByText("Token Usage 60 · Tool Call 40")).toBeInTheDocument();

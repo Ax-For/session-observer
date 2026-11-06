@@ -7,6 +7,8 @@ const crypto = require("crypto");
 const config = require("./config");
 const fsScanner = require("./fs-scanner");
 const sessionMeta = require("./session-meta");
+const { encodeReference } = require("./event-reference");
+const { readCompactJsonRecord } = require("./compact-json-record");
 
 const fileEventCache = new Map();
 const stringPool = new Map();
@@ -108,6 +110,7 @@ function internString(value) {
   if (typeof value !== "string" || !value) return value;
   const cached = stringPool.get(value);
   if (cached) return cached;
+  if (stringPool.size >= 10000) stringPool.clear();
   stringPool.set(value, value);
   return value;
 }
@@ -149,7 +152,9 @@ function attachEventLocator(event, file, lineNumber, eventIndex, options = {}) {
   if (Number.isFinite(sourceLength) && sourceLength >= 0) event.sourceLength = sourceLength;
   event.lineEventIndex = eventIndex;
   const locator = event.sourceLine ? `line:${event.sourceLine}` : `offset:${event.sourceOffset || 0}`;
-  event.eventId = eventLocatorId(file, locator, eventIndex);
+  event.eventId = Number.isFinite(sourceOffset) && sourceOffset >= 0
+    ? encodeReference(file, sourceOffset, eventIndex, event.sourceLength || 0, event)
+    : eventLocatorId(file, locator, eventIndex);
   return event;
 }
 
@@ -184,6 +189,21 @@ function makeIndexedEvent(event) {
   setStringField(indexed, "sessionId", event.sessionId);
   setStringField(indexed, "model", event.model);
   setStringField(indexed, "turnId", event.turnId);
+  for (const key of ["parentSessionId", "agentId", "serviceTier", "costSource"]) setStringField(indexed, key, event[key]);
+  for (const key of ["recordedCostUsd", "exitCode"]) if (typeof event[key] === "number") indexed[key] = event[key];
+  if (typeof event.isError === "boolean") indexed.isError = event.isError;
+  if (event.performanceSignal) {
+    const signal = {};
+    for (const key of ["kind", "responseId"]) setStringField(signal, key, event.performanceSignal[key]);
+    for (const key of ["output", "cumulative", "cumulativeOutput"]) {
+      const value = event.performanceSignal[key];
+      if (typeof value === "number" && Number.isFinite(value)) signal[key] = value;
+    }
+    for (const key of ["modern", "final", "explicit", "hasContent"]) {
+      if (typeof event.performanceSignal[key] === "boolean") signal[key] = event.performanceSignal[key];
+    }
+    if (signal.kind) indexed.performanceSignal = signal;
+  }
   setStringField(indexed, "callId", event.callId);
   setStringField(indexed, "toolName", event.toolName);
   setStringField(indexed, "cwd", event.cwd);
@@ -509,15 +529,17 @@ function parseFullFileEvents(file, threadMeta, parsers, applyEventSessionMetaCor
 /**
  * Parse a single event line from the index (for detail lookup).
  */
-function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSessionMetaCore) {
+function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSessionMetaCore, options = {}) {
   const sourceLine = Number(indexedEvent.sourceLine);
   const sourceOffset = Number(indexedEvent.sourceOffset);
   const sourceLength = Number(indexedEvent.sourceLength);
   if (Number.isFinite(sourceLength) && sourceLength > config.EVENT_DETAIL_MAX_LINE_BYTES) return [];
+  const compact = options.bounded && sourceLength > 128 * 1024 && Number.isFinite(sourceOffset)
+    ? readCompactJsonRecord(indexedEvent.sourceFile, sourceOffset, sourceLength) : null;
   const maxBytes = Number.isFinite(sourceLength) && sourceLength > 0
     ? Math.min(config.EVENT_DETAIL_MAX_LINE_BYTES, sourceLength + 1)
     : config.EVENT_DETAIL_MAX_LINE_BYTES;
-  const line = Number.isFinite(sourceOffset) && sourceOffset >= 0
+  const line = compact ? "{}" : Number.isFinite(sourceOffset) && sourceOffset >= 0
     ? fsScanner.readJsonlLineAtOffset(indexedEvent.sourceFile, sourceOffset, maxBytes)
     : Number.isFinite(sourceLine) && sourceLine > 0 && Number.isFinite(sourceLength)
       ? fsScanner.readJsonlLine(indexedEvent.sourceFile, sourceLine)
@@ -527,16 +549,41 @@ function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSe
   const context = {
     model: indexedEvent.model || "unknown",
     sessionId: indexedEvent.sessionId || "unknown",
+    sessionMetaId: indexedEvent.sessionId && indexedEvent.sessionId !== "unknown" ? indexedEvent.sessionId : undefined,
     sourceFile: indexedEvent.sourceFile,
     cwd: indexedEvent.cwd || "",
     sessionTitle: indexedEvent.sessionTitle || "",
   };
 
+  if (parser === parsers.parseCodexLineToEvent && Number.isFinite(sourceOffset)) {
+    // Context belongs to this record's turn, not the session's latest model.
+    let foundTurn = false;
+    fsScanner.forEachCompleteJsonlLineReverse(indexedEvent.sourceFile, (text, _number, locator) => {
+      if (locator.truncated || !/"type"\s*:\s*"(?:turn_context|session_meta)"/.test(text)) return;
+      try {
+        const metadata = JSON.parse(text);
+        if (metadata.type === "turn_context" && !foundTurn) {
+          Object.assign(context, { model: metadata.payload?.model || context.model, cwd: metadata.payload?.cwd || context.cwd,
+            sessionId: context.sessionMetaId || metadata.payload?.thread_id || context.sessionId });
+          foundTurn = true;
+        } else if (metadata.type === "session_meta") {
+          context.sessionId = metadata.payload?.id || context.sessionId;
+          context.cwd ||= metadata.payload?.cwd || "";
+          context.sessionTitle ||= metadata.payload?.title || "";
+          return false;
+        }
+        if (foundTurn && context.cwd && context.sessionId !== "unknown") return false;
+      } catch { /* Ignore unrelated malformed metadata. */ }
+      return undefined;
+    }, { countLines: false, maxLineBytes: 64 * 1024, endOffset: sourceOffset });
+  }
+
   try {
-    const obj = JSON.parse(line);
+    const obj = compact?.value || JSON.parse(line);
     const evtOrArray = parser(obj, context);
     const events = Array.isArray(evtOrArray) ? evtOrArray : [evtOrArray].filter(Boolean);
     return events.map((evt, eventIndex) => {
+      if (compact?.truncated) { evt.rawTruncated = true; evt.contentTruncated = compact.textTruncated; }
       const meta = threadMeta.get(evt.sessionId);
       if (meta) {
         const titleStrategy =

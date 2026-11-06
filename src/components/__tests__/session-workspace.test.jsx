@@ -51,6 +51,7 @@ describe("SessionWorkspace", () => {
                 title: "当前项目 UI 调整",
                 latest: "2026-05-25T15:30:00.000Z",
                 ageMs: 120000,
+                activeChildCount: 2,
                 count: 42,
                 totalTokens: 1200,
                 hasTokenData: true,
@@ -74,9 +75,10 @@ describe("SessionWorkspace", () => {
       </MantineProvider>,
     );
 
-    expect(screen.getByText("当前活跃")).toBeInTheDocument();
-    expect(screen.getByText("正在写入")).toBeInTheDocument();
-    expect(screen.getByText("最近 30 分钟有新事件，按更新时间排序")).toBeInTheDocument();
+    expect(screen.getByText("2 个最近活跃的主会话")).toBeInTheDocument();
+    expect(screen.getByText("最近活跃的主会话")).toBeInTheDocument();
+    expect(screen.getByText("最近 30 分钟有新事件，子 Agent 归入主会话")).toBeInTheDocument();
+    expect(screen.getByText("含 2 个活跃子 Agent")).toBeInTheDocument();
     expect(screen.getByText("还有 1 个活跃会话")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /查看活跃会话详情 当前项目 UI 调整/ }));
     expect(onOpenSessionDetail).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "active-1" }));
@@ -134,7 +136,7 @@ describe("SessionWorkspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /复制会话 id · 019da544/i }));
     expect(onCopySessionId).toHaveBeenCalledWith("019da544-e133-7b71-9e63-79d2bbba8713");
-    expect(screen.getByText("文件位置")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "session.jsonl" })).toBeInTheDocument();
     expect(screen.getAllByText(/session\.jsonl/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /定位工作目录 .*session-observer/i }));
     expect(onFocusWorkspace).toHaveBeenCalledWith("/Users/me/code/session-observer");
@@ -184,7 +186,7 @@ describe("SessionWorkspace", () => {
     );
 
     expect(screen.getAllByText("Token 未记录").length).toBeGreaterThan(0);
-    expect(screen.getByText("2 个原始会话 · 每个约 6 条事件")).toBeInTheDocument();
+    expect(screen.getByTitle("2 个原始会话 · 每个约 6 条事件")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 这个 npm script 怎么启动" }));
     expect(onToggleSelect).toHaveBeenCalledWith(["older", "newer"]);
   });
@@ -233,7 +235,8 @@ describe("SessionWorkspace", () => {
 
     const virtualScroll = document.querySelector(".session-list-virtual-scroll");
     expect(virtualScroll).toBeTruthy();
-    Object.defineProperty(virtualScroll, "scrollTop", { value: 6300, configurable: true });
+    const rowHeight = Number.parseFloat(virtualScroll.style.getPropertyValue("--session-row-height"));
+    Object.defineProperty(virtualScroll, "scrollTop", { value: rowHeight * 75, configurable: true });
     fireEvent.scroll(virtualScroll);
 
     await waitFor(() => {
@@ -342,7 +345,7 @@ describe("SessionWorkspace", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Codex app session name" })).toBeInTheDocument();
-    expect(screen.getByText("Codex 名称")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Codex app session name" })).toHaveAttribute("title", "Codex 名称：Codex app session name");
     expect(screen.queryByRole("heading", { name: "A later message that must not replace the title" })).not.toBeInTheDocument();
     expect(screen.getByText("会话目标")).toBeInTheDocument();
     expect(screen.getByRole("log", { name: "会话聊天记录" })).toBeInTheDocument();

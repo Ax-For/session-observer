@@ -29,8 +29,9 @@ function buildQuery(params = {}) {
 async function request(url, options) {
   let response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, { ...options, headers: { "X-Observer-Request": "1", ...options?.headers } });
   } catch (error) {
+    if (error.name === "AbortError") throw error;
     throw new Error(`Network error: ${error.message || "request failed"}`);
   }
 
@@ -74,23 +75,38 @@ async function requestDownload(url) {
 }
 
 export const apiClient = {
-  fetchEvents(params = {}) {
+  fetchDiagnostics(options) { return request("/api/diagnostics", options); },
+  recoverDiagnostics() { return request("/api/diagnostics/recover", { method: "POST" }); },
+  cancelQuery(id) { return request("/api/diagnostics/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); },
+  fetchLibrary(options) { return request("/api/library", options); },
+  saveLibrary(kind, value) { return request("/api/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...value, kind }) }); },
+  fetchAudit(options) { return request("/api/audit", options); },
+  fetchPricebook(options) { return request("/api/pricebook", options); },
+  savePricebook(rates) { return request("/api/pricebook", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rates }) }); },
+  fetchSessionAnalysis(id, options) { return request(`/api/sessions/${encodeURIComponent(id)}/analysis`, options); },
+  fetchEvents(params = {}, options = {}) {
     const query = buildQuery(params);
-    return request(`/api/events${query ? `?${query}` : ""}`);
+    return request(`/api/events${query ? `?${query}` : ""}`, options);
   },
 
-  fetchEventDetail(eventId) {
+  fetchEventDetail(eventId, options) {
     const query = buildQuery({ eventId });
-    return request(`/api/events/detail?${query}`);
+    return request(`/api/events/detail?${query}`, options);
+  },
+  fetchDialogueBody(eventId, params = {}, options) {
+    return request(`/api/events/body?${buildQuery({ eventId, ...params })}`, options);
+  },
+  fetchDialogueContext(eventId, options) {
+    return request(`/api/events/context?${buildQuery({ eventId })}`, options);
   },
 
-  fetchSessions() {
-    return request("/api/sessions");
+  fetchSessions(options) {
+    return request("/api/sessions", options);
   },
 
-  fetchSessionReplay(sessionId, limit = 500) {
+  fetchSessionReplay(sessionId, limit = 500, options) {
     const query = buildQuery({ limit });
-    return request(`/api/sessions/${encodeURIComponent(sessionId)}/replay?${query}`);
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/replay?${query}`, options);
   },
 
   compareSessions(left, right) {
@@ -110,13 +126,14 @@ export const apiClient = {
     });
   },
 
-  fetchObservability() {
-    return request("/api/observability");
+  fetchObservability(options) {
+    return request("/api/observability", options);
   },
 
-  recalculateObservability() {
+  recalculateObservability(options) {
     return request("/api/observability/recalculate", {
       method: "POST",
+      ...options,
     });
   },
 

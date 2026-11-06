@@ -13,9 +13,10 @@ const tokenPricing = require("../shared/token-pricing");
 const config = require("./config");
 const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
+const { readCompactJsonRecord } = require("./compact-json-record");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 13;
+const SUMMARY_CACHE_VERSION = 16;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SESSION_MESSAGE_LENGTH = 320;
@@ -78,12 +79,16 @@ function addModelCost(map, model, estimate) {
   const row = map.get(modelKey) || { model: modelKey, estimatedUsd: 0, knownTokenTotal: 0 };
   row.estimatedUsd += Number(estimate.estimatedUsd) || 0;
   row.knownTokenTotal += Number(estimate.knownTokenTotal) || 0;
+  row.pricingSources = [...new Set([...(row.pricingSources || []), ...(estimate.pricingSources || []), estimate.pricingSource].filter(Boolean))];
+  row.tierSources = [...new Set([...(row.tierSources || []), ...(estimate.tierSources || []), estimate.tierSource].filter(Boolean))];
+  row.references = [...new Set([...(row.references || []), ...(estimate.references || []), estimate.reference].filter(Boolean))].slice(0, 20);
   map.set(modelKey, row);
 }
 
 function mergeModelCosts(target, source) {
   for (const [model, row] of source || []) {
     addModelCost(target, model, {
+      ...row,
       known: true,
       estimatedUsd: row?.estimatedUsd,
       knownTokenTotal: row?.knownTokenTotal,
@@ -409,6 +414,9 @@ function createFileSummary(file, signature) {
     signature,
     costSpeedTier: "standard",
     eventsTotal: 0,
+    oversizedLines: 0,
+    invalidLines: 0,
+    totalLines: 0,
     firstEventAt: "",
     lastEventAt: "",
     sessions: new Map(),
@@ -459,6 +467,9 @@ function touchSession(summary, event, costEstimate) {
   if (!sessionId || sessionId === "unknown") return null;
   const session = summary.sessions.get(sessionId) || createSessionSummary(sessionId, event?.sourceType);
   session.count += 1;
+  if (event.parentSessionId) session.parentSessionId = event.parentSessionId;
+  if (event.isSubagent) session.isSubagent = true;
+  if (event.agentId) session.agentId = event.agentId;
   if (event?.time && (!session.startedAt || event.time < session.startedAt)) session.startedAt = event.time;
   if (event?.time && (!session.latest || event.time > session.latest)) session.latest = event.time;
   if (event?.sessionTitle) session.sessionTitle = event.sessionTitle;
@@ -514,7 +525,7 @@ function touchSession(summary, event, costEstimate) {
   }
   if (event?.callType === "Tool_Result") {
     session.toolResults += 1;
-    if (/\b(error|failed|failure|exception)\b/i.test(eventDetailText(event))) session.toolErrors += 1;
+    if (event.isError === true || (Number.isInteger(event.exitCode) && event.exitCode !== 0)) session.toolErrors += 1;
   }
   if (/\b(context[_ -]?compact(?:ed|ion)?|compact(?:ed|ion)? context)\b/i.test(eventDetailText(event))) {
     session.compactions += 1;
@@ -565,7 +576,7 @@ function touchDaily(summary, event, eventMs, tokenTotal, isAlert, costEstimate) 
     if (event?.time && (!session.latest || event.time > session.latest)) session.latest = event.time;
     bucket.sessionStats.set(event.sessionId, session);
   }
-  if (tokenTotal > 0) {
+  if (ObserverCore.hasTokenUsageData(event.tokenUsage)) {
     addUsageTotals(bucket.usage, event.tokenUsage, event.sourceType);
     addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
     addMapValue(bucket.tokensByModel, event?.model, tokenTotal);
@@ -588,7 +599,7 @@ function touchHourly(summary, event, eventMs, tokenTotal, isAlert, costEstimate)
   if (event?.sessionId && event.sessionId !== "unknown") bucket.sessions.add(event.sessionId);
   bucket.tokens += tokenTotal;
   addCostEstimate(bucket, costEstimate);
-  if (tokenTotal > 0) addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
+  if (ObserverCore.hasTokenUsageData(event.tokenUsage)) addMapValue(bucket.platforms, event?.sourceType, tokenTotal);
   summary.hourly.set(key, bucket);
 }
 
@@ -604,10 +615,11 @@ function ingestEvent(summary, event) {
 
   const isAlert = ObserverCore.isAlertEvent(event);
   const tokenTotal = ObserverCore.tokenCountedTotal(event.tokenUsage, event.sourceType);
-  const costOptions = event?.sourceType === "codex" ? { speed: summary.costSpeedTier } : {};
-  const costEstimate = tokenTotal > 0 ? tokenPricing.estimateTokenCost(event.tokenUsage, event.model, costOptions) : null;
+  const costOptions = { speed: event.serviceTier || (event?.sourceType === "codex" ? summary.costSpeedTier : "standard"),
+    time: event.time, recordedUsd: event.recordedCostUsd, tierSource: event.serviceTier ? "recorded" : "assumed" };
+  const costEstimate = event.tokenUsage ? tokenPricing.estimateTokenCost(event.tokenUsage, event.model, costOptions) : null;
   touchSession(summary, event, costEstimate);
-  if (tokenTotal > 0) {
+  if (ObserverCore.hasTokenUsageData(event.tokenUsage)) {
     addUsageTotals(summary.usage, event.tokenUsage, event.sourceType);
     const modelKey = event?.model || "unknown";
     summary.usageByModel.set(modelKey, ObserverCore.addTokenUsage(summary.usageByModel.get(modelKey), event.tokenUsage));
@@ -715,6 +727,9 @@ function mergeDailyBucket(target, source) {
 }
 
 function mergeSession(target, source) {
+  if (source.parentSessionId) target.parentSessionId = source.parentSessionId;
+  if (source.isSubagent) target.isSubagent = true;
+  if (source.agentId) target.agentId = source.agentId;
   target.count += source.count || 0;
   if (source.startedAt && (!target.startedAt || source.startedAt < target.startedAt)) target.startedAt = source.startedAt;
   if (source.latest && (!target.latest || source.latest > target.latest)) target.latest = source.latest;
@@ -773,6 +788,9 @@ function mergeSession(target, source) {
 }
 
 function mergeSummary(target, source) {
+  target.totalLines += source.totalLines || 0;
+  target.oversizedLines += source.oversizedLines || 0;
+  target.invalidLines += source.invalidLines || 0;
   target.eventsTotal += source.eventsTotal || 0;
   if (source.firstEventAt && (!target.firstEventAt || source.firstEventAt < target.firstEventAt)) target.firstEventAt = source.firstEventAt;
   if (source.lastEventAt && (!target.lastEventAt || source.lastEventAt > target.lastEventAt)) target.lastEventAt = source.lastEventAt;
@@ -912,6 +930,7 @@ function serializeCacheEntry(entry) {
     lineCount: entry.lineCount,
     tailBuffer: entry.tailBuffer,
     endedWithNewline: entry.endedWithNewline,
+    appendGuard: entry.appendGuard,
     context: entry.context,
     summary: encodeCacheValue(entry.summary),
   };
@@ -926,6 +945,7 @@ function deserializeCacheEntry(file, entry) {
     lineCount: Number(entry.lineCount) || 0,
     tailBuffer: entry.tailBuffer || "",
     endedWithNewline: entry.endedWithNewline !== false,
+    appendGuard: entry.appendGuard,
     context: {
       ...createParserContext(file),
       ...(entry.context || {}),
@@ -950,19 +970,20 @@ function createParserContext(file) {
 
 function ingestJsonlLine(summary, line, context, deps, locator = {}) {
   if (!line) return;
+  summary.totalLines += 1;
   try {
-    if (locator.truncated) {
-      ingestEvent(summary, makeTruncatedLineEvent(line, {
-        ...context,
-        sourceType: deps.sourceType,
-      }, locator));
-      return;
-    }
-
     const sourceLine = context?.compactContent
       ? compactLargeJsonlLine(line, { maxValueLength: context.contentLimit || 800 })
       : line;
-    const obj = JSON.parse(sourceLine);
+    let obj;
+    if (locator.truncated) {
+      try { obj = readCompactJsonRecord(deps.file, locator.byteOffset, locator.byteLength, { stringLimit: 800 }).value; }
+      catch {
+        summary.oversizedLines += 1;
+        ingestEvent(summary, makeTruncatedLineEvent(line, { ...context, sourceType: deps.sourceType }, locator));
+        return;
+      }
+    } else obj = JSON.parse(sourceLine);
     const events = callParser(deps.parser, obj, context);
     for (const event of events) {
       if (!event.sourceFile) event.sourceFile = deps.file;
@@ -970,7 +991,7 @@ function ingestJsonlLine(summary, line, context, deps, locator = {}) {
       ingestEvent(summary, event);
     }
   } catch {
-    // Skip invalid or incomplete JSON lines.
+    summary.invalidLines += 1;
   }
 }
 
@@ -1004,11 +1025,28 @@ function parseFileSummary(record, deps) {
   };
 }
 
+function fileAppendGuard(file, size) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const hash = require("crypto").createHash("sha256");
+    const stat = fs.fstatSync(fd);
+    hash.update(`${stat.dev}:${stat.ino}:${size}`);
+    for (const offset of [0, Math.max(0, size - 4096)]) {
+      const bytes = Buffer.alloc(Math.min(4096, size));
+      const count = fs.readSync(fd, bytes, 0, bytes.length, offset);
+      hash.update(bytes.subarray(0, count));
+    }
+    return hash.digest("hex");
+  } finally { fs.closeSync(fd); }
+}
+
 function canAppendFileSummary(cached, record) {
   return Boolean(
     cached &&
     cached.summary &&
     cached.context &&
+    cached.endedWithNewline &&
+    cached.appendGuard && cached.appendGuard === fileAppendGuard(record.file, Number(cached.size)) &&
     Number.isFinite(Number(cached.size)) &&
     Number(record.size) > Number(cached.size),
   );
@@ -1063,6 +1101,9 @@ function serializeSession(session, threadMeta) {
   const resolvedTitle = resolveSessionDisplayTitle(session, meta);
   return {
     sessionId: session.sessionId,
+    parentSessionId: session.parentSessionId || "",
+    isSubagent: Boolean(session.isSubagent),
+    agentId: session.agentId || "",
     sessionTitle: shouldUseMetaTitle ? metaTitle : session.sessionTitle,
     displayTitle: resolvedTitle.title,
     titleSource: resolvedTitle.source,
@@ -1238,6 +1279,9 @@ function buildCostSummary(summary) {
       model: row.model,
       estimatedUsd: row.estimatedUsd || 0,
       knownTokenTotal: row.knownTokenTotal || 0,
+      pricingSources: row.pricingSources || [],
+      tierSources: row.tierSources || [],
+      references: row.references || [],
     }));
   const estimatedUsd = byModel.reduce((total, row) => total + (Number(row.estimatedUsd) || 0), 0);
   const knownTokenTotal = byModel.reduce((total, row) => total + (Number(row.knownTokenTotal) || 0), 0);
@@ -1246,7 +1290,7 @@ function buildCostSummary(summary) {
     estimatedUsd,
     knownTokenTotal,
     currency: "USD",
-    source: "built-in-estimate",
+    source: "versioned-reference-and-local-pricebook",
     speedTier: summary.costSpeedTier || "standard",
     unknownModels: [...(summary.unknownCostModels || new Set())].sort(),
     byModel: byModel.sort((left, right) => right.estimatedUsd - left.estimatedUsd),
@@ -1500,6 +1544,9 @@ function buildPublicSummary(summary, cacheStats, options = {}) {
     unknownModels: costSummary.unknownModels,
     pricingVersion: tokenPricing.PRICING_VERSION,
   });
+  dataQuality.oversizedLines = summary.oversizedLines;
+  dataQuality.invalidLines = summary.invalidLines;
+  dataQuality.parseCoverage = summary.totalLines ? Math.max(0, 100 * (1 - (summary.oversizedLines + summary.invalidLines) / summary.totalLines)) : null;
   const guardrails = buildGuardrails(tokenRanges, options.budgets || config.USAGE_BUDGETS);
   const toolCategories = ObserverCore.buildToolCategories(topTools);
   const usageStats = ObserverCore.buildUsageStatistics({
@@ -1620,6 +1667,7 @@ function createSummaryStore(options = {}) {
   let persistentCacheDirty = false;
   const cacheFile = options.cacheFile || "";
   const costSpeedTier = tokenPricing.normalizeSpeedTier(options.costSpeedTier);
+  let pricingKey = "";
   const deps = {
     parsers: options.parsers || {},
     threadMeta: options.threadMeta || new Map(),
@@ -1635,6 +1683,7 @@ function createSummaryStore(options = {}) {
       const payload = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
       if (payload?.version !== SUMMARY_CACHE_VERSION || !payload.files || typeof payload.files !== "object") return;
       if (tokenPricing.normalizeSpeedTier(payload.costSpeedTier) !== costSpeedTier) return;
+      if (payload.pricingKey !== pricingKey) return;
       lastRecalculatedAt = typeof payload.lastRecalculatedAt === "string" ? payload.lastRecalculatedAt : "";
       for (const [file, entry] of Object.entries(payload.files)) {
         const restored = deserializeCacheEntry(file, entry);
@@ -1650,16 +1699,24 @@ function createSummaryStore(options = {}) {
     persistentCacheDirty = false;
     try {
       fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-      const files = {};
-      for (const [file, entry] of fileCache) files[file] = serializeCacheEntry(entry);
       const tmpFile = `${cacheFile}.tmp`;
-      fs.writeFileSync(tmpFile, JSON.stringify({
+      const header = JSON.stringify({
         version: SUMMARY_CACHE_VERSION,
+        pricingKey,
         costSpeedTier,
         savedAt: new Date(Number(now())).toISOString(),
         lastRecalculatedAt,
-        files,
-      }));
+      });
+      const fd = fs.openSync(tmpFile, "w", 0o600);
+      try {
+        fs.writeSync(fd, `${header.slice(0, -1)},"files":{`);
+        let separator = "";
+        for (const [file, entry] of fileCache) {
+          fs.writeSync(fd, `${separator}${JSON.stringify(file)}:${JSON.stringify(serializeCacheEntry(entry))}`);
+          separator = ",";
+        }
+        fs.writeSync(fd, "}}");
+      } finally { fs.closeSync(fd); }
       fs.renameSync(tmpFile, cacheFile);
     } catch {
       persistentCacheDirty = true;
@@ -1686,13 +1743,19 @@ function createSummaryStore(options = {}) {
   }
 
   function rebuild(input = {}) {
-    clear();
+    // Keep the previous on-disk snapshot until the replacement is complete.
+    fileCache.clear();
+    lastSummary = null;
+    persistentCacheLoaded = true;
     lastRecalculatedAt = new Date(Number(now())).toISOString();
     persistentCacheDirty = true;
     return getSummary(input);
   }
 
   function getSummary(input = {}) {
+    const nextPricingKey = `${tokenPricing.PRICING_VERSION}:${options.loadPrices?.() || "builtin"}`;
+    if (pricingKey && pricingKey !== nextPricingKey) { fileCache.clear(); lastSummary = null; persistentCacheDirty = true; }
+    pricingKey = nextPricingKey;
     loadPersistentCache();
     const records = normalizeFiles(input.files);
     const runDeps = {
@@ -1714,6 +1777,7 @@ function createSummaryStore(options = {}) {
     aggregate.costSpeedTier = costSpeedTier;
 
     for (const record of records) {
+      options.onProgress?.({ completed: scannedFiles + reusedFiles, total: records.length, phase: "summaries" });
       const cached = fileCache.get(record.file);
       if (cached?.signature === record.signature) {
         reusedFiles += 1;
@@ -1734,6 +1798,7 @@ function createSummaryStore(options = {}) {
         lineCount: parsed.lineCount,
         tailBuffer: parsed.tailBuffer,
         endedWithNewline: parsed.endedWithNewline,
+        appendGuard: fileAppendGuard(record.file, record.size),
       });
       persistentCacheDirty = true;
       mergeSummary(aggregate, parsed.summary);
@@ -1751,6 +1816,10 @@ function createSummaryStore(options = {}) {
       nowMs: Number(now()),
       threadMeta: runDeps.threadMeta,
     });
+    lastSummary.provenance = { parserVersion: SUMMARY_CACHE_VERSION, pricingVersion: pricingKey,
+      sourceCount: records.length, oversizedLines: aggregate.oversizedLines, invalidLines: aggregate.invalidLines,
+      files: records.slice(0, 200).map((record) => ({ file: record.file, signature: record.signature, bytes: record.size,
+        tokens: fileCache.get(record.file)?.summary?.usage?.effectiveTotal || 0 })), filesTruncated: records.length > 200 };
     savePersistentCache();
     return lastSummary;
   }

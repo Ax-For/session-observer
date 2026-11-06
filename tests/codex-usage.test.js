@@ -250,3 +250,26 @@ test("createCodexUsageService distinguishes a missing CLI from an unreadable acc
   assert.equal(unavailableSnapshot.installed, true);
   assert.equal(unavailableSnapshot.error, "Codex 使用额度暂时无法读取");
 });
+
+test("a failed refresh preserves the last successful timestamp and reports a retryable error", async () => {
+  let fail = false;
+  const service = createCodexUsageService({
+    now: () => Date.parse(fail ? "2026-09-12T03:00:00Z" : "2026-09-12T02:00:00Z"),
+    fetchRateLimits: async () => {
+      if (fail) throw Object.assign(new Error("spawn codex ENOENT"), { code: "ENOENT" });
+      return RATE_LIMIT_RESULT;
+    },
+    fetchResetCredits: async () => RESET_CREDITS_RESULT,
+  });
+  const initial = await service.refresh();
+  fail = true;
+  const failed = await service.refresh();
+  assert.equal(failed.status, "ready");
+  assert.equal(failed.installed, true);
+  assert.equal(failed.updatedAt, initial.updatedAt);
+  assert.deepEqual(failed.limits, initial.limits);
+  assert.match(failed.error, /Codex 可执行文件/);
+  assert.match(failed.error, /上次结果/);
+  fail = false;
+  assert.equal((await service.refresh()).error, "");
+});

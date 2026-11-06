@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { apiClient } from "../api/client";
 import { Badge, Button, Drawer, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
 import { IconCopy, IconRoute } from "@tabler/icons-react";
 import {
@@ -12,6 +13,26 @@ import { JsonCodeBlock } from "./json-code-block";
 
 export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, onOpenSessionDetail }) {
   const [showRawJson, setShowRawJson] = useState(false);
+  const [rawEvent, setRawEvent] = useState(null);
+  const [loadingRaw, setLoadingRaw] = useState(false);
+  const [rawError, setRawError] = useState("");
+  const controller = useRef(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function toggleRaw() {
+    controller.current?.abort();
+    if (showRawJson) { setShowRawJson(false); setRawEvent(null); setRawError(""); return; }
+    setShowRawJson(true);
+    const request = new AbortController();
+    controller.current = request;
+    setLoadingRaw(true);
+    setRawError("");
+    try {
+      const payload = event.eventId ? await apiClient.fetchEventDetail(event.eventId, { signal: request.signal }) : { event };
+      if (!request.signal.aborted) setRawEvent(payload.event);
+    } catch (error) {
+      if (error.name !== "AbortError") setRawError(String(error.message || error));
+    } finally { if (!request.signal.aborted) setLoadingRaw(false); }
+  }
 
   return (
     <Drawer
@@ -65,9 +86,9 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, o
               variant="subtle"
               radius="xl"
               color="gray"
-              onClick={() => setShowRawJson((current) => !current)}
+              onClick={toggleRaw}
             >
-              {showRawJson ? "隐藏原始 JSON" : "查看原始 JSON"}
+              {showRawJson ? "隐藏 JSON" : "查看记录 JSON"}
             </Button>
             <Group gap="xs">
               <Button
@@ -93,15 +114,18 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, o
                 radius="xl"
                 color="blue"
                 leftSection={<IconCopy size={16} />}
-                onClick={() => onCopy(event)}
+                onClick={() => onCopy(rawEvent || event)}
               >
-                复制 JSON
+                {rawEvent ? "复制记录 JSON" : "复制摘要 JSON"}
               </Button>
             </Group>
           </Group>
           {showRawJson ? (
             <ScrollArea offsetScrollbars className="drawer-json-shell">
-              <JsonCodeBlock value={event} className="drawer-json" />
+              {loadingRaw ? <Text size="xs">正在读取记录...</Text> : null}
+              {rawError ? <Text size="xs" c="red" role="alert">{rawError}</Text> : null}
+              {rawEvent?.rawTruncated ? <Text size="xs" c="orange">超大字段已精简，原始日志未修改；问答正文可在会话详情分段读取。</Text> : null}
+              {rawEvent ? <JsonCodeBlock value={rawEvent} className="drawer-json" /> : null}
             </ScrollArea>
           ) : null}
         </Stack>

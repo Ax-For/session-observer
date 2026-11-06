@@ -203,6 +203,11 @@ test("parseEventLineFromIndex reads a single detail larger than the stream previ
 
   assert.equal(events.length, 1);
   assert.equal(events[0].content.length, content.length);
+  const bounded = parseEventLineFromIndex({ sourceFile: file, sourceOffset: 0, sourceLength: Buffer.byteLength(line), sessionId: "sess-large-detail" },
+    new Map(), parsers, (event) => event, { bounded: true });
+  assert.equal(bounded[0].rawTruncated, true);
+  assert.ok(bounded[0].content.length < 66000);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("sortEventsChronologically keeps missing timestamps before dated events and latest events last", () => {

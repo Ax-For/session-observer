@@ -35,6 +35,23 @@ const parser = {
   }),
 };
 
+test("reverse recent reads keep child events out of the parent session", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const id = "11111111-1111-4111-8111-111111111111";
+  const file = path.join(dir, `rollout-${id}.jsonl`);
+  writeJsonl(file, [
+    { type: "session_meta", timestamp: "2026-11-05T00:00:00Z", payload: { id, source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } } },
+    { type: "turn_context", timestamp: "2026-11-05T00:00:01Z", payload: { thread_id: "parent" } },
+    { type: "event_msg", timestamp: "2026-11-05T00:00:02Z", payload: { type: "agent_message", message: "child text" } },
+  ], Date.parse("2026-11-05T00:00:03Z"));
+  const options = { files: [file], parsers: { parseCodexLineToEvent }, sessionHints: [{ sessionId: id, parentSessionId: "parent", sourceFiles: [file] }], limit: 10 };
+  const result = queryRecentEvents({ ...options, filters: { sessionId: id, order: "desc", mode: "raw" } });
+  assert.equal(result.events.length, 3);
+  assert.ok(result.events.every((event) => event.sessionId === id));
+  assert.equal(queryRecentEvents({ ...options, filters: { sessionId: "parent", order: "desc" } }).events.length, 0);
+});
+
 test("queryRecentEvents returns the newest matching events without a prebuilt index", () => {
   const dir = makeTempDir();
   const oldFile = path.join(dir, "old.jsonl");
@@ -78,7 +95,7 @@ test("queryRecentEvents returns the newest matching events without a prebuilt in
   assert.equal(result.events.length, 2);
   assert.deepEqual(result.events.map((event) => event.id), ["new-2", "new-1"]);
   assert.equal(result.page.hasMore, true);
-  assert.ok(result.scan.scannedFiles < 2, "newest file should satisfy the first page");
+  assert.equal(result.scan.scannedFiles, 2, "other files may contain interleaved newer events");
 });
 
 test("queryRecentEvents can search raw session content on demand", () => {
@@ -300,7 +317,7 @@ test("queryRecentEvents compacts large replacement history before parsing list r
   assert.match(result.events[0].content, /^\[replacement_history omitted for summary:/);
 });
 
-test("queryRecentEvents synthesizes oversized reverse-scan rows without parsing the full JSON line", () => {
+test("queryRecentEvents compacts oversized reverse-scan rows before invoking the event parser", () => {
   const dir = makeTempDir();
   const file = path.join(dir, "large-output.jsonl");
   const largeLine = {
@@ -328,6 +345,10 @@ test("queryRecentEvents synthesizes oversized reverse-scan rows without parsing 
     ...parser,
     parseLine: (json, context) => {
       parsed += 1;
+      if (json.type) {
+        assert.ok(json.payload.output.length < 66000);
+        return parseCodexLineToEvent(json, context);
+      }
       return parser.parseLine(json, context);
     },
   };
@@ -341,11 +362,11 @@ test("queryRecentEvents synthesizes oversized reverse-scan rows without parsing 
     maxParseLineBytes: 512,
   });
 
-  assert.equal(parsed, 0);
+  assert.equal(parsed, 2, "metadata and compact content remain available for oversized records");
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].callType, "Tool_Result");
   assert.equal(result.events[0].callId, "call-large");
-  assert.match(result.events[0].content, /^Large tool result omitted from event stream/);
+  assert.ok(result.events[0].contentTruncated);
   assert.ok(Number.isFinite(result.events[0].sourceOffset));
 });
 

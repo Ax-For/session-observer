@@ -6,8 +6,8 @@ RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/server.pid"
 LOG_FILE="${RUNTIME_DIR}/server.log"
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-10}"
-OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-192}"
-OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-8}"
+OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-64}"
+OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-4}"
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8787}"
@@ -43,9 +43,9 @@ Environment variables:
   EVENT_STREAM_MAX_PARSE_LINE_BYTES
                        Default: 131072, truncate oversized JSONL rows on list/summary paths
   OBSERVER_NODE_MAX_OLD_SPACE_MB
-                       Default: 192, cap V8 old-space to limit RSS growth
+                       Default: 64, HTTP process old-space (query worker is separate)
   OBSERVER_NODE_SEMI_SPACE_MB
-                       Default: 8, cap V8 young generation semi-space
+                       Default: 4, cap V8 young generation semi-space
 EOF
 }
 

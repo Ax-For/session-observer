@@ -4,8 +4,10 @@ import { IconCopy, IconPhoto } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatBytes, formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
-import { buildConversationTurns, looksLikeMarkdownContent } from "../lib/conversation-models";
+import { buildConversationTurns, looksLikeMarkdownContent, parseConversationMessageContent } from "../lib/conversation-models";
+import { loadDialogueBody } from "../lib/dialogue-body-loader";
 import { JsonCodeBlock } from "./json-code-block";
+import { BookmarkButton } from "./analysis/library-context";
 
 const INITIAL_VISIBLE_TURNS = 8;
 const TURN_BATCH_SIZE = 8;
@@ -625,6 +627,49 @@ export function ConversationTurn({ turn, searchMatch, setTurnRef, hideHeader = f
   );
 }
 
+function DialogueBody({ entry, highlightQuery }) {
+  const element = useRef(null);
+  const controller = useRef(null);
+  const [body, setBody] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  async function load(offset = 0) {
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    setLoading(true);
+    setError("");
+    try {
+      const payload = await loadDialogueBody(entry.eventId, { offset, limit: 65536 }, request.signal);
+      if (!request.signal.aborted) setBody(payload);
+    } catch (cause) {
+      if (cause.name !== "AbortError") setError(String(cause.message || cause));
+    } finally { if (!request.signal.aborted) setLoading(false); }
+  }
+  useEffect(() => {
+    if (!entry.contentTruncated || !entry.eventId || !element.current || !globalThis.IntersectionObserver) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((item) => item.isIntersecting)) return;
+      observer.disconnect();
+      void load(Math.max(0, (entry.matchOffset || 0) - 100));
+    }, { rootMargin: "100px" });
+    observer.observe(element.current);
+    return () => { observer.disconnect(); controller.current?.abort(); };
+  }, [entry.eventId]);
+  useEffect(() => () => controller.current?.abort(), []);
+  const content = body ? (entry.role === "user" ? parseConversationMessageContent(body.content).content : body.content) : entry.content;
+  return <div ref={element} className="conv-message-body">
+    <MarkdownOrPlainText content={content} highlightQuery={highlightQuery} />
+    {entry.contentTruncated ? <Group gap="xs" mt={6} aria-label="正文读取状态">
+      {body ? <Text size="xs" c="dimmed">{formatNumber(body.offset + 1)}–{formatNumber(body.nextOffset)} / {formatNumber(body.totalLength)} 字符</Text> : null}
+      {!body ? <Button size="compact-xs" variant="subtle" loading={loading} onClick={() => load()}>读取完整正文</Button> : null}
+      {body?.offset > 0 ? <Button size="compact-xs" variant="subtle" loading={loading} onClick={() => load(Math.max(0, body.offset - 65536))}>上一段</Button> : null}
+      {body?.hasMore ? <Button size="compact-xs" variant="subtle" loading={loading} onClick={() => load(body.nextOffset)}>下一段</Button> : null}
+      {error ? <Text size="xs" c="red" role="alert">{error}</Text> : null}
+    </Group> : null}
+  </div>;
+}
+
 export function ConversationEntry({ entry, highlightQuery = "" }) {
   if (entry.kind === "tool") {
     return (
@@ -662,7 +707,7 @@ export function ConversationEntry({ entry, highlightQuery = "" }) {
   }
 
   return (
-    <div className={`conv-row conv-row--message conv-row--${entry.role} ${entry.grouped ? "is-grouped" : ""}`}>
+    <div data-dialogue-event-id={entry.eventId} className={`conv-row conv-row--message conv-row--${entry.role} ${entry.grouped ? "is-grouped" : ""}`}>
       <div className={`conv-avatar conv-avatar--${entry.role}`}>{entry.role === "user" ? "U" : "A"}</div>
       <div
         className={`conv-surface conv-surface--${entry.role}`}
@@ -670,14 +715,13 @@ export function ConversationEntry({ entry, highlightQuery = "" }) {
       >
         <div className={`conv-message-head${entry.role === "user" ? " conv-message-head--user" : ""}`}>
           {entry.role === "agent" ? <Text className="conv-role-label">Agent</Text> : null}
+          <BookmarkButton entry={entry} />
           <Text className="conv-meta">{formatFullDateTime(entry.time)}</Text>
         </div>
         {entry.agentPrefix ? (
           <Text className="conv-agent-prefix">[agent={entry.agentPrefix}]</Text>
         ) : null}
-        <div className="conv-message-body">
-          <MarkdownOrPlainText content={entry.content} highlightQuery={highlightQuery} />
-        </div>
+        <DialogueBody entry={entry} highlightQuery={highlightQuery} />
         {entry.attachments?.length ? (
           <div className="conv-attachments" aria-label="图片附件">
             {entry.attachments.map((attachment) => (

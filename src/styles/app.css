@@ -252,16 +252,6 @@ textarea {
   box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
 }
 
-.refresh-action-icon.is-loading {
-  animation: observer-refresh-spin 0.8s linear infinite;
-}
-
-@keyframes observer-refresh-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .shell-tabs {
   justify-self: center;
   min-width: 330px;
@@ -7954,4 +7944,23 @@ button.mc-active-cost-row:focus-visible {
   .mc-workspace {
     animation: none;
   }
+}
+.stream-workbench[data-search="true"] .session-rail__title-row {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stream-workbench[data-search="true"] .session-rail__title {
+  max-width: 100%;
+}
+
+.session-chat-turn[data-search-target="true"] {
+  border-inline-start: 2px solid var(--accent);
+}
+
+.search-context-toolbar {
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }

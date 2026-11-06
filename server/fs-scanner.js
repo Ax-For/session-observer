@@ -9,7 +9,7 @@ const config = require("./config");
 const { resolveSourceAdapterForFile } = require("../shared/source-adapters");
 
 /**
- * Recursively list all .jsonl files under a directory, skipping subagent dirs.
+ * Recursively list source logs, including separately attributed child agents.
  */
 function listJsonlFiles(dir) {
   const out = [];
@@ -21,7 +21,6 @@ function listJsonlFiles(dir) {
     for (const e of entries) {
       const full = path.join(current, e.name);
       if (e.isDirectory()) {
-        if (e.name === "subagents") continue;
         stack.push(full);
       } else if (e.isFile() && full.endsWith(".jsonl")) {
         out.push(full);
@@ -163,6 +162,7 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
   const startOffset = Math.max(0, Number(options.startOffset) || 0);
   const initialLineNumber = Math.max(0, Number(options.initialLineNumber) || 0);
   const initialTailBuffer = String(options.initialTailBuffer || "");
+  const endOffset = Number.isFinite(options.endOffset) ? options.endOffset : Infinity;
   const result = {
     lineCount: initialLineNumber,
     tailBuffer: "",
@@ -220,7 +220,9 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
 
   try {
     while (true) {
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, byteOffset);
+      const readLength = Math.min(buffer.length, endOffset - byteOffset);
+      if (readLength <= 0) break;
+      const bytesRead = fs.readSync(fd, buffer, 0, readLength, byteOffset);
       if (bytesRead <= 0) break;
 
       let segmentStart = 0;
@@ -308,10 +310,12 @@ function forEachCompleteJsonlLineReverse(file, onLine, options = {}) {
   const fd = fs.openSync(file, "r");
   const bufferSize = 64 * 1024;
   const buffer = Buffer.alloc(bufferSize);
-  let position = fs.statSync(file).size;
+  let position = Math.min(fs.statSync(file).size, Number.isSafeInteger(options.endOffset) ? Math.max(0, options.endOffset) : Infinity);
   let tail = Buffer.alloc(0);
   let lineNumber = count.lineCount;
-  let skippedTrailingPartial = count.endedWithNewline;
+  const endByte = Buffer.alloc(1);
+  const endsAtNewline = position > 0 && fs.readSync(fd, endByte, 0, 1, position - 1) === 1 && endByte[0] === 10;
+  let skippedTrailingPartial = endsAtNewline;
   let truncatedBytes = 0;
 
   try {

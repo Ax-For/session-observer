@@ -3,6 +3,7 @@ const { spawn } = require("child_process");
 const { mkdir, readFile, rename, unlink, writeFile } = require("fs/promises");
 const os = require("os");
 const path = require("path");
+const { resolveCodexCommand } = require("./codex-command");
 
 const CODEX_USAGE_TIMEOUT_MS = 12_000;
 const MAX_PROTOCOL_BUFFER_BYTES = 512 * 1024;
@@ -321,7 +322,7 @@ async function fetchCodexResetCredits(options = {}) {
 }
 
 function fetchCodexRateLimits(options = {}) {
-  const command = options.command || process.env.CODEX_BIN || "codex";
+  const command = options.command || resolveCodexCommand();
   const timeoutMs = options.timeoutMs || CODEX_USAGE_TIMEOUT_MS;
   const spawnImpl = options.spawnImpl || spawn;
 
@@ -345,7 +346,7 @@ function fetchCodexRateLimits(options = {}) {
     };
 
     const writeMessage = (message) => {
-      child.stdin.write(`${JSON.stringify(message)}\n`);
+      if (!settled) child.stdin.write(`${JSON.stringify(message)}\n`);
     };
 
     const handleMessage = (message) => {
@@ -408,6 +409,7 @@ function fetchCodexRateLimits(options = {}) {
     }
 
     child.once("error", (error) => finish(error));
+    child.stdin.on("error", (error) => finish(error));
     child.stdout.on("data", (chunk) => {
       buffer += chunk.toString("utf8");
       consumeBuffer();
@@ -491,14 +493,18 @@ function createCodexUsageService(options = {}) {
         await persistSnapshot(cacheFile, state).catch(() => {});
       } catch (error) {
         const missing = error?.code === "ENOENT";
+        const reason = missing
+          ? "未找到 Codex 可执行文件，请检查安装位置或 CODEX_BIN 配置"
+          : error?.code === "ETIMEDOUT"
+            ? "Codex 使用额度查询超时，请检查网络后重试"
+            : "Codex 使用额度暂时无法读取";
         state = previous.status === "ready"
-          ? { ...previous, error: "Codex 使用额度更新失败，当前显示上次结果" }
+          ? { ...previous, error: `${reason}；当前显示上次结果` }
           : {
               ...emptySnapshot(version),
               status: missing ? "not-installed" : "unavailable",
               installed: !missing,
-              updatedAt,
-              error: missing ? "" : "Codex 使用额度暂时无法读取",
+              error: missing ? "" : reason,
             };
       }
       return state;

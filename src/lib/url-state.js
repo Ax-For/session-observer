@@ -12,6 +12,7 @@ export const DEFAULT_SESSION_FILTERS = {
   query: "",
   platform: "",
   namedOnly: false,
+  agentScope: "main",
   groupBy: "cwd",
   tokenMin: "",
   tokenMax: "",
@@ -70,6 +71,7 @@ export function parseUrlState(search = "") {
       query: normalizeText(params.get("sq")),
       platform: normalizeText(params.get("sp")),
       namedOnly: params.get("named") === "1",
+      agentScope: pickEnum(params.get("agents"), ["main", "all", "children"], "main"),
       groupBy: pickEnum(params.get("sg"), ["cwd", "sourceFile", "platform"], DEFAULT_SESSION_FILTERS.groupBy),
       tokenMin: normalizeText(params.get("stmin")),
       tokenMax: normalizeText(params.get("stmax")),
@@ -110,6 +112,7 @@ export function buildUrlSearch(state = {}) {
   if (normalizeText(sessionFilters.query)) params.set("sq", normalizeText(sessionFilters.query));
   if (normalizeText(sessionFilters.platform)) params.set("sp", normalizeText(sessionFilters.platform));
   if (sessionFilters.namedOnly) params.set("named", "1");
+  if (["all", "children"].includes(sessionFilters.agentScope)) params.set("agents", sessionFilters.agentScope);
   if (sessionFilters.groupBy !== DEFAULT_SESSION_FILTERS.groupBy) params.set("sg", sessionFilters.groupBy);
   if (normalizeText(sessionFilters.tokenMin)) params.set("stmin", normalizeText(sessionFilters.tokenMin));
   if (normalizeText(sessionFilters.tokenMax)) params.set("stmax", normalizeText(sessionFilters.tokenMax));

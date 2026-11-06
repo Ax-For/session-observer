@@ -16,14 +16,15 @@
   }
 
   function eventKind(event) {
-    const type = `${event?.callType || ""} ${event?.rawType || ""} ${event?.rawSubType || ""}`.toLowerCase();
-    const detail = `${type} ${eventText(event).slice(0, 180)}`.toLowerCase();
-    if (type === "prompt" || type === "user" || /\b(prompt|user)\b/.test(type)) return "user";
-    if (type === "agent" || /\b(assistant|agent)\b/.test(type)) return "agent";
-    if (/tool[_ -]?(result|output)|custom_tool_call_output/.test(detail)) return "tool-result";
-    if (event?.toolName || /tool[_ -]?(call|use)|custom_tool_call/.test(detail)) return "tool-call";
+    const legacyType = event?.callType === "Raw" && !event.rawSubType
+      ? eventText(event).match(/^\{type: (custom_tool_call(?:_output)?),/)?.[1] || "" : "";
+    const type = `${event?.callType || ""} ${event?.rawType || ""} ${event?.rawSubType || legacyType}`.toLowerCase();
+    if (/tool[_ -]?(result|output)|custom_tool_call_output/.test(type)) return "tool-result";
+    if (event?.toolName || /tool[_ -]?(call|use)|custom_tool_call/.test(type)) return "tool-call";
     if (/token[_ -]?usage/.test(type)) return "usage";
     if (/thinking|reasoning/.test(type)) return "thinking";
+    if (/\b(prompt|user)\b|user_message/.test(type)) return "user";
+    if (/\b(assistant|agent)\b|agent_message/.test(type)) return "agent";
     return "system";
   }
 
@@ -33,14 +34,14 @@
 
   function eventTokenTotal(event) {
     const usage = event?.tokenUsage || {};
-    return finite(usage.effectiveTotal || usage.total || (
-      finite(usage.input) + finite(usage.cacheReadInput || usage.cachedInput) + finite(usage.output)
-    ));
+    if (usage.effectiveTotal != null) return finite(usage.effectiveTotal);
+    const total = finite(usage.total ?? (finite(usage.input) + finite(usage.output)));
+    return total + (event?.sourceType === "claude" ? finite(usage.cacheReadInput ?? usage.cachedInput) + finite(usage.cacheCreationInput) : 0);
   }
 
   function isErrorEvent(event) {
     if (event?.isError || event?.level === "error") return true;
-    return eventKind(event) === "tool-result" && /\b(error|failed|failure|exception|fatal)\b/i.test(eventText(event));
+    return Number.isInteger(event?.exitCode) && event.exitCode !== 0;
   }
 
   function buildExecutionReplay(events, options = {}) {
@@ -55,15 +56,24 @@
       const previous = ordered.at(-1);
       const previousMs = toMs(previous?.event?.time);
       const currentMs = toMs(event?.time);
-      if (previous?.signature === signature && previousMs != null && currentMs != null && currentMs - previousMs <= 2000) continue;
+      if (["agent", "user"].includes(kind) && previous?.signature === signature && previousMs != null && currentMs != null && currentMs - previousMs <= 2000) continue;
       ordered.push({ event, signature });
     }
     const replayEvents = ordered.slice(-limit).map((item) => item.event);
+    const results = new Map();
+    for (const event of replayEvents) {
+      if (event.callId && eventKind(event) === "tool-result") {
+        const key = `${event.sessionId}|${event.callId}`;
+        if (!results.has(key)) results.set(key, []);
+        results.get(key).push(event);
+      }
+    }
     const steps = replayEvents.map((event, index) => {
       const currentMs = toMs(event?.time);
-      const nextMs = toMs(replayEvents[index + 1]?.time);
-      const gapMs = currentMs != null && nextMs != null ? Math.max(0, nextMs - currentMs) : 0;
       const kind = eventKind(event);
+      const result = kind === "tool-call" && event.callId
+        ? results.get(`${event.sessionId}|${event.callId}`)?.find((item) => toMs(item.time) >= currentMs) : null;
+      const durationMs = result && currentMs != null ? toMs(result.time) - currentMs : null;
       const kindTitle = kind === "tool-call" ? "工具调用" : kind === "tool-result" ? "工具结果" : event.callType || "事件";
       return {
         id: event.eventId || event.id || `${event?.sessionId || "session"}-${index}`,
@@ -75,12 +85,16 @@
         title: event.toolName || kindTitle,
         preview: eventText(event).replace(/\s+/g, " ").slice(0, 280),
         tokenTotal: eventTokenTotal(event),
-        gapMs,
-        status: isErrorEvent(event) ? "error" : "ok",
+        callId: event.callId || "",
+        durationMs,
+        gapMs: durationMs || 0,
+        timingSource: result ? "call-id" : "unavailable",
+        resultEventId: result?.eventId || "",
+        status: isErrorEvent(result || event) ? "error" : result ? "completed" : "unknown",
       };
     });
     const slowest = [...steps]
-      .filter((step) => step.gapMs > 0)
+      .filter((step) => step.durationMs != null)
       .sort((left, right) => right.gapMs - left.gapMs)
       .slice(0, 5)
       .map((step) => step.id);
@@ -90,7 +104,7 @@
       startedAt: steps[0]?.time || "",
       endedAt: steps.at(-1)?.time || "",
       durationMs: Math.max(0, (toMs(steps.at(-1)?.time) || 0) - (toMs(steps[0]?.time) || 0)),
-      errors: steps.filter((step) => step.status === "error").length,
+      errors: steps.filter((step) => step.status === "error" && !step.resultEventId).length,
       toolSteps: steps.filter((step) => step.kind === "tool-call").length,
       tokenTotal: steps.reduce((sum, step) => sum + step.tokenTotal, 0),
       slowestStepIds: slowest,
@@ -154,14 +168,15 @@
     const sessionsWithTokens = finite(input.sessionsWithTokens);
     const files = finite(input.totalFiles);
     const reusedFiles = finite(input.reusedFiles);
-    const costCoverage = tokens > 0 ? Math.min(100, knownTokens / tokens * 100) : 100;
-    const sessionCoverage = sessions > 0 ? Math.min(100, sessionsWithTokens / sessions * 100) : 100;
-    const cacheReuse = files > 0 ? Math.min(100, reusedFiles / files * 100) : 100;
+    const costCoverage = tokens > 0 ? Math.min(100, knownTokens / tokens * 100) : 0;
+    const sessionCoverage = sessions > 0 ? Math.min(100, sessionsWithTokens / sessions * 100) : 0;
+    const cacheReuse = files > 0 ? Math.min(100, reusedFiles / files * 100) : 0;
     const unknownModels = [...new Set(input.unknownModels || [])].filter(Boolean);
-    const score = Math.round(costCoverage * 0.5 + sessionCoverage * 0.35 + cacheReuse * 0.15);
+    const score = tokens > 0 ? Math.round(costCoverage) : null;
     return {
       score,
-      level: score >= 90 ? "high" : score >= 70 ? "medium" : "low",
+      level: score == null ? "unknown" : score >= 90 ? "high" : score >= 70 ? "medium" : "low",
+      basis: "pricing-coverage-only",
       costCoverage,
       sessionCoverage,
       cacheReuse,

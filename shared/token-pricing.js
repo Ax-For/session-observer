@@ -9,21 +9,19 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createTokenPricing() {
   "use strict";
 
-  const PRICING_VERSION = "2026-07-12";
+  const PRICING_VERSION = "2026-09-12.v2";
+  let customRates = [];
 
   const MODEL_PRICE_HINTS = [
-    { match: /gpt-5\.5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2.5, source: "codex-rate-card" },
-    { match: /gpt-5\.4-mini/i, input: 0.75, output: 4.52, cacheRead: 0.075, cacheCreation: 0.75, source: "codex-rate-card" },
-    { match: /gpt-5\.4/i, input: 2.5, output: 15, cacheRead: 0.25, cacheCreation: 2.5, fastMultiplier: 2, source: "codex-rate-card" },
-    { match: /gpt-5\.3-codex(?:-spark)?/i, input: 1.75, output: 14, cacheRead: 0.175, cacheCreation: 1.75, fastMultiplier: 2, source: "codex-estimate" },
-    { match: /claude.*haiku/i, input: 0.8, output: 4, cacheRead: 0.08, cacheCreation: 1 },
-    { match: /claude.*sonnet/i, input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75 },
-    { match: /claude.*opus/i, input: 15, output: 75, cacheRead: 1.5, cacheCreation: 18.75 },
-    { match: /gpt-4\.1|gpt-4o/i, input: 2.5, output: 10, cacheRead: 0.25, cacheCreation: 2.5 },
-    { match: /gpt-5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2, source: "codex-fallback" },
-    { match: /qwen/i, input: 0.4, output: 1.2, cacheRead: 0.04, cacheCreation: 0.4 },
-    { match: /deepseek/i, input: 0.27, output: 1.1, cacheRead: 0.027, cacheCreation: 0.27 },
-    { match: /glm/i, input: 0.5, output: 1.5, cacheRead: 0.05, cacheCreation: 0.5 },
+    { match: /^gpt-5\.5(?:-\d{4}-\d{2}-\d{2})?$/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2.5, source: "codex-rate-card" },
+    { match: /^gpt-5\.4-mini(?:-\d{4}-\d{2}-\d{2})?$/i, input: 0.75, output: 4.52, cacheRead: 0.075, cacheCreation: 0.75, source: "codex-rate-card" },
+    { match: /^gpt-5\.4(?:-\d{4}-\d{2}-\d{2})?$/i, input: 2.5, output: 15, cacheRead: 0.25, cacheCreation: 2.5, fastMultiplier: 2, source: "codex-rate-card" },
+    { match: /^gpt-5\.3-codex(?:-spark)?(?:-\d{4}-\d{2}-\d{2})?$/i, input: 1.75, output: 14, cacheRead: 0.175, cacheCreation: 1.75, fastMultiplier: 2, source: "codex-estimate" },
+    { match: /^claude-haiku-4-5(?:-\d{8})?$/i, input: 1, output: 5, cacheRead: 0.1, cacheCreation: 1.25 },
+    { match: /^claude-3-5-haiku(?:-\d{8})?$/i, input: 0.8, output: 4, cacheRead: 0.08, cacheCreation: 1 },
+    { match: /^claude-sonnet-4(?:-[56])?(?:-\d{8})?$/i, input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75 },
+    { match: /^claude-opus-4-[567](?:-\d{8})?$/i, input: 5, output: 25, cacheRead: 0.5, cacheCreation: 6.25 },
+    { match: /^claude-opus-4(?:-1)?(?:-\d{8})?$/i, input: 15, output: 75, cacheRead: 1.5, cacheCreation: 18.75 },
   ];
 
   function toNumber(value) {
@@ -52,14 +50,40 @@
 
   function findModelPrice(model, options = {}) {
     const text = String(model || "");
-    const entry = MODEL_PRICE_HINTS.find((item) => item.match.test(text));
+    const instant = Date.parse(options.time || "");
+    const custom = customRates.filter((item) => item.model === text && (!item.from || instant >= Date.parse(item.from))
+      && (!item.until || instant < Date.parse(item.until)) && (!item.serviceTier || item.serviceTier === normalizeSpeedTier(options.speed)))
+      .sort((a, b) => (Date.parse(b.from) || 0) - (Date.parse(a.from) || 0))[0];
+    const entry = custom || MODEL_PRICE_HINTS.find((item) => item.match.test(text));
     if (!entry) return null;
-    return applySpeedTier(entry, options);
+    const price = custom ? { ...applySpeedTier(entry), speed: normalizeSpeedTier(options.speed) } : applySpeedTier(entry, options);
+    return { ...price, version: PRICING_VERSION, effectiveFrom: custom?.from || "", effectiveUntil: custom?.until || "",
+      source: custom ? "local-pricebook" : "dated-reference-estimate",
+      reference: custom?.reference || (text.startsWith("claude") ? "https://platform.claude.com/docs/en/about-claude/pricing" : "https://developers.openai.com/api/docs/pricing"),
+      historicalRateVerified: Boolean(custom), tierSource: options.tierSource || "assumed" };
+  }
+
+  function configureRates(rates = []) {
+    if (!Array.isArray(rates) || rates.length > 500) throw new Error("Pricebook must contain at most 500 rates");
+    for (const rate of rates) {
+      if (!rate.model || typeof rate.model !== "string" || rate.model.length > 160) throw new Error("Exact model name required");
+      for (const key of ["input", "output", "cacheRead", "cacheCreation"]) {
+        if (typeof rate[key] !== "number" || !Number.isFinite(rate[key]) || rate[key] < 0) throw new Error("Nonnegative USD prices per million tokens required");
+      }
+      for (const key of ["from", "until"]) if (rate[key] && !Number.isFinite(Date.parse(rate[key]))) throw new Error("Invalid price effective date");
+      if (rate.from && rate.until && Date.parse(rate.from) >= Date.parse(rate.until)) throw new Error("Price interval must have positive duration");
+    }
+    customRates = rates.map((rate) => ({ ...rate }));
+    return customRates;
   }
 
   function estimateTokenCost(tokenUsage, model, options = {}) {
     const price = findModelPrice(model, options);
     const usage = tokenUsage || {};
+    const recorded = typeof options.recordedUsd === "number" && Number.isFinite(options.recordedUsd);
+    if (recorded) return { estimatedUsd: options.recordedUsd, known: true,
+      knownTokenTotal: toNumber(usage.input) + toNumber(usage.output) + toNumber(usage.cacheReadInput ?? usage.cachedInput) + toNumber(usage.cacheCreationInput),
+      pricingSource: "recorded-message-usd", pricingVersion: PRICING_VERSION };
     if (!price) {
       return {
         estimatedUsd: 0,
@@ -84,6 +108,10 @@
       known: true,
       knownTokenTotal: input + output + cacheRead + cacheCreation,
       pricingSource: price.source,
+      pricingVersion: price.version,
+      reference: price.reference,
+      historicalRateVerified: price.historicalRateVerified,
+      tierSource: price.tierSource,
       speed: price.speed,
     };
   }
@@ -124,6 +152,7 @@
 
   return {
     PRICING_VERSION,
+    configureRates,
     estimateCostSummary,
     estimateTokenCost,
     findModelPrice,

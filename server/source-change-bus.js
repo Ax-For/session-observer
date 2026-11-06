@@ -4,6 +4,7 @@
  */
 
 function createSourceChangeBus(options = {}) {
+  const instanceId = require("crypto").randomUUID();
   const debounceMs = Math.max(0, Number(options.debounceMs) || 0);
   const listeners = new Set();
   let timer = null;
@@ -11,6 +12,7 @@ function createSourceChangeBus(options = {}) {
   let pendingReasons = new Set();
   let lastEvent = {
     type: "ready",
+    instanceId,
     version,
     reason: "initial",
     generatedAt: new Date().toISOString(),
@@ -30,6 +32,7 @@ function createSourceChangeBus(options = {}) {
     pendingReasons = new Set();
     lastEvent = {
       type: "source-changed",
+      instanceId,
       version,
       reason: reasons[0] || "watch",
       reasons,
@@ -47,8 +50,7 @@ function createSourceChangeBus(options = {}) {
 
   function notify(reason = "watch") {
     pendingReasons.add(reason || "watch");
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(emit, debounceMs);
+    if (!timer) timer = setTimeout(emit, debounceMs);
     if (typeof timer.unref === "function") timer.unref();
   }
 

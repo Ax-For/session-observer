@@ -23,6 +23,12 @@ Include:
 ## Local Exposure Notes
 
 - The default server binds to `127.0.0.1`.
-- Binding to `0.0.0.0` can expose local session data to your network.
+- Non-loopback binding requires `OBSERVER_ACCESS_TOKEN`. Basic authentication is not encryption: use an HTTPS reverse proxy for network access and an explicit `OBSERVER_ALLOWED_HOSTS` list.
+- Host/Origin checks and a same-origin mutation header reject cross-origin writes. These are additional safeguards, not a replacement for authentication on a network.
+- Cross-site top-level GET navigation may open `/` or `/index.html`, so links from other apps can launch the UI. Cross-site API requests and embeds remain blocked; host, origin and authentication checks still apply to the app shell.
+- Source rename/delete is disabled unless `OBSERVER_ALLOW_SOURCE_MUTATIONS=1`; local annotations, saved views, bookmarks and prices remain writable.
+- JSON request bodies are limited to 64 KiB. Background reads use one worker, an eight-job queue, a 90-second timeout and a sampled combined-memory guard.
+- Git evidence executes read-only commands with hooks and filesystem monitors disabled. It reports time correlation, not authorship.
+- Saved views and bookmarks include queries, short message labels and identifiers. Runtime audit/cache files and the optional SQLite dialogue cache are sensitive local data; protect backups and never publish them.
 - Raw JSONL transcripts should never be committed or attached to public issues.
 - Screenshots, logs, and exports should be sanitized before sharing.

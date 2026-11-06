@@ -12,6 +12,8 @@ const ObserverCore = require("../shared/observer-core");
 const fsScanner = require("./fs-scanner");
 const { attachEventLocator, makeIndexedEvent } = require("./index-manager");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
+const { readCompactJsonRecord } = require("./compact-json-record");
+const { decodeReference, compareEvents, encodeCursor, decodeCursor } = require("./event-reference");
 
 const LOCATOR_CACHE_LIMIT = 10000;
 const locatorCache = new Map();
@@ -30,6 +32,7 @@ function rememberLocator(event) {
     cwd: event.cwd || "",
     sessionTitle: event.sessionTitle || "",
     sourceType: event.sourceType || "",
+    expectedTime: event.time || "",
   });
   while (locatorCache.size > LOCATOR_CACHE_LIMIT) {
     const first = locatorCache.keys().next().value;
@@ -39,6 +42,10 @@ function rememberLocator(event) {
 
 function lookupEventLocator(eventId) {
   return locatorCache.get(eventId) || null;
+}
+
+function resolveEventLocator(eventId, records) {
+  return module.exports.lookupEventLocator(eventId) || decodeReference(eventId, records);
 }
 
 function normalizeFiles(files) {
@@ -87,12 +94,6 @@ function applyThreadMeta(event, meta, sourceType, applyEventSessionMetaCore) {
   return applyEventSessionMetaCore(event, meta, { titleStrategy });
 }
 
-function rawLineMayMatch(line, filters) {
-  const query = String(filters?.query || filters?.q || "").trim().toLowerCase();
-  if (!query) return true;
-  return String(line || "").toLowerCase().includes(query);
-}
-
 function isDialogueEvent(event) {
   const type = String(event?.callType || "").toLowerCase();
   return type === "prompt" || type === "user" || type === "agent";
@@ -126,21 +127,8 @@ function defaultMatchesFilters(event, filters) {
   return searchableDialogueText(event).toLowerCase().includes(query);
 }
 
-function eventTimeMs(event) {
-  const parsed = ObserverCore.toTimeMs(event?.time);
-  return parsed == null ? Number.NEGATIVE_INFINITY : parsed;
-}
-
 function sortEvents(events, order) {
-  events.sort((left, right) => {
-    const timeDiff = eventTimeMs(right) - eventTimeMs(left);
-    if (timeDiff !== 0) return order === "asc" ? -timeDiff : timeDiff;
-    const rightLocator = Number(right.sourceLine) || Number(right.sourceOffset) || 0;
-    const leftLocator = Number(left.sourceLine) || Number(left.sourceOffset) || 0;
-    const locatorDiff = rightLocator - leftLocator;
-    if (locatorDiff !== 0) return order === "asc" ? -locatorDiff : locatorDiff;
-    return (Number(right.lineEventIndex) || 0) - (Number(left.lineEventIndex) || 0);
-  });
+  events.sort((left, right) => compareEvents(left, right, order));
   return events;
 }
 
@@ -149,6 +137,7 @@ function shouldAllowEarlyStop(filters, options = {}) {
   const sessionScoped = Boolean(filters?.sessionId);
   const allowSessionScoped = sessionScoped && options.allowSessionEarlyStop === true;
   return !query
+    && !filters?.forceForward
     && (!sessionScoped || allowSessionScoped)
     && !filters?.startMs
     && !filters?.endMs
@@ -179,6 +168,9 @@ function createParserContext(record, sourceType, hintIndexes, options = {}) {
   return {
     model: hint?.models?.[0] || "unknown",
     sessionId: hint?.sessionId || fileSessionId || "unknown",
+    sessionMetaId: sourceType === "codex" ? fileSessionId || hint?.sessionId : undefined,
+    parentSessionId: hint?.parentSessionId || "",
+    isSubagent: Boolean(hint?.isSubagent),
     sourceFile: record.file,
     sourceType,
     cwd: hint?.cwd || "",
@@ -273,6 +265,8 @@ function queryRecentEvents(options = {}) {
   const offset = Math.max(0, Number(options.offset ?? filters.offset) || 0);
   const limit = Math.max(0, Number(options.limit ?? filters.limit) || 250);
   const pageEnd = offset + limit;
+  if (pageEnd > 10000) throw new Error("Use cursor pagination beyond 10000 events");
+  const cursor = decodeCursor(filters.cursor, order);
   const applyEventSessionMetaCore = options.applyEventSessionMetaCore || ObserverCore.applyEventSessionMeta;
   const eventMatchesModeCore = options.eventMatchesModeCore || ObserverCore.eventMatchesMode;
   const eventMatchesFiltersCore = options.eventMatchesFiltersCore || defaultMatchesFilters;
@@ -280,6 +274,8 @@ function queryRecentEvents(options = {}) {
   const candidates = [];
   let scannedFiles = 0;
   let stoppedEarly = false;
+  let matched = 0;
+  let oversizedLines = 0;
   const reverseEarlyStop = shouldAllowEarlyStop(filters, options) && order === "desc";
   const hintIndexes = buildSessionHintIndexes(options.sessionHints);
   const query = String(filters?.query || filters?.q || "").trim();
@@ -295,11 +291,31 @@ function queryRecentEvents(options = {}) {
       contentLimit: options.contentLimit,
     });
     const fileEvents = [];
+    const retain = (event) => {
+      if (cursor && compareEvents(event, cursor, order) <= 0) return;
+      matched += 1;
+      let low = 0;
+      let high = fileEvents.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (compareEvents(event, fileEvents[middle], order) < 0) high = middle;
+        else low = middle + 1;
+      }
+      fileEvents.splice(low, 0, event);
+      if (fileEvents.length > pageEnd + 2) fileEvents.length = pageEnd + 2;
+    };
 
     const onLine = (line, lineNumber, locator = {}) => {
-      if (!line || !rawLineMayMatch(line, filters)) return;
+      if (!line) return;
       try {
-        if (locator.truncated && compactContent) {
+        let compactRecord;
+        if (locator.truncated) {
+          try { compactRecord = readCompactJsonRecord(record.file, locator.byteOffset, locator.byteLength); }
+          catch { oversizedLines += 1; }
+          if (compactRecord?.textTruncated) oversizedLines += 1;
+        }
+        if (locator.truncated && !compactRecord) {
+          if (query) return;
           const event = makeTruncatedLineEvent(line, context, locator);
           const indexed = makeIndexedEvent(attachEventLocator(event, record.file, lineNumber, 0, {
             sourceOffset: locator.byteOffset,
@@ -309,17 +325,18 @@ function queryRecentEvents(options = {}) {
           if (!eventMatchesModeCore(indexed, filters.mode)) return;
           if (!eventMatchesFiltersCore(indexed, filters)) return;
           rememberLocator(indexed);
-          fileEvents.push(indexed);
-          if (reverseEarlyStop && candidates.length + fileEvents.length >= pageEnd) return false;
+          retain(indexed);
+          if (reverseEarlyStop && fileEvents.length > pageEnd) return false;
           return undefined;
         }
 
         const sourceLine = context.compactContent
           ? compactLargeJsonlLine(line, { maxValueLength: context.contentLimit || 800 })
           : line;
-        const obj = JSON.parse(sourceLine);
+        const obj = compactRecord?.value || JSON.parse(sourceLine);
         const parsedEvents = callParser(parser, obj, context);
         parsedEvents.forEach((event, eventIndex) => {
+          if (compactRecord?.truncated) event.contentTruncated = true;
           if ((!event.sessionId || event.sessionId === "unknown") && context.sessionId) event.sessionId = context.sessionId;
           if ((!event.model || event.model === "unknown") && context.model) event.model = context.model;
           if (!event.cwd && context.cwd) event.cwd = context.cwd;
@@ -332,14 +349,14 @@ function queryRecentEvents(options = {}) {
           }));
           if (event.id != null) indexed.id = event.id;
           if (!eventMatchesModeCore(indexed, filters.mode)) return;
-          if (!eventMatchesFiltersCore(indexed, filters)) return;
+          if (!eventMatchesFiltersCore(query ? event : indexed, filters)) return;
           rememberLocator(indexed);
-          fileEvents.push(indexed);
+          retain(indexed);
         });
       } catch {
         // Skip invalid or partially written JSON lines.
       }
-      if (reverseEarlyStop && candidates.length + fileEvents.length >= pageEnd) return false;
+      if (reverseEarlyStop && fileEvents.length > pageEnd) return false;
       return undefined;
     };
 
@@ -348,20 +365,16 @@ function queryRecentEvents(options = {}) {
         countLines: false,
         maxLineBytes: Number(options.maxParseLineBytes) || config.EVENT_STREAM_MAX_PARSE_LINE_BYTES,
       })
-      : fsScanner.forEachCompleteJsonlLine(record.file, onLine);
+      : fsScanner.forEachCompleteJsonlLine(record.file, onLine, {
+        maxLineBytes: Number(options.maxParseLineBytes) || config.EVENT_STREAM_MAX_PARSE_LINE_BYTES,
+      });
 
     candidates.push(...fileEvents);
     sortEvents(candidates, order);
+    ObserverCore.dedupeEvents(candidates, { inPlace: true });
+    if (candidates.length > pageEnd + 1) candidates.length = pageEnd + 1;
     if (reverseEarlyStop && lineScan?.stoppedEarly) {
       stoppedEarly = true;
-      break;
-    }
-    if (shouldAllowEarlyStop(filters, options) && candidates.length >= pageEnd && fileIndex < files.length - 1) {
-      stoppedEarly = true;
-      break;
-    }
-    if (candidates.length > Math.max(pageEnd * 2, pageEnd + 1000)) {
-      candidates.length = Math.max(pageEnd + 1, 1000);
     }
   }
 
@@ -371,17 +384,21 @@ function queryRecentEvents(options = {}) {
   const hasMore = candidates.length > pageEnd || stoppedEarly;
   return {
     events,
-    totalVisible: stoppedEarly ? Math.max(pageEnd + 1, candidates.length) : candidates.length,
-    totalMatching: stoppedEarly ? Math.max(pageEnd + 1, candidates.length) : candidates.length,
+    totalVisible: Math.max(matched, candidates.length),
+    totalMatching: Math.max(matched, candidates.length),
     page: {
       offset,
       limit,
       hasMore,
+      nextCursor: events.length && hasMore ? encodeCursor(events.at(-1), order) : null,
+      totalIsEstimate: stoppedEarly || oversizedLines > 0,
     },
     scan: {
       scannedFiles,
       totalFiles: files.length,
       stoppedEarly,
+      oversizedLines,
+      incomplete: oversizedLines > 0,
     },
   };
 }
@@ -393,6 +410,7 @@ function clearLocatorCache() {
 module.exports = {
   clearLocatorCache,
   lookupEventLocator,
+  resolveEventLocator,
   makeTruncatedLineEvent,
   queryRecentEvents,
 };

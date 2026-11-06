@@ -12,6 +12,9 @@ const recentEventsReader = require("./recent-events-reader");
 const sourceFiles = require("./source-files");
 const { listSourceAdapters } = require("../shared/source-adapters");
 const SessionInsights = require("../shared/session-insights");
+const { analyzeTurns, agentRelations, gitEvidence } = require("./analysis-services");
+const { readCompactJsonRecord } = require("./compact-json-record");
+const { streamDialogueText } = require("./dialogue-text");
 
 let _deps = null;
 
@@ -89,6 +92,7 @@ function parseRequestFilters(searchParams) {
     endMs: _deps.toTimeMsCore(searchParams.get("end") || ""),
     order: searchParams.get("order") === "asc" ? "asc" : "desc",
     offset: _deps.toPositiveIntCore(searchParams.get("offset"), 0),
+    cursor: searchParams.get("cursor") || "",
     limit: _deps.toPositiveIntCore(searchParams.get("limit"), config.DEFAULT_PAGE_SIZE, config.MAX_PAGE_SIZE),
     includeSummary: searchParams.get("summary") !== "0",
   };
@@ -145,7 +149,7 @@ function querySessionEventsDirect(filters, records) {
 function queryEvents(filters) {
   const records = listSourceFileRecords();
 
-  if (!filters.includeSummary && filters.sessionId) {
+  if (!filters.query && !filters.includeSummary && filters.sessionId) {
     return querySessionEventsDirect(filters, records);
   }
 
@@ -154,44 +158,28 @@ function queryEvents(filters) {
     : _deps.summaryStore.getLastSummary();
   const threadMeta = loadThreadMeta();
   const useDiskSearch = Boolean(filters.query && _deps.dialogueSearchIndex?.state?.().enabled);
+  const sessionsById = new Map((summary?.sessions?.groups || []).map((session) => [session.sessionId, session]));
+  const agentMetadata = (item) => {
+    const session = sessionsById.get(item.sessionId) || item;
+    const parentId = session.parentSessionId || item.parentSessionId || "";
+    const parent = parentId !== item.sessionId ? sessionsById.get(parentId) : null;
+    if (!session.isSubagent && !item.isSubagent && (!parentId || parentId === item.sessionId)) return {};
+    return { parentSessionId: parentId, isSubagent: true,
+      parentTitle: parent?.displayTitle || parent?.sessionTitle || parent?.fallbackTitle || "" };
+  };
   let recent;
   if (useDiskSearch) {
-    _deps.dialogueSearchIndex.ensureArchives(records);
-    const archivePaths = new Set(_deps.dialogueSearchIndex.archiveRecords(records).map((record) => record.file));
-    const currentRecords = records.filter((record) => !archivePaths.has(record.file));
-    const pageEnd = filters.offset + filters.limit;
-    const current = recentEventsReader.queryRecentEvents({
-      files: currentRecords,
-      parsers: _deps.parsers,
-      threadMeta,
-      filters: { ...filters, offset: 0, limit: pageEnd },
-      limit: pageEnd,
-      offset: 0,
-      applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
-      eventMatchesModeCore: _deps.eventMatchesModeCore,
-      eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
-      sessionHints: filters.includeSummary ? summary.sessions.groups : _deps.summaryStore.getLastSummary()?.sessions?.groups,
+    _deps.dialogueSearchIndex.ensureFiles(records);
+    recent = _deps.dialogueSearchIndex.query(filters.query, filters);
+    recent.sessions = recent.sessions.map((match) => {
+      const session = sessionsById.get(match.sessionId);
+      return { sessionId: match.sessionId, sourceType: match.sourceType, sessionTitle: session?.displayTitle || session?.sessionTitle || session?.fallbackTitle || session?.title || "",
+        cwd: session?.cwd || "", ...match };
     });
-    const archived = _deps.dialogueSearchIndex.search(filters.query, { ...filters, limit: pageEnd });
-    const merged = [...current.events, ...archived].sort((left, right) => {
-      const difference = (_deps.toTimeMsCore(right.time) || 0) - (_deps.toTimeMsCore(left.time) || 0);
-      return filters.order === "asc" ? -difference : difference;
-    });
-    recent = {
-      ...current,
-      events: merged.slice(filters.offset, pageEnd),
-      totalMatching: merged.length,
-      totalVisible: merged.length,
-      page: {
-        ...current.page,
-        offset: filters.offset,
-        limit: filters.limit,
-        total: merged.length,
-        hasMore: merged.length > pageEnd,
-        nextOffset: pageEnd,
-      },
-      scan: { ...current.scan, searchMode: "sqlite-hybrid", indexedEvents: archived.length },
-    };
+    for (const event of recent.events) {
+      const meta = threadMeta.get(event.sessionId);
+      if (meta) _deps.applyEventSessionMetaCore?.(event, meta, { titleStrategy: "always" });
+    }
   } else recent = recentEventsReader.queryRecentEvents({
     files: records,
     parsers: _deps.parsers,
@@ -218,11 +206,11 @@ function queryEvents(filters) {
     index: publicSourceState(records, summary, recent.scan),
     totalVisible: recent.totalVisible,
     totalMatching: recent.totalMatching,
-    sessions: filters.includeSummary ? summary.sessions.groups : [],
+    sessions: (recent.sessions || (filters.includeSummary ? summary.sessions.groups : [])).map((session) => ({ ...session, ...agentMetadata(session) })),
     tokenWindows: filters.includeSummary ? summary.tokens.windows : null,
     meta: filters.includeSummary ? summary.meta : { models: [], types: [], platforms: [] },
     page: recent.page,
-    events: recent.events,
+    events: recent.events.map((event) => ({ ...event, ...agentMetadata(event) })),
   };
 }
 
@@ -232,11 +220,18 @@ function queryEvents(filters) {
 function getEventDetail(eventId) {
   const { indexManager } = _deps;
   const threadMeta = loadThreadMeta();
-  const locator = recentEventsReader.lookupEventLocator(eventId);
+  const records = listSourceFileRecords();
+  const locator = recentEventsReader.resolveEventLocator(eventId, records);
+  if (locator && !locator.sessionId) {
+    const sessions = _deps.summaryStore.getLastSummary?.()?.sessions?.groups || [];
+    const session = sessions.find((item) => item.sourceFiles?.includes(locator.sourceFile));
+    if (session) Object.assign(locator, { sessionId: session.sessionId, model: session.models?.[0], cwd: session.cwd, sessionTitle: session.sessionTitle });
+  }
   if (locator?.sourceFile && (locator?.sourceLine || locator?.sourceOffset != null)) {
-    const events = indexManager.parseEventLineFromIndex(locator, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore);
+    const events = indexManager.parseEventLineFromIndex(locator, threadMeta, _deps.parsers, _deps.applyEventSessionMetaCore, { bounded: true });
     const found = events.find((event) => event.eventId === eventId)
       || events[Number(locator.lineEventIndex) || 0];
+    if (found && locator.expectedTime && found.time !== locator.expectedTime) throw new Error("Source record changed; reload the session before opening this event");
     if (found) return found;
   }
   return null;
@@ -245,6 +240,50 @@ function getEventDetail(eventId) {
 /**
  * Export a full session as sanitized Markdown or JSONL.
  */
+function prepareDialogueRecord(eventId) {
+  const records = listSourceFileRecords();
+  const locator = recentEventsReader.resolveEventLocator(eventId, records);
+  if (!locator) throw new Error("Event not found; reload search results");
+  const record = records.find((item) => item.file === locator.sourceFile);
+  if (!_deps.dialogueSearchIndex?.state().enabled) throw new Error("Dialogue cache requires Node.js with SQLite support");
+  _deps.dialogueSearchIndex.indexRecord(record);
+}
+
+function getDialogueBody(eventId, options = {}) {
+  const records = listSourceFileRecords();
+  const locator = recentEventsReader.resolveEventLocator(eventId, records);
+  if (!locator || !locator.sourceLength) throw new Error("Dialogue not found; reload the session");
+  const obj = readCompactJsonRecord(locator.sourceFile, locator.sourceOffset, locator.sourceLength, { stringLimit: 2048 }).value;
+  const { parser, adapter } = fsScanner.resolveParserForFile(locator.sourceFile, _deps.parsers);
+  const parsed = parser(obj, { sessionId: locator.sessionId, sourceFile: locator.sourceFile, sourceType: adapter.key, compactContent: true });
+  const event = (Array.isArray(parsed) ? parsed : [parsed])[locator.lineEventIndex || 0];
+  if (!event || !["Agent", "User", "Prompt"].includes(event.callType) || (locator.expectedTime && event.time !== locator.expectedTime)) {
+    throw new Error("Dialogue changed or is unavailable; reload the session");
+  }
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const limit = Math.max(1, Math.min(65536, Number(options.limit) || 65536));
+  let totalLength = 0;
+  let content = "";
+  streamDialogueText(locator.sourceFile, { byteOffset: locator.sourceOffset, byteLength: locator.sourceLength, truncated: true }, obj, event.content, (text) => {
+    const start = totalLength;
+    totalLength += text.length;
+    if (totalLength > offset && start < offset + limit) content += text.slice(Math.max(0, offset - start), Math.max(0, offset + limit - start));
+  });
+  return { content, offset, totalLength, nextOffset: offset + content.length, hasMore: offset + content.length < totalLength };
+}
+
+function getDialogueContext(eventId) {
+  prepareDialogueRecord(eventId);
+  const result = _deps.dialogueSearchIndex.context(eventId);
+  if (!result) throw new Error("Dialogue changed or is unavailable; reload search results");
+  const meta = loadThreadMeta();
+  for (const event of result.events) {
+    const session = meta.get(event.sessionId);
+    if (session) _deps.applyEventSessionMetaCore?.(event, session, { titleStrategy: "always" });
+  }
+  return result;
+}
+
 function resolveSessionIdentifier(events, sessionId) {
   const needle = String(sessionId || "").trim();
   if (!needle) return "";
@@ -363,6 +402,7 @@ function querySessionReplay(sessionId, limitValue) {
     offset: 0,
     limit,
     includeSummary: false,
+    forceForward: true,
   }, records);
   return {
     generatedAt: new Date().toISOString(),
@@ -370,6 +410,17 @@ function querySessionReplay(sessionId, limitValue) {
     replay: SessionInsights.buildExecutionReplay(payload.events, { limit }),
     page: payload.page,
   };
+}
+
+function querySessionAnalysis(sessionId) {
+  const payload = querySessionReplay(sessionId, 1000);
+  if (!payload) return null;
+  const records = listSourceFileRecords();
+  const summary = _deps.summaryStore.getLastSummary();
+  const events = querySessionEventsDirect({ mode: "raw", sessionId: payload.session.sessionId, order: "desc", offset: 0,
+    limit: 1000, query: "", quickFilter: "all", includeSummary: false, forceForward: true }, records);
+  return { ...analyzeTurns(events.events), hasEarlierEvents: events.page.hasMore,
+    relations: agentRelations(summary.sessions.groups, payload.session.sessionId), git: gitEvidence(payload.session) };
 }
 
 /**
@@ -384,12 +435,20 @@ function queryObservability() {
 function recalculateObservability() {
   const records = listSourceFileRecords();
   const startedAt = Date.now();
+  const before = _deps.analysisServices?.audit().snapshot
+    || (_deps.summaryStore.getLastSummary?.() && _deps.analysisServices?.capture(_deps.summaryStore.getLastSummary()));
   const summary = _deps.summaryStore.rebuild({
     files: records,
     stateSignature: sourceStateSignature(),
     threadMeta: loadThreadMeta(),
   });
+  const audit = _deps.analysisServices?.recordAudit(before, _deps.analysisServices.capture(summary), {
+    durationMs: Date.now() - startedAt, sourceCount: records.length, parserVersion: summary.provenance?.parserVersion,
+    previousSnapshotAt: before?.at || null,
+    sourceFingerprint: _deps.indexManager.signatureHash(sourceFiles.aggregateRecordsKey(records)),
+  });
   return buildObservabilityPayload(records, summary, {
+    audit,
     recalculation: {
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startedAt,
@@ -455,6 +514,8 @@ function serveStatic(reqPath, res) {
 }
 
 module.exports = {
+  getDialogueBody,
+  getDialogueContext,
   init,
   invalidateCaches,
   parseRequestFilters,
@@ -467,6 +528,7 @@ module.exports = {
   setSessionAnnotation,
   querySessionComparison,
   querySessionReplay,
+  querySessionAnalysis,
   queryObservability,
   recalculateObservability,
   serveStatic,

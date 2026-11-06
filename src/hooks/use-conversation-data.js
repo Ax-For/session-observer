@@ -1,6 +1,5 @@
 import { startTransition, useCallback, useRef, useState } from "react";
 import { apiClient } from "../api/client";
-import { hydrateDialogueEvents } from "../lib/conversation-hydration";
 import {
   CONVERSATION_PAGE_LIMIT,
   createEmptyConversationPage,
@@ -82,9 +81,6 @@ export function useConversationData({ dataSource, localEvents, notify }) {
       const previewEvents = payload.events || [];
       const total = Number(payload.totalMatching) || previewEvents.length;
       commitConversationChunk(previewEvents, total, { replace: true });
-      const hydratedEvents = await hydrateDialogueEvents(previewEvents);
-      if (requestId !== conversationRequestId.current) return;
-      commitConversationChunk(hydratedEvents, total, { replace: true });
     } catch (error) {
       if (requestId !== conversationRequestId.current) return;
       notify({
@@ -128,9 +124,8 @@ export function useConversationData({ dataSource, localEvents, notify }) {
       });
       if (requestId !== conversationRequestId.current) return;
       const previewEvents = payload.events || [];
-      const hydratedEvents = await hydrateDialogueEvents(previewEvents);
       if (requestId !== conversationRequestId.current) return;
-      commitConversationChunk(hydratedEvents, Number(payload.totalMatching) || previewEvents.length);
+      commitConversationChunk(previewEvents, Number(payload.totalMatching) || previewEvents.length);
     } catch (error) {
       if (requestId !== conversationRequestId.current) return;
       notify({

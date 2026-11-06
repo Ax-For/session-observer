@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatedSymbol } from "./animated-symbol";
 import {
   Badge,
   Button,
@@ -47,8 +48,8 @@ function escapeRegExp(value) {
 
 function buildHighlightTerms(query) {
   const normalized = String(query || "").trim();
-  if (normalized.length < 2) return [];
-  return [...new Set([normalized, ...normalized.split(/\s+/)].filter((term) => term.length >= 2))]
+  if (!normalized.length) return [];
+  return [...new Set([normalized, ...normalized.split(/\s+/)].filter((term) => term.length >= 1))]
     .sort((left, right) => right.length - left.length);
 }
 
@@ -108,11 +109,11 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
     `event-row--${eventTone(event.callType)}`,
     dialogueRole ? `event-row--dialogue event-row--dialogue-${dialogueRole}` : "",
   ].filter(Boolean).join(" ");
-  const summary = dialogueRole ? readableDialogueContent(event) : readableEventSummary(event);
+  const summary = searchQuery ? event.content : dialogueRole ? readableDialogueContent(event) : readableEventSummary(event);
 
   return (
     <div className={rowClasses}>
-      <button type="button" className="event-row__open" onClick={() => onOpenEvent?.(event)}>
+      <button type="button" className="event-row__open" onClick={() => searchQuery ? onOpenSessionDetail?.(event) : onOpenEvent?.(event)}>
         <span className="event-row__rail" aria-hidden="true"><span className="event-row__dot" /></span>
         <div className="event-row__body">
           <div className="event-row__kicker">
@@ -125,6 +126,7 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
             <HighlightedText text={summary} query={dialogueRole ? searchQuery : ""} />
           </Text>
           <div className="event-row__meta-line">
+            {event.isSubagent ? <span title={event.parentTitle}>子 Agent · {clipText(event.parentTitle || shortSessionId(event.parentSessionId) || "父会话暂不可用", 32)}</span> : null}
             <span>{shortSessionId(event.sessionId)}</span>
             <span>{event.extra || "事件详情"}</span>
             <span>{clipText(event.cwd || "", 48)}</span>
@@ -173,14 +175,15 @@ function virtualEventKey(event, absoluteIndex) {
   return `${identity}:${absoluteIndex}`;
 }
 
-function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail, searchQuery }) {
+function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail, searchQuery, scrollState }) {
   const viewportRef = useRef(null);
-  const [scrollTop, setScrollTop] = useState(0);
+  const [scrollTop, setScrollTop] = useState(scrollState?.current || 0);
   const [viewportHeight, setViewportHeight] = useState(520);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return undefined;
+    viewport.scrollTop = scrollState?.current || 0;
     const syncViewportHeight = () => setViewportHeight(viewport.clientHeight || 520);
     syncViewportHeight();
     if (typeof ResizeObserver === "undefined") return undefined;
@@ -189,7 +192,7 @@ function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail, searchQuer
     return () => observer.disconnect();
   }, []);
 
-  const eventList = dedupeAdjacentDialogueEvents(events);
+  const eventList = searchQuery ? events : dedupeAdjacentDialogueEvents(events);
   const totalHeight = eventList.length * EVENT_ROW_HEIGHT;
   const startIndex = Math.max(0, Math.floor(scrollTop / EVENT_ROW_HEIGHT) - EVENT_OVERSCAN);
   const visibleCount = Math.ceil(viewportHeight / EVENT_ROW_HEIGHT) + EVENT_OVERSCAN * 2;
@@ -200,7 +203,7 @@ function VirtualEventList({ events, onOpenEvent, onOpenSessionDetail, searchQuer
     <div
       ref={viewportRef}
       className="feed-virtual-scroll"
-      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      onScroll={(event) => { setScrollTop(event.currentTarget.scrollTop); if (scrollState) scrollState.current = event.currentTarget.scrollTop; }}
       style={{ "--event-row-height": `${EVENT_ROW_HEIGHT}px` }}
     >
       <div className="feed-virtual-scroll__spacer" style={{ height: totalHeight }}>
@@ -244,7 +247,7 @@ function ActivityRunRow({ run, onOpenEvent, onOpenSessionDetail, searchQuery }) 
   return (
     <article className={`activity-run${expanded ? " is-expanded" : ""}${run.toolErrors ? " has-errors" : ""}`}>
       <div className="activity-run__main">
-        <button type="button" className="activity-run__toggle" onClick={() => setExpanded((current) => !current)}>
+        <button type="button" className="activity-run__toggle" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
           <span className={`activity-run__source is-${run.sourceType}`}>{run.sourceType === "codex" ? "CX" : "CC"}</span>
           <span className="activity-run__copy">
             <span className="activity-run__kicker">
@@ -309,7 +312,9 @@ function ActivityRunList({ runs, onOpenEvent, onOpenSessionDetail, searchQuery }
   const [renderLimit, setRenderLimit] = useState(RUN_RENDER_BATCH);
   const [following, setFollowing] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
-  const visibleRuns = runs.slice(0, renderLimit);
+  const frozenRunsRef = useRef(runs);
+  if (following) frozenRunsRef.current = runs;
+  const visibleRuns = (following ? runs : frozenRunsRef.current).slice(0, renderLimit);
 
   useEffect(() => {
     const latestId = runs[0]?.id || "";
@@ -367,7 +372,10 @@ function ActivityRunList({ runs, onOpenEvent, onOpenSessionDetail, searchQuery }
               searchQuery={searchQuery}
             />
           ))}
-          {!runs.length ? <Text className="activity-feed__empty">当前范围没有可展示的语义活动。</Text> : null}
+          {!runs.length ? <div className="product-empty-state">
+            <AnimatedSymbol name="list" size={36} play />
+            <Text>当前范围没有可展示的语义活动。</Text>
+          </div> : null}
           {renderLimit < runs.length ? (
             <Button variant="subtle" color="gray" onClick={() => setRenderLimit((current) => current + RUN_RENDER_BATCH)}>
               显示更早活动
@@ -443,6 +451,7 @@ export function StreamWorkspace({
   loading,
   generatedAt,
   searchQuery,
+  scrollState,
   viewMode = "activity",
 }) {
   const matchingCount = Number(summary?.counts?.totalMatching) || 0;
@@ -453,18 +462,17 @@ export function StreamWorkspace({
   const scopeFacts = [
     { label: "匹配", value: formatNumber(matchingCount) },
     { label: "已载入", value: `${formatNumber(loadedCount)} / ${formatNumber(matchingCount || loadedCount)}` },
-    { label: viewMode === "raw" ? "会话" : "活动", value: formatNumber(viewMode === "raw" ? sessionsCount : filteredRuns.length) },
+    { label: viewMode === "raw" || searchQuery ? "会话" : "活动", value: formatNumber(viewMode === "raw" || searchQuery ? sessionsCount : filteredRuns.length) },
     { label: "更新", value: generatedAt ? formatTimeWithSeconds(generatedAt) : "实时" },
   ];
 
   return (
-    <section className="stream-workbench" role="region" aria-label="事件工作台" data-layout="event-explorer">
+    <section className="stream-workbench" role="region" aria-label="事件工作台" data-layout="event-explorer" data-search={Boolean(searchQuery)}>
       <div className="stream-layout">
         <Paper className="session-rail" radius="md" p="md">
           <Group justify="space-between" mb="sm">
             <div>
-              <Text className="eyebrow">会话上下文</Text>
-              <Title order={3}>最近活跃</Title>
+              <Title order={3}>{searchQuery ? "命中会话" : "最近活跃"}</Title>
             </div>
             <Badge radius="sm" variant="light" color="gray">{formatNumber((sessions || []).length)}</Badge>
           </Group>
@@ -486,8 +494,8 @@ export function StreamWorkspace({
                         </span>
                         <span className="session-rail__preview" title={preview}>{clipText(preview, 72)}</span>
                         <span className="session-rail__metrics">
-                          <span>{formatCompactNumber(session.totalTokens)} Tok</span>
-                          <span>{formatNumber(session.count || 0)} 事件</span>
+                          {session.isSubagent ? <span title={session.parentTitle}>子 Agent · {clipText(session.parentTitle || "父会话暂不可用", 32)}</span> : null}
+                          {searchQuery ? <span>{formatNumber(session.matchCount)} 处匹配 · {shortSessionId(session.sessionId)}</span> : <><span>{formatCompactNumber(session.totalTokens)} Tok</span><span>{formatNumber(session.count || 0)} 事件</span></>}
                         </span>
                       </span>
                     </button>
@@ -509,8 +517,7 @@ export function StreamWorkspace({
         <Paper className="feed-panel" radius="md" p="md">
           <Group justify="space-between" mb="sm" align="flex-start">
             <div className="feed-panel__heading">
-              <Text className="eyebrow">{viewMode === "raw" ? "RAW EVENTS" : "SEMANTIC ACTIVITY"}</Text>
-              <Title order={3}>{scope.title}</Title>
+              <Title order={3}>{searchQuery ? "问答搜索结果" : scope.title}</Title>
               <Text className="feed-panel__scope">{scope.subtitle}</Text>
             </div>
             <Group gap="xs" className="feed-panel__actions">
@@ -532,12 +539,13 @@ export function StreamWorkspace({
             </Group>
           </Group>
 
-          {viewMode === "raw" ? (
+          {viewMode === "raw" || searchQuery ? (
             <VirtualEventList
               events={events}
               onOpenEvent={onOpenEvent}
               onOpenSessionDetail={onOpenSessionDetail}
               searchQuery={searchQuery}
+              scrollState={scrollState}
             />
           ) : (
             <>
@@ -557,7 +565,7 @@ export function StreamWorkspace({
               <span>
                 {loading
                   ? "正在刷新数据..."
-                  : viewMode === "raw"
+                  : viewMode === "raw" || searchQuery
                     ? `当前显示 ${formatNumber((events || []).length)} 条事件`
                     : `${formatNumber(filteredRuns.length)} 个活动 · 来自 ${formatNumber((events || []).length)} 条底层事件`}
               </span>

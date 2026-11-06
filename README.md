@@ -36,7 +36,7 @@ The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or 
 
 | Surface | What it is for |
 | --- | --- |
-| **Overview** | Runtime and source health, RSS and heap usage, today's sessions and conversations, 24-hour event and token load, active writers, usage cadence, and workspace concentration |
+| **Overview** | Live output tok/s, five-minute speed history, per-agent phases, seven-component performance scores versus 14-day model baselines, runtime/source health, today's activity, 24-hour load and workspace concentration |
 | **Token ledger** | Uncached input, cache hits, cache creation, output, reasoning output, estimated cost, efficiency ratios, forecasts, trends, model attribution, workspace attribution, and high-cost sessions |
 | **Event stream** | Semantic activity grouped by user turn, dedicated Q&A/tool/usage/raw views, explicit search, filters, highlighted dialogue matches, live follow/pause, and direct jumps into session detail |
 | **Session library** | Active sessions, workspace grouping, directory tree, stable full-session totals, start and latest timestamps, collapsible conversations, activity, usage, files/tools, commands, errors, compactions, and raw diagnostics |
@@ -55,6 +55,8 @@ Search is submitted explicitly and matches only user and agent dialogue content.
 
 Every event-to-session jump opens the same detail surface. Full-session counts and token totals come from the stable summary, while conversation content is read from a bounded recent window. The latest 400 raw events load first, turns are collapsible, and older content is fetched only when requested.
 
+The library shows main sessions by default, with filters for all sessions or subagents only. Parent details list linked subagents with navigation in both directions; children with unavailable parents remain accessible through the filters. Active counts roll up to main sessions, while keyword search retains child matches and their parent labels. Each session keeps its own Token attribution without double-counting or preloading every child transcript.
+
 ### Detailed token and cost attribution
 
 Token accounting separates:
@@ -67,23 +69,27 @@ Token accounting separates:
 
 The UI attributes usage by time window, model, platform, workspace, and session. Cost values are estimates based on the recognized model price table; they are not provider invoices.
 
-The Token ledger exposes a confidence score with pricing coverage, session Token coverage, summary-cache reuse, unknown models, and the bundled price-table version. Optional daily and weekly Token/cost budgets provide local warnings.
+The Token ledger exposes factual pricing and parsing coverage, unknown models, and parser/price versions, not a synthetic accuracy score. Optional daily and weekly Token/cost budgets provide local warnings. Expand **Statistics audit and historical prices** to inspect recalculation differences and configure exact-model USD rates with effective dates and service tiers. Logged message costs take precedence; bundled rates are reference estimates, not verified historical invoices.
 
 ### Replay, outcomes, and local review
 
-Session detail combines conversation, execution replay, usage, and outcomes in one workbench. Replay highlights slow gaps, tool steps, failures, and Token snapshots. Outcome review stores completion status, tags, favorites, and notes in `~/.session-observer/session-annotations.json`; prompt and response text is not copied.
+Session detail combines conversation, execution replay, usage, and outcomes in one workbench. Tool timings pair calls and results by call ID; parallel durations are not wall-clock latency. The usage tab breaks the loaded window into turn-level Token, estimated cost, and tool timing. Outcomes include parent/child Agent attribution and read-only Git commits within the session time window. Time correlation is explicitly not proof of authorship.
+
+Save event-stream filters as local views and bookmark individual messages for later navigation. Bookmarks store identifiers and short labels, not full transcripts. Outcome annotations remain in `~/.session-observer/session-annotations.json`; saved views, bookmarks, prices and the last ten recalculation audits reside in `OBSERVER_RUNTIME_DIR` (default `.runtime/`). Back up these files before deleting that directory.
 
 ### Designed for large local histories
 
 Session Observer avoids retaining the complete transcript corpus in memory:
 
-- recent event pages are reverse-scanned directly from source files;
+- recent event pages merge per-file reverse scans using stable timestamp/reference cursors;
 - completed archive summaries are reused when files do not change;
-- growing current files are parsed incrementally;
+- growing current files are parsed incrementally after append-identity checks;
 - persistent summaries keep bounded goals, outcomes, tools, files, errors, compactions, and model transitions instead of raw event arrays;
-- the UI virtualizes or batches large lists and exposes process RSS, heap, external memory, and cache state.
+- large image strings are streamed without retaining binary payloads; trailing usage metadata remains available;
+- expensive reads run in one bounded, cancellable worker, with a queue limit, timeout and combined RSS guard;
+- the UI preserves loaded history on refresh and exposes main/worker RSS, job progress, cancellation and watcher recovery in **Service diagnostics**.
 
-This keeps normal navigation responsive even when individual JSONL files are hundreds of megabytes. Actual memory usage still depends on transcript shape, active filters, and the number of pages explicitly loaded.
+Run `npm run test:memory` for a reproducible, physically populated 400 MiB workload. The documented macOS run peaked at 172.9 MiB combined service/descendant RSS, including search, replay, recalculation and cancellation recovery. This is a measured workload, not a universal memory guarantee. Oversized queries may be cancelled by the 280 MiB protection threshold. See [limits and verification](docs/reliability-upgrade.md).
 
 ## Screenshots
 
@@ -143,7 +149,7 @@ src/lib/               Activity models, view models, formatting, paging, and URL
 tests/                 Node-side parser, cache, memory, route, and trace tests
 ```
 
-The backend remains one local Node process. Vite builds the React interface, which is served by the same process. Shared parsing keeps server summaries and frontend views on the same event vocabulary.
+One local Node process serves HTTP and file-change notifications; a bounded child process performs reads and analysis and exits after 30 seconds idle. Vite builds the React interface. Shared parsing keeps server summaries and frontend views on the same event vocabulary.
 
 ## Configuration
 
@@ -159,8 +165,12 @@ The backend remains one local Node process. Vite builds the React interface, whi
 | `OBSERVER_DAILY_COST_BUDGET_USD` | disabled | Daily estimated-cost warning threshold |
 | `OBSERVER_WEEKLY_COST_BUDGET_USD` | disabled | Seven-day estimated-cost warning threshold |
 | `OBSERVER_MIN_CACHE_COVERAGE` | `70` | Minimum cache-read coverage percentage |
-| `OBSERVER_DIALOGUE_SEARCH` | `scan` | Set to `sqlite` for optional disk-backed archive FTS |
+| `OBSERVER_DIALOGUE_SEARCH` | `sqlite` | Compact disk-backed dialogue cache; `scan` opts into the legacy bounded scanner |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | disabled | JSON manifest for additional generic JSONL sources |
+| `OBSERVER_ACCESS_TOKEN` | disabled | Required for non-loopback binding; HTTP Basic password |
+| `OBSERVER_ALLOWED_HOSTS` | disabled | Comma-separated additional allowed hosts, including port |
+| `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | Set to `1` to allow source transcript rename/delete |
+| `OBSERVER_PRICEBOOK_FILE` | `.runtime/pricebook.json` | Local dated model prices |
 
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
@@ -180,7 +190,9 @@ Custom JSONL sources can be registered without changing the scanner:
 }
 ```
 
-The generic parser recognizes common role, message, content, session, timestamp, model, working-directory, tool, and usage fields. With `OBSERVER_DIALOGUE_SEARCH=sqlite`, immutable pre-today dialogue is indexed on disk while today's growing files continue to use direct reverse scanning.
+The generic parser recognizes common role, message, content, session, timestamp, model, working-directory, tool, and usage fields. Keyword search uses a compact SQLite dialogue cache by default (Node.js with `node:sqlite` support). Complete Q&A text is streamed into overlapping chunks; image payloads and tool output are excluded. Unchanged files are reused and growing files resume at the last complete record. File replacement, truncation and sampled prefix changes trigger rebuilding; deleted files are removed. The cache is disposable, versioned, local-only and protected with owner-only permissions.
+
+Results include hit-centered excerpts and per-session match counts. Open a hit to see nearby dialogue, then return to the same results. File notifications mark keyword results as outdated instead of interrupting the search; refresh them explicitly. Initial cache preparation reports file progress and can be cancelled, preserving completed files. Browser event pages have both a 4,000-row and an 8 MiB serialized-size estimate limit. Visible long messages load in bounded 64 Ki-character pages, at most two requests concurrently; raw JSON is fetched only when opened and oversized fields are labelled as compacted. The legacy scanner and malformed/excessively nested records can still have partial coverage; failures are surfaced.
 
 ## Privacy model
 
@@ -194,8 +206,11 @@ Session transcripts may contain prompts, source code, tool output, filesystem pa
 Only bind to a non-local interface when you understand the exposure risk:
 
 ```bash
-HOST=0.0.0.0 ./manage.sh start
+HOST=0.0.0.0 OBSERVER_ACCESS_TOKEN="$MY_LOCAL_TOKEN" \
+  OBSERVER_ALLOWED_HOSTS="observer.local:8787" ./manage.sh start
 ```
+
+Non-loopback binding requires an access token. HTTP Basic accepts any username and the token as password; use an HTTPS reverse proxy for network access. Host/Origin checks reject cross-origin mutations. Source rename/delete is disabled by default; `OBSERVER_ALLOW_SOURCE_MUTATIONS=1` explicitly enables it. Local bookmarks and annotations remain writable. See [security notes](SECURITY.md).
 
 ## Project
 
@@ -208,6 +223,6 @@ HOST=0.0.0.0 ./manage.sh start
 ## Roadmap
 
 - Additional local coding-agent adapters.
-- Session comparison and timeline diffing.
-- More configurable pricing aliases and retention controls.
-- Deeper diagnostics for long-running source watchers and cache reuse.
+- Cross-session timeline diffing.
+- Explicit provider billing reconciliation and retention controls.
+- Additional large-corpus and filesystem compatibility fixtures.

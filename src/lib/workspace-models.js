@@ -60,6 +60,69 @@ function flattenSessions(groupsOrSessions) {
   return Object.values(groupsOrSessions).flat();
 }
 
+export function buildSessionCatalog(groups) {
+  const byId = new Map(flattenSessions(groups).map((session) => [session.sessionId, normalizeSessionForWorkspace(session)]));
+  const rootIds = new Map();
+  for (const session of byId.values()) {
+    session.isSubagent = Boolean(session.isSubagent || session.agentId || (session.parentSessionId && session.parentSessionId !== session.sessionId));
+    const path = [];
+    const visited = new Set();
+    let current = session;
+    let rootId = "";
+    while (current && !visited.has(current.sessionId)) {
+      if (rootIds.has(current.sessionId)) { rootId = rootIds.get(current.sessionId); break; }
+      visited.add(current.sessionId);
+      path.push(current.sessionId);
+      if (!current.parentSessionId || current.parentSessionId === current.sessionId) {
+        if (!current.isSubagent && !current.agentId) rootId = current.sessionId;
+        break;
+      }
+      current = byId.get(current.parentSessionId);
+    }
+    for (const id of path) rootIds.set(id, rootId);
+  }
+  const childCounts = new Map();
+  for (const [id, rootId] of rootIds) {
+    if (rootId && id !== rootId) childCounts.set(rootId, (childCounts.get(rootId) || 0) + 1);
+  }
+  return [...byId.values()].map((session) => ({
+    ...session,
+    rootSessionId: rootIds.get(session.sessionId) || "",
+    parentTitle: session.parentSessionId !== session.sessionId ? byId.get(session.parentSessionId)?.title || "" : "",
+    childSessionCount: childCounts.get(session.sessionId) || 0,
+  }));
+}
+
+export function buildSessionRelations(catalog, sessionId) {
+  const byId = new Map(catalog.map((session) => [session.sessionId, session]));
+  const session = byId.get(sessionId);
+  const childrenById = new Map();
+  for (const item of catalog) {
+    if (!item.isSubagent || item.parentSessionId === item.sessionId) continue;
+    if (!childrenById.has(item.parentSessionId)) childrenById.set(item.parentSessionId, []);
+    childrenById.get(item.parentSessionId).push(item);
+  }
+  const children = [];
+  const queue = [{ sessionId, depth: 0 }];
+  const seen = new Set([sessionId]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    for (const child of childrenById.get(current.sessionId) || []) {
+      if (seen.has(child.sessionId)) continue;
+      seen.add(child.sessionId);
+      const item = { ...child, depth: current.depth + 1 };
+      queue.push(item);
+      children.push(item);
+    }
+  }
+  return { parent: session?.isSubagent && session.parentSessionId !== sessionId ? byId.get(session.parentSessionId) || null : null, children };
+}
+
+function matchesAgentScope(session, filters) {
+  if (filters.agentScope === "all") return true;
+  return filters.agentScope === "children" ? session.isSubagent : !session.isSubagent;
+}
+
 function mergeSessionTokenAggregates(sessions, aggregateSessions) {
   const aggregateBySessionId = new Map(
     (aggregateSessions || []).map((session) => [session.sessionId, session]),
@@ -102,6 +165,31 @@ function buildSessionActivity(session, activeWindowMs) {
     projectedHourlyTokens: Math.round(tokensPerMinute * 60),
     confidence: "low",
   };
+}
+
+function activeSessionFamilies(groups, nowMs, activeWindowMs) {
+  const sessions = new Map(buildSessionCatalog(groups).map((session) => [session.sessionId, session]));
+  const families = new Map();
+  for (const session of sessions.values()) {
+    const latestMs = toTimeMs(session.latest);
+    if (latestMs == null || nowMs - latestMs > activeWindowMs) continue;
+
+    // Only known roots count as main sessions; guard malformed ancestry and self references.
+    let root = session;
+    const visited = new Set();
+    while (root?.parentSessionId && root.parentSessionId !== root.sessionId) {
+      if (visited.has(root.sessionId)) { root = null; break; }
+      visited.add(root.sessionId);
+      root = sessions.get(root.parentSessionId);
+    }
+    if (!root || root.isSubagent) continue;
+
+    const family = families.get(root.sessionId) || { ...root, activityAt: session.latest, activeChildCount: 0 };
+    if (latestMs > toTimeMs(family.activityAt)) family.activityAt = session.latest;
+    if (session.sessionId !== root.sessionId) family.activeChildCount += 1;
+    families.set(root.sessionId, family);
+  }
+  return [...families.values()];
 }
 
 function normalizeSessionForWorkspace(session) {
@@ -244,6 +332,7 @@ export function buildStreamSessionRailItems(sessions) {
       || "未命名会话";
     const key = [
       session.sourceType || "unknown",
+      session.isSubagent || session.childSessionCount ? session.sessionId : "",
       title,
       session.cwd || "",
     ].join("\u0000");
@@ -387,8 +476,11 @@ export function buildSessionSections(groups, filters = {}) {
   const groupBy = filters.groupBy === "sourceFile" || filters.groupBy === "platform" ? filters.groupBy : "cwd";
   const sectionMap = new Map();
 
+  const catalog = new Map(buildSessionCatalog(groups).map((session) => [session.sessionId, session]));
   for (const [cwd, items] of Object.entries(groups || {})) {
     const filteredSessions = (items || [])
+        .map((session) => catalog.get(session.sessionId))
+        .filter((session) => matchesAgentScope(session, filters))
         .filter((session) => matchesSessionBaseFilters(session, filters))
         .map(normalizeSessionForWorkspace)
         .filter((session) => matchesSessionContentFilters(session, filters));
@@ -440,12 +532,12 @@ export function buildActiveSessionOverview(groups, options = {}) {
   const filters = options.filters || {};
   const platformCounts = new Map();
 
-  const activeSessions = flattenSessions(groups)
+  const activeSessions = activeSessionFamilies(groups, nowMs, activeWindowMs)
     .filter((session) => matchesSessionBaseFilters(session, filters))
     .map(normalizeSessionForWorkspace)
     .filter((session) => matchesSessionContentFilters(session, filters))
     .map((session) => {
-      const latestMs = toTimeMs(session.latest);
+      const latestMs = toTimeMs(session.activityAt);
       return {
         ...session,
         ageMs: latestMs == null ? Number.POSITIVE_INFINITY : Math.max(0, nowMs - latestMs),
@@ -466,7 +558,7 @@ export function buildActiveSessionOverview(groups, options = {}) {
   return {
     total: activeSessions.length,
     windowMinutes: Math.round(activeWindowMs / 60000),
-    latestAt: activeSessions[0]?.latest || "",
+    latestAt: activeSessions[0]?.activityAt || "",
     hasMore: activeSessions.length > limit,
     platforms: [...platformCounts.entries()]
       .map(([key, sessions]) => ({ key, sessions }))
@@ -629,7 +721,8 @@ export function buildLowContentSessionIds(groups, filters = {}, defaults = {}) {
     ?? 6;
   const tokenMin = toOptionalPositiveNumber(filters.tokenMin);
 
-  return [...new Set(flattenSessions(groups)
+  return [...new Set(buildSessionCatalog(groups)
+    .filter((session) => matchesAgentScope(session, filters))
     .filter((session) => matchesSessionBaseFilters(session, filters))
     .map(normalizeSessionForWorkspace)
     .filter((session) => {
@@ -660,7 +753,7 @@ export function buildStreamScope({
     subtitle: [
       PLATFORM_LABELS[scopePlatform] || "跨平台",
       QUICK_FILTER_LABELS[quickFilter] || QUICK_FILTER_LABELS.all,
-      mode || "observe",
+      mode === "raw" ? "原始记录" : "观测事件",
     ].join(" · "),
     tags: [query || "", activeSession?.cwd || ""].filter(Boolean),
   };

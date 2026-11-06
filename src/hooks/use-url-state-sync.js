@@ -12,24 +12,20 @@ export function useUrlStateSync({
   sessionFilters,
 }) {
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const nextSearch = buildUrlSearch({
-        dataSource,
-        tab,
-        selectedSessionId,
-        mode,
-        quickFilter,
-        tokenThreshold,
-        streamFilters,
-        sessionFilters,
-      });
-      const currentSearch = String(window.location.search || "").replace(/^\?/, "");
-      if (nextSearch === currentSearch) return;
-      const nextUrl = nextSearch ? `${window.location.pathname}?${nextSearch}` : window.location.pathname;
-      window.history.replaceState(null, "", nextUrl);
-    }, 150);
-
-    return () => window.clearTimeout(timer);
+    const nextSearch = buildUrlSearch({
+      dataSource,
+      tab,
+      selectedSessionId,
+      mode,
+      quickFilter,
+      tokenThreshold,
+      streamFilters,
+      sessionFilters,
+    });
+    const currentSearch = String(window.location.search || "").replace(/^\?/, "");
+    if (nextSearch === currentSearch) return;
+    const nextUrl = nextSearch ? `${window.location.pathname}?${nextSearch}` : window.location.pathname;
+    window.history.replaceState(null, "", nextUrl);
   }, [
     dataSource,
     tab,
@@ -47,6 +43,7 @@ export function useUrlStateSync({
     sessionFilters.query,
     sessionFilters.platform,
     sessionFilters.namedOnly,
+    sessionFilters.agentScope,
     sessionFilters.groupBy,
     sessionFilters.tokenMin,
     sessionFilters.tokenMax,

@@ -23,15 +23,15 @@ const SESSION_ANNOTATIONS_FILE = process.env.OBSERVER_SESSION_ANNOTATIONS_FILE
   || path.join(DATA_DIR, "session-annotations.json");
 const DIALOGUE_SEARCH_DB = process.env.OBSERVER_DIALOGUE_SEARCH_DB
   || path.join(DATA_DIR, "dialogue-search.sqlite");
-const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "scan").trim().toLowerCase() === "sqlite"
-  ? "sqlite"
-  : "scan";
+const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "sqlite").trim().toLowerCase() === "scan"
+  ? "scan"
+  : "sqlite";
 const SOURCE_ADAPTERS_FILE = process.env.OBSERVER_SOURCE_ADAPTERS_FILE || "";
 
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
-const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jsonl");
+const CODEX_SESSION_INDEX = process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
 const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(os.homedir(), ".codex", "config.toml");
 

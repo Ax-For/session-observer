@@ -6,6 +6,7 @@ import {
   buildLocalStreamPayload,
   buildLowContentSessionIds,
   buildSessionSections,
+  buildSessionCatalog,
   buildSessionWorkspaceIndex,
   buildSessionWorkspaceTree,
   buildStreamSessionRailItems,
@@ -193,6 +194,40 @@ describe("buildDashboardSummary", () => {
 });
 
 describe("buildSessionSections", () => {
+  test("defaults to main sessions and exposes children without mixing their token totals", () => {
+    const groups = { "/repo": [
+      { sessionId: "main", sessionTitle: "Main", sourceType: "codex", latest: "2026-11-05T00:00:00Z", aggregateToken: { total: 100 } },
+      { sessionId: "child", parentSessionId: "main", sourceType: "codex", latest: "2026-11-05T00:01:00Z", aggregateToken: { total: 20 } },
+      { sessionId: "nested", parentSessionId: "child", sourceType: "codex", aggregateToken: { total: 10 } },
+      { sessionId: "orphan", isSubagent: true, sourceType: "codex", aggregateToken: { total: 5 } },
+    ] };
+    const catalog = buildSessionCatalog(groups);
+    expect(catalog.find((item) => item.sessionId === "nested").rootSessionId).toBe("main");
+    expect(catalog.find((item) => item.sessionId === "child").parentTitle).toBe("Main");
+    const main = buildSessionSections(groups).flatMap((section) => section.sessions);
+    expect(main).toHaveLength(1);
+    expect(main[0]).toEqual(expect.objectContaining({ sessionId: "main", totalTokens: 100, childSessionCount: 2 }));
+    const children = buildSessionSections(groups, { agentScope: "children" }).flatMap((section) => section.sessions);
+    expect(children).toHaveLength(3);
+    expect(children.reduce((sum, item) => sum + item.totalTokens, 0)).toBe(35);
+    expect(buildSessionSections(groups, { agentScope: "all" }).flatMap((section) => section.sessions)).toHaveLength(4);
+    expect(buildLowContentSessionIds(groups)).toEqual(["main"]);
+  });
+
+  test("keeps same-named child agents distinct and handles invalid ancestry", () => {
+    const groups = { "/repo": [
+      { sessionId: "main", parentSessionId: "main", sessionTitle: "Main" },
+      { sessionId: "a", parentSessionId: "main", sessionTitle: "Worker" },
+      { sessionId: "b", parentSessionId: "main", sessionTitle: "Worker" },
+      { sessionId: "c", parentSessionId: "missing", sessionTitle: "Worker" },
+      { sessionId: "d", parentSessionId: "e" },
+      { sessionId: "e", parentSessionId: "d" },
+    ] };
+    expect(buildSessionSections(groups).flatMap((section) => section.sessions).map((session) => session.sessionId)).toEqual(["main"]);
+    expect(buildSessionSections(groups, { agentScope: "children" }).flatMap((section) => section.sessions)).toHaveLength(5);
+    expect(buildSessionCatalog(groups).find((session) => session.sessionId === "d").rootSessionId).toBe("");
+  });
+
   test("filters and sorts session groups into workspace sections", () => {
     expect(buildSessionSections(sampleGroups, {
       query: "conversation",
@@ -441,6 +476,60 @@ describe("buildSessionSections", () => {
 });
 
 describe("buildActiveSessionOverview", () => {
+  const nowMs = Date.parse("2026-09-12T08:00:00Z");
+  const recent = "2026-09-12T07:59:00Z";
+
+  test("counts two main sessions rather than their two child agents", () => {
+    const sessions = [
+      { sessionId: "observer", sourceType: "codex", latest: recent },
+      { sessionId: "reader", parentSessionId: "reader", sourceType: "codex", latest: recent },
+      { sessionId: "child-1", parentSessionId: "reader", sourceType: "codex", latest: recent },
+      { sessionId: "child-2", parentSessionId: "reader", sourceType: "codex", latest: recent },
+    ];
+    const before = structuredClone(sessions);
+    const overview = buildActiveSessionOverview(sessions, { nowMs });
+    expect(overview.total).toBe(2);
+    expect(overview.platforms).toEqual([{ key: "codex", sessions: 2 }]);
+    expect(overview.sessions.map((session) => session.sessionId)).toEqual(["observer", "reader"]);
+    expect(overview.sessions.find((session) => session.sessionId === "reader").activeChildCount).toBe(2);
+    expect(sessions).toEqual(before);
+  });
+
+  test("rolls nested child activity into an older root before applying filters", () => {
+    const sessions = [
+      { sessionId: "root", sessionTitle: "Reader", cwd: "/reader", sourceType: "codex", latest: "2026-09-11T08:00:00Z" },
+      { sessionId: "child", parentSessionId: "root", sourceType: "claude", latest: "2026-09-11T08:00:00Z" },
+      { sessionId: "grandchild", parentSessionId: "child", sourceType: "claude", latest: recent },
+    ];
+    const overview = buildActiveSessionOverview(sessions, { nowMs, filters: { query: "Reader", platform: "codex" } });
+    expect(overview.total).toBe(1);
+    expect(overview.latestAt).toBe(recent);
+    expect(overview.sessions[0]).toEqual(expect.objectContaining({
+      sessionId: "root", latest: "2026-09-11T08:00:00Z", activityAt: recent, ageMs: 60000, activeChildCount: 1,
+    }));
+    expect(buildActiveSessionOverview(sessions, { nowMs: nowMs + 1800000 }).total).toBe(0);
+  });
+
+  test("does not count orphan agents, cyclic relations, or duplicate records as main sessions", () => {
+    const main = { sessionId: "main", sourceType: "codex", latest: recent };
+    const overview = buildActiveSessionOverview([
+      main, main,
+      { sessionId: "orphan", parentSessionId: "missing", latest: recent },
+      { sessionId: "cycle-a", parentSessionId: "cycle-b", latest: recent },
+      { sessionId: "cycle-b", parentSessionId: "cycle-a", latest: recent },
+    ], { nowMs });
+    expect(overview.total).toBe(1);
+    expect(overview.sessions[0].sessionId).toBe("main");
+  });
+
+  test("preserves child relationships in locally grouped session data", () => {
+    const groups = buildLocalSessionGroups([
+      { sessionId: "root", sourceType: "codex", time: recent, callType: "User" },
+      { sessionId: "child", parentSessionId: "root", sourceType: "codex", time: recent, callType: "Agent" },
+    ]);
+    expect(buildActiveSessionOverview(groups, { nowMs }).total).toBe(1);
+  });
+
   test("returns sessions updated inside the active window with platform totals", () => {
     const overview = buildActiveSessionOverview(sampleGroups, {
       nowMs: Date.parse("2026-04-19T14:45:10.720Z"),
@@ -681,7 +770,7 @@ describe("buildStreamScope", () => {
       mode: "observe",
     })).toEqual({
       title: "Incident triage",
-      subtitle: "Codex · 告警视图 · observe",
+      subtitle: "Codex · 告警视图 · 观测事件",
       tags: ["incident", "/Users/me/code/session-observer"],
     });
   });

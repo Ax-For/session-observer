@@ -246,7 +246,7 @@ describe("App URL state", () => {
     render(<App />);
 
     expect(await screen.findByDisplayValue("rename")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "更多条件" }));
+    fireEvent.click(screen.getByRole("button", { name: "会话更多条件" }));
     expect(await screen.findByLabelText("仅显示已命名")).toBeChecked();
     expect(screen.getByDisplayValue("Claude Code")).toBeInTheDocument();
   });
@@ -261,7 +261,8 @@ describe("App URL state", () => {
     expect(screen.getByTestId("instrument-rail")).toBeInTheDocument();
     expect(screen.getByTestId("workspace-canvas")).toHaveAttribute("data-workbench-view", "stream");
     expect(screen.getByRole("radio", { name: "事件流" })).toBeChecked();
-    expect(screen.getByText("SESSION OBSERVER")).toBeInTheDocument();
+    expect(screen.getByText("Session Observer")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
   });
 
   test("writes key workspace state back into the URL", async () => {
@@ -364,7 +365,7 @@ describe("App URL state", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Token 账本" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "用量分析" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Token" })).toBeChecked();
     await waitFor(() => {
       expect(window.location.search).toContain("tab=tokens");
@@ -379,7 +380,7 @@ describe("App URL state", () => {
     expect(await screen.findByRole("heading", { name: "运行总览" })).toBeInTheDocument();
     await waitForStartupTimers();
 
-    expect(fetchedUrls().sort()).toEqual(["/api/codex-usage", "/api/observability"]);
+    expect(fetchedUrls().sort()).toEqual(["/api/codex-usage", "/api/diagnostics", "/api/library", "/api/observability"]);
   });
 
   test("loads only session data when refreshing directly into sessions", async () => {
@@ -387,10 +388,10 @@ describe("App URL state", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("搜索会话")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "搜索会话" })).toBeInTheDocument();
     await waitForStartupTimers();
 
-    expect(fetchedUrls()).toEqual(["/api/sessions"]);
+    expect(fetchedUrls().sort()).toEqual(["/api/diagnostics", "/api/library", "/api/sessions"]);
   });
 
   test("maps retired insight URLs to the consolidated overview", async () => {

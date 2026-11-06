@@ -193,6 +193,7 @@ describe("conversation-models", () => {
         callType: "Tool_Result",
         toolName: "Tool",
         content: "Chunk ID: deadbeef\nProcess exited with code 1\nOutput:\nError: command failed",
+        exitCode: 1,
       },
     ]);
 
@@ -274,6 +275,7 @@ describe("conversation-models", () => {
         callType: "Tool_Result",
         toolName: "Tool",
         content: "Process exited with code 1\nError: failed",
+        isError: true,
       },
       {
         time: "2026-04-19T10:00:04.000Z",

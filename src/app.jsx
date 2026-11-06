@@ -22,21 +22,23 @@ import { Notifications, notifications } from "@mantine/notifications";
 import { useLocalStorage } from "@mantine/hooks";
 import {
   IconActivity,
+  IconBookmark,
   IconAdjustmentsHorizontal,
   IconAlertCircle,
-  IconChartBar,
-  IconClock,
-  IconMessageCircle,
+  IconChevronRight,
   IconMoon,
-  IconRefresh,
   IconSearch,
   IconStack2,
   IconSun,
   IconX,
 } from "@tabler/icons-react";
 import { apiClient } from "./api/client";
-import { formatNumber } from "./lib/formatters";
-import { hydrateDialogueEvents } from "./lib/conversation-hydration";
+import { formatNumber, shortSessionId } from "./lib/formatters";
+import { mergeEventPages } from "./lib/event-pages";
+import { BookmarkLibrary, LibraryProvider, SavedViews } from "./components/analysis/library-context";
+import { DiagnosticsDrawer } from "./components/analysis/analysis-panels";
+import { InterfaceMotionProvider, MotionSkeleton, RefreshIcon, ViewTransition } from "./components/interface-motion";
+import { AnimatedSymbol } from "./components/animated-symbol";
 import {
   DEFAULT_SESSION_FILTERS,
   DEFAULT_STREAM_FILTERS,
@@ -48,6 +50,8 @@ import {
   buildDashboardSummary,
   buildLowContentSessionIds,
   buildSessionSections,
+  buildSessionCatalog,
+  buildSessionRelations,
   buildSessionWorkspaceIndex,
   buildSessionWorkspaceTree,
   buildStreamSessionRailItems,
@@ -65,17 +69,17 @@ import { useUrlStateSync } from "./hooks/use-url-state-sync";
 const DATA_SOURCE = "server";
 const EMPTY_LOCAL_EVENTS = [];
 const NAV_ITEMS = [
-  { value: "overview", label: "总览", detail: "实时态势", shortcut: "1", icon: IconActivity },
-  { value: "tokens", label: "Token", detail: "用量与成本", shortcut: "2", icon: IconChartBar },
-  { value: "stream", label: "事件流", detail: "检索与追踪", shortcut: "3", icon: IconClock },
-  { value: "sessions", label: "会话", detail: "归档与详情", shortcut: "4", icon: IconMessageCircle },
+  { value: "overview", label: "总览", detail: "运行总览", shortcut: "1", symbol: "activity" },
+  { value: "tokens", label: "Token", detail: "用量分析", shortcut: "2", symbol: "barChart" },
+  { value: "stream", label: "事件流", detail: "检索与追踪", shortcut: "3", symbol: "list" },
+  { value: "sessions", label: "会话", detail: "归档与详情", shortcut: "4", symbol: "messageCircle" },
 ];
 
 const VIEW_META = {
-  overview: { eyebrow: "01 / PULSE", title: "运行总览", description: "活跃会话、使用节奏与服务状态" },
-  tokens: { eyebrow: "02 / LEDGER", title: "Token 账本", description: "用量构成、趋势与成本归因" },
-  stream: { eyebrow: "03 / LIVE", title: "事件流", description: "最近事件、搜索与会话上下文" },
-  sessions: { eyebrow: "04 / LIBRARY", title: "会话管理", description: "检索、分组与完整对话" },
+  overview: { title: "运行总览", description: "今日使用情况与最近活动" },
+  tokens: { title: "用量分析", description: "Token、缓存与成本归因" },
+  stream: { title: "事件检索", description: "用户与 Agent 问答记录" },
+  sessions: { title: "会话管理", description: "主会话、子 Agent 与完整对话" },
 };
 
 const StreamWorkspace = lazy(() => import("./components/stream-workspace").then((module) => ({
@@ -95,11 +99,13 @@ const ConversationDrawer = lazy(() => import("./components/conversation-drawer")
 })));
 
 const theme = createTheme({
-  primaryColor: "teal",
-  defaultRadius: "md",
-  fontFamily: "Manrope, PingFang SC, Hiragino Sans GB, sans-serif",
+  primaryColor: "blue",
+  defaultRadius: "sm",
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+  fontSizes: { xs: "12px", sm: "13px", md: "14px", lg: "16px", xl: "20px" },
   headings: {
-    fontFamily: "Sora, Manrope, PingFang SC, sans-serif",
+    fontFamily: 'inherit',
+    sizes: { h1: { fontSize: "24px" }, h2: { fontSize: "18px" }, h3: { fontSize: "15px" } },
   },
 });
 
@@ -177,7 +183,7 @@ export function App() {
   const [tab, setTab] = useState(initialUrlState.tab);
   const [themeMode, setThemeMode] = useLocalStorage({
     key: "observer-theme-mode",
-    defaultValue: "dark",
+    defaultValue: "light",
   });
   const [mode, setMode] = useState(initialUrlState.mode);
   const [quickFilter, setQuickFilter] = useState(initialUrlState.quickFilter);
@@ -195,14 +201,24 @@ export function App() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sessionFiltersOpen, setSessionFiltersOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [bookmarksOpen, setBookmarksOpen] = useState(false);
+  const [capabilities, setCapabilities] = useState(null);
+  useEffect(() => { apiClient.fetchDiagnostics().then(setCapabilities).catch(() => {}); }, []);
   const [detailEvent, setDetailEvent] = useState(null);
   const [sessionDetailSeed, setSessionDetailSeed] = useState(null);
   const [sessionDetailEvents, setSessionDetailEvents] = useState([]);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
   const [sessionDetailOrder, setSessionDetailOrder] = useState("desc");
+  const [dialogueFocus, setDialogueFocus] = useState(null);
+  const streamReturn = useRef(null);
+  const streamScrollState = useRef(0);
+  useEffect(() => { streamScrollState.current = 0; }, [streamFilters.query, streamFilters.model, streamFilters.type, streamFilters.platform]);
   const [pendingWorkspaceKey, setPendingWorkspaceKey] = useState("");
   const sessionDetailRequestId = useRef(0);
+  const sessionDetailController = useRef(null);
+  useEffect(() => () => sessionDetailController.current?.abort(), []);
   const [streamSearchDraft, setStreamSearchDraft] = useState(initialUrlState.streamFilters?.query || "");
   const deferredQuery = useDeferredValue(streamFilters.query);
   const submittedStreamQuery = streamFilters.query || "";
@@ -210,7 +226,7 @@ export function App() {
   const streamSearchDirty = normalizedStreamSearchDraft !== submittedStreamQuery.trim();
   const notify = useCallback((options) => notifications.show(options), []);
   const isObservabilityTab = tab === "overview" || tab === "tokens";
-  const { streamPayload, loadingEvents, loadEvents } = useStreamData({
+  const { streamPayload, loadingEvents, loadEvents, cancelEvents, sourceChanged, markSourceChanged, searchProgress } = useStreamData({
     dataSource,
     enabled: tab === "stream",
     mode,
@@ -241,6 +257,7 @@ export function App() {
   });
   const {
     observabilityPayload,
+    observabilityError,
     loadingObservability,
     loadObservability,
     recalculateObservability,
@@ -313,11 +330,15 @@ export function App() {
     mode,
   }), [currentStream.sessions, deferredQuery, mode, quickFilter, selectedSessionId, streamFilters.platform]);
   const streamSessions = useMemo(
-    () => buildStreamSessionRailItems(currentStream.sessions),
-    [currentStream.sessions],
+    () => deferredQuery ? currentStream.sessions.map((session) => ({ ...session,
+      title: session.sessionTitle || session.title || shortSessionId(session.sessionId), latest: session.lastEventTime,
+    })) : buildStreamSessionRailItems(buildSessionCatalog(currentStream.sessions).filter((session) => !session.isSubagent)),
+    [currentStream.sessions, deferredQuery],
   );
 
   const sessionGroups = sessionsPayload.groups;
+  const sessionCatalog = useMemo(() => buildSessionCatalog(sessionGroups), [sessionGroups]);
+  const detailRelations = useMemo(() => buildSessionRelations(sessionCatalog, selectedSessionId), [sessionCatalog, selectedSessionId]);
   const activeOverviewGroups = isObservabilityTab
     ? observabilitySessionGroups
     : tab === "stream"
@@ -351,11 +372,14 @@ export function App() {
     [sessionWorkspaceIndex],
   );
   const selectedDetailSession = useMemo(
-    () => findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed,
-    [selectedSessionId, sessionDetailSeed, sessionSections],
+    () => sessionCatalog.find((session) => session.sessionId === selectedSessionId) || findSessionInSections(sessionSections, selectedSessionId) || sessionDetailSeed,
+    [selectedSessionId, sessionDetailSeed, sessionSections, sessionCatalog],
   );
 
   async function loadSessionDetailEvents(sessionId = selectedSessionId, options = {}) {
+    sessionDetailController.current?.abort();
+    const controller = new AbortController();
+    sessionDetailController.current = controller;
     if (!sessionId) {
       sessionDetailRequestId.current += 1;
       setSessionDetailEvents([]);
@@ -390,36 +414,48 @@ export function App() {
     }
 
     try {
+      if (dialogueFocus?.eventId && !append) {
+        const context = await apiClient.fetchDialogueContext(dialogueFocus.eventId, { signal: controller.signal });
+        if (requestId !== sessionDetailRequestId.current) return null;
+        setSessionDetailEvents(context.events.map((event) => event.eventId === dialogueFocus.eventId
+          ? { ...event, matchOffset: dialogueFocus.matchOffset } : event));
+        setSessionDetailPage({ ...createSessionDetailPage(), total: context.events.length, hasMore: false, focused: true });
+        return context;
+      }
       const payload = await apiClient.fetchEvents({
         sessionId,
         order,
         limit,
-        offset,
+        offset: append && sessionDetailPage.nextCursor ? 0 : offset,
+        cursor: append ? sessionDetailPage.nextCursor : "",
         mode: "raw",
         summary: 0,
-      });
+      }, { signal: controller.signal });
       if (requestId !== sessionDetailRequestId.current) return;
       let nextEvents = payload.events || [];
       let total = Number(payload.totalMatching) || nextEvents.length;
       let hasTurnBoundary = hasVisibleConversationBoundary(nextEvents);
       let boundaryAttempts = 0;
       let boundaryPageHasMore = Boolean(payload.page?.hasMore);
+      let nextCursor = payload.page?.nextCursor;
       while (!append && order === "desc" && !hasTurnBoundary && boundaryAttempts < 4) {
         const boundaryOffset = offset + nextEvents.length;
         const boundaryPayload = await apiClient.fetchEvents({
           sessionId,
           order,
           limit: 160,
-          offset: boundaryOffset,
+          offset: nextCursor ? 0 : boundaryOffset,
+          cursor: nextCursor,
           mode: "raw",
           summary: 0,
-        });
+        }, { signal: controller.signal });
         if (requestId !== sessionDetailRequestId.current) return;
         const boundaryEvents = boundaryPayload.events || [];
         if (!boundaryEvents.length) break;
         nextEvents = [...nextEvents, ...boundaryEvents];
         hasTurnBoundary = hasVisibleConversationBoundary(boundaryEvents);
         boundaryPageHasMore = Boolean(boundaryPayload.page?.hasMore);
+        nextCursor = boundaryPayload.page?.nextCursor;
         total = Math.max(
           total,
           Number(boundaryPayload.totalMatching) || 0,
@@ -428,34 +464,41 @@ export function App() {
         boundaryAttempts += 1;
       }
       const nextOffset = offset + nextEvents.length;
-      const hydratedEvents = await hydrateDialogueEvents(nextEvents);
       if (requestId !== sessionDetailRequestId.current) return;
-      setSessionDetailEvents((current) => (append ? [...current, ...hydratedEvents] : hydratedEvents)
+      setSessionDetailEvents((current) => mergeEventPages(append || options.refresh ? current : [], nextEvents, "desc", 4000, undefined, append ? "end" : "start")
         .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || ""))));
-      setSessionDetailPage({
+      setSessionDetailPage((current) => options.refresh && current.nextCursor ? current : ({
         total,
         offset,
         limit,
         order,
-        hasMore: boundaryPageHasMore || nextOffset < total,
+        hasMore: boundaryPageHasMore,
+        nextCursor,
         nextOffset,
-      });
+      }));
+      return payload;
     } catch (error) {
       if (requestId !== sessionDetailRequestId.current) return;
+      if (error.name === "AbortError") return null;
       notify({
         title: "会话详情加载失败",
         message: String(error.message || error),
         color: "red",
       });
+      return null;
     } finally {
       if (requestId === sessionDetailRequestId.current) setSessionDetailLoading(false);
     }
   }
 
-  async function refreshActiveView() {
+  async function refreshActiveView(change = {}) {
+    const refresh = Boolean(change.reason);
+    if (refresh && submittedStreamQuery.trim() && (tab === "stream" || dialogueFocus)) {
+      markSourceChanged();
+      return true;
+    }
     if (tab === "overview" || tab === "tokens") {
-      await loadObservability();
-      return;
+      return loadObservability();
     }
     if (tab === "sessions") {
       const refreshes = [loadSessions()];
@@ -463,12 +506,13 @@ export function App() {
         refreshes.push(loadSessionDetailEvents(selectedSessionId, {
           append: false,
           order: sessionDetailOrder,
+          refresh,
         }));
       }
-      await Promise.all(refreshes);
-      return;
+      const results = await Promise.all(refreshes);
+      return results.every((result) => result !== null);
     }
-    await loadEvents();
+    return loadEvents({ refresh });
   }
 
   const sourceChangeStream = useSourceChangeStream({
@@ -534,7 +578,7 @@ export function App() {
     if (tab !== "sessions" || !selectedSessionId) return undefined;
     void loadSessionDetailEvents(selectedSessionId, { append: false, order: sessionDetailOrder });
     return undefined;
-  }, [dataSource, selectedSessionId, sessionDetailOrder, tab]);
+  }, [dataSource, selectedSessionId, sessionDetailOrder, tab, dialogueFocus]);
 
   useEffect(() => {
     document.documentElement.dataset.observerTheme = themeMode;
@@ -661,6 +705,11 @@ export function App() {
     if (!sessionId) return;
     const seed = buildSessionDetailSeed(target);
     const preferredOrder = options.order || "desc";
+    if (tab === "stream" && submittedStreamQuery.trim()) {
+      streamReturn.current = { selectedSessionId, scrollTop: document.scrollingElement?.scrollTop || 0 };
+    }
+    setDialogueFocus(target?.searchIndexed && target?.eventId ? { eventId: target.eventId, query: submittedStreamQuery,
+      matchOffset: target.matchOffset || 0 } : null);
     setSessionDetailSeed(seed);
     setSessionDetailOrder(preferredOrder);
     setSelectedSessionId(sessionId);
@@ -668,6 +717,14 @@ export function App() {
     startTransition(() => {
       setTab("sessions");
     });
+  }
+
+  function returnToSearch() {
+    setDialogueFocus(null);
+    setSessionDetailEvents([]);
+    setSelectedSessionId(streamReturn.current?.selectedSessionId || "");
+    setTab("stream");
+    window.requestAnimationFrame(() => window.scrollTo({ top: streamReturn.current?.scrollTop || 0 }));
   }
 
   function focusStreamSession(target) {
@@ -681,13 +738,8 @@ export function App() {
     });
   }
 
-  const canMutateSessions = true;
+  const canMutateSessions = capabilities?.allowSourceMutations === true;
   const activeStreamFilters = [
-    deferredQuery ? {
-      key: "query",
-      label: `搜索 ${deferredQuery}`,
-      clear: clearStreamSearch,
-    } : null,
     streamFilters.model ? {
       key: "model",
       label: `模型 ${streamFilters.model}`,
@@ -764,90 +816,69 @@ export function App() {
     }
   }
 
-  async function openEventDetail(event) {
+  function openEventDetail(event) {
     setDetailEvent(event);
-    if (dataSource !== "server" || !event?.eventId || !event?.contentTruncated) return;
-
-    try {
-      const payload = await apiClient.fetchEventDetail(event.eventId);
-      setDetailEvent((current) => (
-        current?.eventId === event.eventId ? payload.event || current : current
-      ));
-    } catch (error) {
-      notify({
-        title: "事件详情加载失败",
-        message: String(error.message || error),
-        color: "red",
-      });
-    }
   }
 
   const currentView = VIEW_META[tab] || VIEW_META.overview;
 
   return (
     <MantineProvider theme={theme} forceColorScheme={themeMode}>
+      <InterfaceMotionProvider>
       <Notifications position="top-right" />
-      <div className={`observer-root theme-${themeMode} density-compact`}>
+      <LibraryProvider>
+      <div className={`observer-root product-shell theme-${themeMode}`}>
         <AppShell
           layout="alt"
-          header={{ height: 68 }}
-          navbar={{ width: 76, breakpoint: 0 }}
+          header={{ height: 60 }}
+          navbar={{ width: 208, breakpoint: 0 }}
           padding={0}
         >
-          <AppShell.Navbar className="instrument-rail" data-testid="instrument-rail" aria-label="主导航">
-            <div className="instrument-rail__brand" title="Session Observer">
-              <span className="instrument-rail__brand-mark">SO</span>
-              <span className="instrument-rail__brand-line" />
+          <AppShell.Navbar component="nav" className="product-sidebar" data-testid="instrument-rail" aria-label="主导航">
+            <div className="product-brand" title="Session Observer">
+              <span className="product-brand__symbol"><IconActivity size={22} stroke={2} /></span>
+              <div><strong>Session Observer</strong><span>本地 Agent 工作台</span></div>
             </div>
-
-            <div className="instrument-rail__nav" aria-label="主视图" role="radiogroup">
-              {NAV_ITEMS.map(({ value, label, detail, shortcut, icon: Icon }) => {
+            <span className="product-nav-caption">工作空间</span>
+            <div className="product-navigation" aria-label="主视图" role="radiogroup">
+              {NAV_ITEMS.map(({ value, label, detail, symbol }) => {
                 const active = tab === value;
                 return (
-                  <button
-                    key={value}
+                  <AnimatedSymbol key={value} name={symbol} size={26} play={active} render={(events, icon) => <button
+                    {...events}
                     type="button"
                     role="radio"
                     aria-checked={active}
                     aria-label={label}
                     title={`${label} · ${detail}`}
-                    className={`instrument-nav${active ? " is-active" : ""}`}
+                    className={`product-nav-item${active ? " is-active" : ""}`}
                     onClick={() => setTab(value)}
                   >
-                    <span className="instrument-nav__index" aria-hidden="true">{shortcut}</span>
-                    <Icon size={21} stroke={1.7} aria-hidden="true" />
-                    <span className="instrument-nav__label">{label}</span>
-                  </button>
+                    <span {...icon} />
+                    <span>{value === "overview" || value === "tokens" ? detail : value === "stream" ? "事件检索" : "会话管理"}</span>
+                    {active ? <span className="product-nav-item__dot" /> : null}
+                  </button>} />
                 );
               })}
             </div>
 
-            <div className="instrument-rail__footer" title={refreshStatus.title}>
-              <span className={`instrument-rail__signal is-${refreshStatus.tone}`} />
-              <IconStack2 size={17} stroke={1.7} aria-hidden="true" />
-              <strong>{formatNumber(cachedFileCount)}</strong>
-              <small>files</small>
+            <div className="product-sidebar__utilities">
+              <button type="button" aria-label="打开消息书签" onClick={() => setBookmarksOpen(true)}><IconBookmark size={18} />消息书签</button>
+              <button type="button" onClick={() => setDiagnosticsOpen(true)}><IconActivity size={18} />服务诊断</button>
+            </div>
+            <div className="product-local-state" title={refreshStatus.title}>
+              <div><IconStack2 size={17} /><strong>本地数据</strong><span className={`refresh-status-dot is-${refreshStatus.tone}`} /></div>
+              <span>Codex · Claude Code</span>
+              <small>{formatNumber(cachedFileCount)} 个文件 · 按需读取</small>
             </div>
           </AppShell.Navbar>
 
-          <AppShell.Header className="command-header">
-            <div className="command-header__inner">
-              <div className="command-header__identity">
-                <div className="command-header__product">
-                  <Text>SESSION OBSERVER</Text>
-                  <span>LOCAL AGENT TELEMETRY</span>
-                </div>
-                <span className="command-header__divider" />
-                <div className="command-header__view">
-                  <Text className="command-header__eyebrow">{currentView.eyebrow}</Text>
-                  <div className="command-header__title-line">
-                    <Title order={1} className="command-header__view-title">{currentView.title}</Title>
-                    <Text>{currentView.description}</Text>
-                  </div>
-                </div>
+          <AppShell.Header className="product-topbar">
+            <div className="product-topbar__inner">
+              <div className="product-breadcrumb">
+                <span>工作空间</span><IconChevronRight size={14} /><strong>{currentView.title}</strong>
               </div>
-
-                <Group gap={6} align="center" className="command-header__actions" wrap="nowrap">
+                <Group gap={8} align="center" className="product-topbar__actions" wrap="nowrap">
                   <Badge
                     radius="sm"
                     variant="outline"
@@ -863,11 +894,11 @@ export function App() {
                     title="立即刷新当前视图"
                     radius="sm"
                     variant="subtle"
-                    color="teal"
+                    color="blue"
                     size="lg"
                     onClick={refreshCurrentView}
                   >
-                    <IconRefresh className={currentViewLoading ? "refresh-action-icon is-loading" : "refresh-action-icon"} size={18} />
+                    <RefreshIcon loading={currentViewLoading} />
                   </ActionIcon>
                   <ActionIcon aria-label="切换主题" title="切换主题" radius="sm" variant="subtle" color="gray" size="lg" onClick={toggleTheme}>
                     {themeMode === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}
@@ -879,11 +910,21 @@ export function App() {
             </div>
           </AppShell.Header>
 
-          <AppShell.Main className="workspace-canvas" data-testid="workspace-canvas" data-workbench-view={tab}>
-            <Stack gap="md" className="app-main">
+          <AppShell.Main className="product-canvas" data-testid="workspace-canvas" data-workbench-view={tab}>
+            <Stack component={ViewTransition} viewKey={tab} gap="md" className="app-main">
+              <header className="product-page-heading">
+                <div><Title order={1}>{currentView.title}</Title><Text>{currentView.description}</Text></div>
+                <span>{new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span>
+              </header>
               {tab === "overview" || tab === "tokens" ? (
                 <Suspense fallback={<WorkspaceFallback label="正在加载可观测视图…" />}>
-                  <ObservabilityWorkspace
+                  {!observabilityPayload.generatedAt ? (
+                    observabilityError ? <Paper className="control-shelf product-error-state" role="alert" p="lg">
+                      <IconAlertCircle size={24} />
+                      <div><Title order={3}>统计暂不可用</Title><Text>{observabilityError}</Text></div>
+                      <Button variant="default" onClick={loadObservability}>重新加载统计</Button>
+                    </Paper> : <WorkspaceFallback label="正在读取本地统计…" />
+                  ) : <ObservabilityWorkspace
                     payload={observabilityPayload}
                     view={tab}
                     activeOverview={activeSessionOverview}
@@ -895,7 +936,7 @@ export function App() {
                     onRecalculate={recalculateObservability}
                     onOpenConversation={openConversation}
                     onOpenSessionDetail={openSessionDetail}
-                  />
+                  />}
                 </Suspense>
               ) : tab === "stream" ? (
                 <>
@@ -934,15 +975,21 @@ export function App() {
                           className="control-field control-field--wide stream-search-form__input"
                         />
                         <Button
+                          className="interface-query-button"
                           type="submit"
-                          variant={streamSearchDirty ? "filled" : "light"}
+                          variant="filled"
                           radius="sm"
-                          color="teal"
-                          leftSection={<IconSearch size={15} />}
-                          loading={dataSource === "server" && loadingEvents}
+                          color="blue"
+                          leftSection={loadingEvents ? <RefreshIcon loading size={15} /> : <IconSearch size={15} />}
+                          disabled={dataSource === "server" && loadingEvents}
+                          aria-busy={dataSource === "server" && loadingEvents}
                         >
                           {dataSource === "server" && loadingEvents ? "搜索中" : "搜索"}
                         </Button>
+                        <ActionIcon title="取消检索" aria-label="取消检索" variant="subtle" onClick={cancelEvents}
+                          disabled={!loadingEvents} style={{ visibility: loadingEvents ? "visible" : "hidden" }}>
+                          <IconX size={16} />
+                        </ActionIcon>
                         {submittedStreamQuery || streamSearchDraft ? (
                           <Button
                             type="button"
@@ -1035,10 +1082,23 @@ export function App() {
                   </Paper>
 
                   <Suspense fallback={<WorkspaceFallback label="正在加载事件流…" />}>
+                    <details className="product-disclosure product-saved-views">
+                    <summary>已保存检索</summary>
+                    <SavedViews filters={{ ...streamFilters, q: streamFilters.query, sessionId: selectedSessionId, mode, quickFilter, view: streamView }} onApply={(value) => {
+                      setStreamFilters({ ...DEFAULT_STREAM_FILTERS, ...value, query: value.q || "" });
+                      setStreamSearchDraft(value.q || ""); setSelectedSessionId(value.sessionId || "");
+                      setMode(value.mode || "observe"); setQuickFilter(value.quickFilter || "all");
+                      setStreamView(value.view || (value.mode === "raw" ? "raw" : "activity"));
+                    }} />
+                    </details>
+                    {searchProgress?.phase === "dialogue-cache" && loadingEvents ? <Text size="xs" role="status">正在准备问答缓存：{searchProgress.completedFiles} / {searchProgress.totalFiles} 文件。已完成的文件会保留，取消后可继续。</Text> : null}
+                    {sourceChanged && submittedStreamQuery ? <Group gap="xs"><Text size="xs">日志有更新，当前保留搜索结果。</Text><Button size="compact-xs" variant="light" onClick={() => loadEvents()} loading={loadingEvents}>更新搜索结果</Button></Group> : null}
+                    {(currentStreamIndex.oversizedLines || currentStreamIndex.incomplete) ? <Text size="xs" c="orange">部分源记录解析失败，当前结果可能不完整；原始日志未修改。</Text> : null}
                     <StreamWorkspace
                       scope={streamScope}
                       summary={streamSummary}
                       sessions={streamSessions}
+                      scrollState={streamScrollState}
                       events={currentStream.events}
                       selectedSessionId={selectedSessionId}
                       onSelectSession={selectSession}
@@ -1058,9 +1118,21 @@ export function App() {
               ) : (
                 <>
                   <Paper component="section" aria-label="会话查询" className="control-shelf command-deck command-deck--sessions" radius="md" p="md">
+                    <div className="session-scope-toolbar">
+                      <SegmentedControl
+                        aria-label="会话层级"
+                        size="xs"
+                        value={sessionFilters.agentScope || "main"}
+                        onChange={(agentScope) => setSessionFilters((current) => ({ ...current, agentScope }))}
+                        data={[{ value: "main", label: "主会话" }, { value: "all", label: "全部" }, { value: "children", label: "子 Agent" }]}
+                      />
+                      <Text className="command-deck__summary">
+                        {formatNumber(sessionSections.reduce((sum, section) => sum + section.sessions.reduce((total, session) => total + (session.groupedCount || 1), 0), 0))} 会话
+                      </Text>
+                    </div>
                     <Group wrap="nowrap" align="flex-end" className="session-command-fields session-command-fields--primary">
                       <TextInput
-                        label="搜索会话"
+                        aria-label="搜索会话"
                         placeholder="会话名 / cwd / session ID"
                         leftSection={<IconSearch size={16} />}
                         value={sessionFilters.query}
@@ -1071,7 +1143,7 @@ export function App() {
                         className="control-field control-field--wide"
                       />
                       <Select
-                        label="平台"
+                        aria-label="会话平台"
                         placeholder="全部平台"
                         data={[
                           { value: "codex", label: "Codex" },
@@ -1083,7 +1155,7 @@ export function App() {
                         className="control-field"
                       />
                       <Select
-                        label="分组"
+                        aria-label="分组"
                         placeholder="分组方式"
                         data={[
                           { value: "cwd", label: "工作目录" },
@@ -1095,28 +1167,29 @@ export function App() {
                         className="control-field"
                       />
                       <Group gap="xs" wrap="nowrap" className="session-query-actions">
-                        <Text className="command-deck__summary">
-                          {formatNumber(sessionsPayload.total || sessionSections.reduce((sum, section) => sum + section.total, 0))} 会话
-                        </Text>
-                        <Button
+                        <ActionIcon
                           variant="subtle"
                           radius="sm"
                           color="gray"
-                          leftSection={<IconAdjustmentsHorizontal size={15} />}
+                          aria-label="会话更多条件"
+                          title="会话更多条件"
+                          size="lg"
                           onClick={() => setSessionFiltersOpen(true)}
                         >
-                          更多条件
-                        </Button>
+                          <IconAdjustmentsHorizontal size={18} />
+                        </ActionIcon>
                         {selectedSessionId ? (
-                          <Button
-                            variant="light"
+                          <ActionIcon
+                            variant="subtle"
                             radius="sm"
                             color="gray"
-                            leftSection={<IconX size={14} />}
+                            title="取消会话聚焦"
+                            aria-label={`取消聚焦 ${selectedSessionId.slice(0, 8)}`}
+                            size="lg"
                             onClick={clearSessionFocus}
                           >
-                            取消聚焦 {selectedSessionId.slice(0, 8)}
-                          </Button>
+                            <IconX size={18} />
+                          </ActionIcon>
                         ) : null}
                       </Group>
                     </Group>
@@ -1143,14 +1216,19 @@ export function App() {
 
                   <Suspense fallback={<WorkspaceFallback label="正在加载会话列表…" />}>
                     <SessionWorkspace
+                      canMutate={canMutateSessions}
                       activeOverview={activeSessionOverview}
                       sections={sessionSections}
+                      detailRelations={detailRelations}
                       workspaceIndex={sessionWorkspaceIndex}
                       workspaceTree={sessionWorkspaceTree}
                       selectedIds={selectedSessionIds}
                       selectedSessionId={selectedSessionId}
                       detailSession={selectedDetailSession}
                       detailEvents={sessionDetailEvents}
+                      dialogueFocus={dialogueFocus}
+                      onReturnToSearch={returnToSearch}
+                      onExitDialogueFocus={() => setDialogueFocus(null)}
                       detailLoading={sessionDetailLoading}
                       detailPage={sessionDetailPage}
                       onToggleSelect={toggleSessionSelection}
@@ -1349,14 +1427,23 @@ export function App() {
           </Suspense>
         ) : null}
       </div>
+      <DiagnosticsDrawer opened={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} onCapabilities={setCapabilities} />
+      <BookmarkLibrary opened={bookmarksOpen} onClose={() => setBookmarksOpen(false)} onOpenEvent={openEventDetail} onOpenSession={openSessionDetail} />
+      </LibraryProvider>
+      </InterfaceMotionProvider>
     </MantineProvider>
   );
 }
 
 function WorkspaceFallback({ label }) {
   return (
-    <Paper className="control-shelf" radius="xl" p="xl">
+    <Paper className="control-shelf product-loading-state" radius="md" p="xl" role="status" aria-busy="true">
       <Text c="dimmed">{label}</Text>
+      <div className="product-loading-state__lines" aria-hidden="true">
+        <MotionSkeleton height={100} radius="sm" />
+        <MotionSkeleton height={100} radius="sm" />
+        <MotionSkeleton height={100} radius="sm" />
+      </div>
     </Paper>
   );
 }

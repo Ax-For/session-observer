@@ -16,6 +16,24 @@ const {
   parseCodexLineToEvent,
 } = require("../shared/observer-core");
 
+test("Codex child identity stays pinned to session metadata across inherited turn contexts", () => {
+  const context = { sourceFile: "child.jsonl", sessionId: "unknown" };
+  parseCodexLineToEvent({ type: "session_meta", payload: { id: "child", source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } } }, context);
+  const turn = parseCodexLineToEvent({ type: "turn_context", payload: { thread_id: "parent", model: "gpt-5.5" } }, context);
+  const message = parseCodexLineToEvent({ type: "event_msg", payload: { type: "agent_message", message: "child answer" } }, context);
+  assert.equal(turn.sessionId, "child");
+  assert.equal(message.sessionId, "child");
+  assert.equal(message.parentSessionId, "parent");
+  assert.equal(message.isSubagent, true);
+});
+
+test("Codex subagent provenance is retained even without a known parent", () => {
+  const context = { sourceFile: "child.jsonl" };
+  const event = parseCodexLineToEvent({ type: "session_meta", payload: { id: "orphan", source: { subagent: "review" } } }, context);
+  assert.equal(event.isSubagent, true);
+  assert.equal(buildSessionGroups([event])[0].isSubagent, true);
+});
+
 test("parseCodexLineToEvent normalizes user messages into Prompt events", () => {
   const context = {
     model: "gpt-5.4",
@@ -381,6 +399,16 @@ test("eventMatchesFilters searches only user and agent message content", () => {
   assert.equal(eventMatchesFilters({ callType: "Agent", cwd: "/repo/needle", content: "ordinary answer" }, filters), false);
   assert.equal(eventMatchesFilters({ callType: "Agent", model: "needle-model", content: "ordinary answer" }, filters), false);
   assert.equal(eventMatchesFilters({ callType: "Agent", sessionId: "needle-session", content: "ordinary answer" }, filters), false);
+});
+
+test("dedupeEvents preserves separate calls and usage records with identical content", () => {
+  const base = { sessionId: "s", turnId: "t", time: "2026-01-01T00:00:00Z", content: "same" };
+  assert.equal(dedupeEvents([
+    { ...base, eventId: "a", callType: "Tool_Call", callId: "a" },
+    { ...base, eventId: "b", callType: "Tool_Call", callId: "b" },
+    { ...base, eventId: "c", callType: "Token_Usage" },
+    { ...base, eventId: "d", callType: "Token_Usage" },
+  ]).length, 4);
 });
 
 test("dedupeEvents prefers non-sidechain events when duplicated", () => {

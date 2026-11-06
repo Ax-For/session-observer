@@ -34,6 +34,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:core": "node --test tests/*.test.js",
+    "test:e2e": "playwright test",
+    "test:memory": "node scripts/verify-memory.cjs",
     "lint": "eslint .",
     "lint:strict": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -43,16 +45,18 @@
   "dependencies": {
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource-variable/sora": "^5.2.8",
-    "@mantine/charts": "9.0.2",
     "@mantine/core": "^9.0.2",
     "@mantine/hooks": "^9.0.2",
     "@mantine/notifications": "^9.0.2",
     "@tabler/icons-react": "^3.41.1",
+    "echarts": "6.1.0",
+    "motion": "14.10.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
-    "recharts": "^3.8.1",
-    "remark-gfm": "^4.0.1"
+    "react-useanimations": "3.1.1",
+    "remark-gfm": "^4.0.1",
+    "stream-json": "^1.9.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

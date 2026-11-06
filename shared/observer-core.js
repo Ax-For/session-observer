@@ -10,6 +10,10 @@
   "use strict";
 
   const ALERT_PATTERN = /(error|failed|exception|timeout|invalid|reject|denied|拒绝|失败|错误|异常)/i;
+  const responsePerformanceApi = (() => {
+    if (typeof require === "function") return require("./response-performance");
+    return typeof globalThis !== "undefined" ? globalThis.ObserverResponsePerformance : null;
+  })();
   const traceModelApi = (() => {
     try {
       if (typeof require === "function") return require("./trace-model");
@@ -188,6 +192,13 @@
 
   function isDuplicateEvent(prev, next) {
     if (!prev || !next) return false;
+    if ((prev.callId || next.callId) && prev.callId !== next.callId) return false;
+    if (!["Agent", "Prompt", "User"].includes(prev.callType)) {
+      const sameRecord = Boolean(prev.eventId && prev.eventId === next.eventId);
+      const sidechainMirror = Boolean(prev.turnId && prev.turnId === next.turnId)
+        && (prev.extra || "").startsWith("sidechain/") !== (next.extra || "").startsWith("sidechain/");
+      if (!sameRecord && !sidechainMirror) return false;
+    }
     if (prev.sessionId !== next.sessionId) return false;
     if ((prev.turnId || "") !== (next.turnId || "")) return false;
     if (prev.callType !== next.callType) return false;
@@ -302,6 +313,7 @@
     for (const event of events) {
       const group = groups.get(event.sessionId) || {
         sessionId: event.sessionId,
+        parentSessionId: "",
         sessionTitle: "",
         fallbackTitle: "",
         cwd: "",
@@ -320,6 +332,9 @@
         sourceFiles: new Set(),
       };
       group.count += 1;
+      if (event.parentSessionId) group.parentSessionId = event.parentSessionId;
+      if (event.isSubagent) group.isSubagent = true;
+      if (event.agentId) group.agentId = event.agentId;
       if (event.time && (!group.startedAt || event.time < group.startedAt)) group.startedAt = event.time;
       group.latest = !group.latest || event.time > group.latest ? event.time : group.latest;
       if (event.sessionTitle) group.sessionTitle = event.sessionTitle;
@@ -1295,7 +1310,7 @@
       .map((item) => ({ name: item.name || "unknown", id: item.id || "", input: item.input }));
   }
 
-  function parseCodexLineToEvent(obj, context) {
+  function parseCodexLineToEventRaw(obj, context) {
     const ts = obj.timestamp || "";
     const model = context.model || "unknown";
     const sessionId = context.sessionId || "unknown";
@@ -1311,7 +1326,7 @@
 
     if (obj.type === "turn_context") {
       context.model = obj.payload?.model || context.model;
-      context.sessionId = obj.payload?.thread_id || context.sessionId;
+      context.sessionId = context.sessionMetaId || obj.payload?.thread_id || context.sessionId;
       context.cwd = obj.payload?.cwd || context.cwd;
       return {
         time: ts,
@@ -1336,6 +1351,7 @@
 
     if (obj.type === "session_meta") {
       context.sessionId = obj.payload?.id || context.sessionId;
+      context.sessionMetaId = context.sessionId;
       context.cwd = obj.payload?.cwd || context.cwd;
       context.sessionTitle =
         obj.payload?.title ||
@@ -1510,7 +1526,7 @@
     };
   }
 
-  function parseClaudeCodeLineToEvent(obj, context) {
+  function parseClaudeCodeLineToEventRaw(obj, context) {
     const ts = obj.timestamp || "";
     const sessionId = obj.sessionId || context.sessionId || "unknown";
     const cwd = obj.cwd || context.cwd || "";
@@ -1900,6 +1916,53 @@
       content: summarizeRawObjectForContext(obj, context),
       summary: summarizeRawObjectForContext(obj, context),
     };
+  }
+
+  function enrichParsedEvents(result, obj, context, sourceType) {
+    const payload = obj.payload || obj;
+    const tier = payload.service_tier || obj.message?.service_tier;
+    if (tier) context.serviceTier = tier;
+    const parent = payload.parent_thread_id || payload.source?.subagent?.thread_spawn?.parent_thread_id;
+    if (parent) context.parentSessionId = parent;
+    if (obj.type === "session_meta" && (payload.source?.subagent || payload.source === "subagent")) context.isSubagent = true;
+    const child = String(context.sourceFile || "").match(/[/\\]([^/\\]+)[/\\]subagents[/\\]agent-([^/\\]+)\.jsonl$/);
+    const events = (Array.isArray(result) ? result : [result]).filter(Boolean);
+    const performanceSignal = responsePerformanceApi?.signalForRecord(obj, context, sourceType);
+    if (events[0] && performanceSignal) events[0].performanceSignal = performanceSignal;
+    for (const event of events) {
+      if (context.serviceTier) event.serviceTier = context.serviceTier;
+      if (context.parentSessionId) event.parentSessionId = context.parentSessionId;
+      if (context.isSubagent || (context.parentSessionId && context.parentSessionId !== event.sessionId)) event.isSubagent = true;
+      if (sourceType === "claude" && child) {
+        event.isSubagent = true;
+        event.parentSessionId = child[1];
+        event.agentId = child[2];
+        event.sessionId = `${child[1]}:agent:${child[2]}`;
+      }
+      const resultBlock = obj.message?.content?.find?.((item) => item.type === "tool_result" && item.tool_use_id === event.callId);
+      const error = resultBlock?.is_error ?? payload.is_error;
+      if (typeof error === "boolean") event.isError = error;
+      if (Number.isInteger(payload.exit_code)) event.exitCode = payload.exit_code;
+      // Only explicit per-message USD costs are accepted, never cumulative session totals.
+      if (event.callType === "Token_Usage" && sourceType === "claude" && obj.message?.id && typeof obj.costUSD === "number" && Number.isFinite(obj.costUSD) && obj.costUSD >= 0) {
+        const previous = context.lastCostMessageId === obj.message.id ? context.lastMessageCostUsd || 0 : 0;
+        event.recordedCostUsd = obj.costUSD - previous;
+        event.costSource = "recorded-message-usd";
+      }
+    }
+    if (sourceType === "claude" && obj.message?.id && typeof obj.costUSD === "number" && Number.isFinite(obj.costUSD) && obj.costUSD >= 0) {
+      context.lastCostMessageId = obj.message.id;
+      context.lastMessageCostUsd = obj.costUSD;
+    }
+    return Array.isArray(result) ? events : events[0] || null;
+  }
+
+  function parseCodexLineToEvent(obj, context) {
+    return enrichParsedEvents(parseCodexLineToEventRaw(obj, context), obj, context, "codex");
+  }
+
+  function parseClaudeCodeLineToEvent(obj, context) {
+    return enrichParsedEvents(parseClaudeCodeLineToEventRaw(obj, context), obj, context, "claude");
   }
 
   return {
