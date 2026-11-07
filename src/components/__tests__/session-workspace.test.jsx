@@ -299,6 +299,14 @@ describe("SessionWorkspace", () => {
               content: "Agent 回复 · 已补充详情布局",
             },
             {
+              time: "2026-05-31T10:01:08.000Z",
+              callType: "Agent",
+              sourceType: "codex",
+              model: "gpt-5.4",
+              sessionId: "sess-1",
+              content: "随后检查窄屏的长代码显示",
+            },
+            {
               time: "2026-05-31T10:02:00.000Z",
               callType: "Tool_Call",
               sourceType: "codex",
@@ -325,7 +333,7 @@ describe("SessionWorkspace", () => {
               },
             },
           ]}
-          detailPage={{ total: 5, hasMore: false, nextOffset: 5, limit: 500 }}
+          detailPage={{ total: 6, hasMore: false, nextOffset: 6, limit: 500 }}
           detailLoading={false}
           sections={[]}
           workspaceIndex={[]}
@@ -357,6 +365,9 @@ describe("SessionWorkspace", () => {
     expect(screen.getAllByText(/Agent 回复 · 已补充详情布局/).length).toBeGreaterThan(0);
     expect([...container.querySelectorAll(".session-chat-turn .conv-message-body")]
       .filter((node) => node.textContent.includes("Agent 回复 · 已补充详情布局"))).toHaveLength(1);
+    const continuation = screen.getByText("随后检查窄屏的长代码显示").closest(".conv-row");
+    expect(continuation).toHaveClass("is-grouped");
+    expect(continuation.querySelector("time")).toHaveAttribute("datetime", "2026-05-31T10:01:08.000Z");
     expect(screen.getByText("运行过程")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /用户输入 · 改造详情页/ }));
     expect(container.querySelector(".session-chat-turn__body")).not.toBeInTheDocument();

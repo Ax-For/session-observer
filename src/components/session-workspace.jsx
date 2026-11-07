@@ -58,6 +58,7 @@ import { ConversationEntry } from "./conversation-drawer";
 import { SessionAnalysisPanel } from "./analysis/analysis-panels";
 import { apiClient } from "../api/client";
 import { AnimatedSymbol } from "./animated-symbol";
+import { useInterfaceMotion } from "./interface-motion";
 
 const SESSION_VIRTUAL_THRESHOLD = 24;
 const SESSION_ROW_HEIGHT = 108;
@@ -251,15 +252,16 @@ function groupTurnEntries(turn) {
       ];
   const groups = [];
   for (const entry of source) {
-    const isProcess = entry.kind === "tool" || entry.kind === "thinking";
+    const type = entry.kind === "tool" || entry.kind === "thinking" ? "process" : "messages";
     const previous = groups.at(-1);
-    if (isProcess && previous?.type === "process") {
+    const speaker = previous?.entries[0];
+    if (previous?.type === type && (type === "process" || (
+      speaker.role === entry.role && speaker.sessionId === entry.sessionId && speaker.agentPrefix === entry.agentPrefix
+    ))) {
       previous.entries.push(entry);
       continue;
     }
-    groups.push(isProcess
-      ? { type: "process", entries: [entry] }
-      : { type: "message", entry });
+    groups.push({ type, entries: [entry] });
   }
   return groups;
 }
@@ -325,10 +327,14 @@ function SessionChatTurn({ turn, defaultOpen, query, focus }) {
       </button>
       {opened ? (
         <div className="session-chat-turn__body">
-          {groups.map((group, index) => group.type === "message" ? (
-            <ConversationEntry key={group.entry.id} entry={group.entry} highlightQuery={query} />
+          {groups.map(({ type, entries }) => type === "messages" ? (
+            <div className="session-chat-messages" key={entries[0].id}>
+              {entries.map((entry, index) => (
+                <ConversationEntry key={entry.id} entry={entry} highlightQuery={query} compact continued={index > 0} />
+              ))}
+            </div>
           ) : (
-            <SessionChatProcess key={`${turn.id}-process-${index}`} entries={group.entries} query={query} />
+            <SessionChatProcess key={entries[0].id} entries={entries} query={query} />
           ))}
         </div>
       ) : null}
@@ -524,6 +530,7 @@ function SessionDetailPanel({
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationLimit, setConversationLimit] = useState(8);
   const [chatAwayFromLatest, setChatAwayFromLatest] = useState(false);
+  const motionEnabled = useInterfaceMotion();
   const { data: replayPayload, loading: replayLoading, error: replayError } = useAnalysisRequest(
     (options) => apiClient.fetchSessionReplay(selectedSessionId, 500, options), selectedSessionId,
     `${session?.latest || ""}:${session?.count || 0}`, detailTab === "replay" && Boolean(selectedSessionId),
@@ -543,7 +550,7 @@ function SessionDetailPanel({
   const visibleTurns = dialogueFocus ? matchingTurns : matchingTurns.slice(-conversationLimit);
   const latestConversationTime = turns.at(-1)?.endedAt || turns.at(-1)?.startedAt || "";
 
-  function scrollChatToLatest(behavior = "smooth") {
+  function scrollChatToLatest(behavior = motionEnabled ? "smooth" : "auto") {
     const viewport = chatScrollRef.current;
     if (!viewport) return;
     if (typeof viewport.scrollTo === "function") {
@@ -738,36 +745,38 @@ function SessionDetailPanel({
               setChatAwayFromLatest(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight > 180);
             }}
           >
-            <div className="session-chat-boundary">
-              {dialogueFocus ? <span>命中位置之前的问答</span> : conversationLimit < matchingTurns.length ? (
-                <Button variant="subtle" size="xs" color="gray" onClick={() => setConversationLimit((current) => current + 8)}>
-                  显示更早的 {formatNumber(Math.min(8, matchingTurns.length - conversationLimit))} 轮
-                </Button>
-              ) : page?.hasMore ? (
-                <Button variant="subtle" size="xs" color="gray" loading={loading} onClick={onLoadMore}>
-                  从文件读取更早记录
-                </Button>
-              ) : (
-                <span>会话开始 · {presentation.first ? formatDateTime(presentation.first) : "时间未知"}</span>
-              )}
+            <div className="session-chat-reader">
+              <div className="session-chat-boundary">
+                {dialogueFocus ? <span>命中位置之前的问答</span> : conversationLimit < matchingTurns.length ? (
+                  <Button variant="subtle" size="xs" color="gray" onClick={() => setConversationLimit((current) => current + 8)}>
+                    显示更早的 {formatNumber(Math.min(8, matchingTurns.length - conversationLimit))} 轮
+                  </Button>
+                ) : page?.hasMore ? (
+                  <Button variant="subtle" size="xs" color="gray" loading={loading} onClick={onLoadMore}>
+                    从文件读取更早记录
+                  </Button>
+                ) : (
+                  <span>会话开始 · {presentation.first ? formatDateTime(presentation.first) : "时间未知"}</span>
+                )}
+              </div>
+              {visibleTurns.map((turn, index) => (
+                <SessionChatTurn
+                  key={turn.id}
+                  turn={turn}
+                  defaultOpen={index >= visibleTurns.length - 3}
+                  query={conversationQuery || dialogueFocus?.query || ""}
+                  focus={Boolean(dialogueFocus && turn.entries.some((entry) => entry.eventId === dialogueFocus.eventId))}
+                />
+              ))}
+              {!loading && !visibleTurns.length ? <Text className="session-detail-empty">当前加载范围没有可显示的问答。</Text> : null}
+              {loading && !visibleTurns.length ? <Text className="session-detail-empty">正在加载最近对话...</Text> : null}
+              {visibleTurns.length ? <div className="session-chat-latest-marker">{dialogueFocus ? "附近对话结束" : "最近活动"} · {formatDateTime(presentation.latest)}</div> : null}
             </div>
-            {visibleTurns.map((turn, index) => (
-              <SessionChatTurn
-                key={turn.id}
-                turn={turn}
-                defaultOpen={index >= visibleTurns.length - 3}
-                query={conversationQuery || dialogueFocus?.query || ""}
-                focus={Boolean(dialogueFocus && turn.entries.some((entry) => entry.eventId === dialogueFocus.eventId))}
-              />
-            ))}
-            {!loading && !visibleTurns.length ? <Text className="session-detail-empty">当前加载范围没有可显示的问答。</Text> : null}
-            {loading && !visibleTurns.length ? <Text className="session-detail-empty">正在加载最近对话...</Text> : null}
-            {visibleTurns.length ? <div className="session-chat-latest-marker">{dialogueFocus ? "附近对话结束" : "最近活动"} · {formatDateTime(presentation.latest)}</div> : null}
           </div>
           {chatAwayFromLatest && !dialogueFocus ? (
             <Button
               className="session-chat-jump-latest"
-              variant="filled"
+              variant="default"
               size="xs"
               leftSection={<IconArrowDown size={14} />}
               onClick={() => scrollChatToLatest()}

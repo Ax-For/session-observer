@@ -421,16 +421,7 @@ body { font-size: 14px; background: var(--bg); }
 .product-shell .search-context-toolbar { padding: 4px 0 !important; gap: 8px; }
 .product-shell .search-context-toolbar .mantine-Text-root { font-size: 11px; }
 .product-shell .search-context-toolbar button { height: 28px; min-height: 28px; padding-inline: 8px; font-size: 11px; }
-.product-shell .session-chat-scroll { background: var(--panel); border: 0; border-radius: 0; }
-.product-shell .session-chat-turn__body { --session-chat-font-size: 14px; --session-chat-line-height: 1.75; padding: 18px 8px; gap: 20px; }
-.product-shell .session-chat-turn__toggle { min-height: 54px; padding: 10px; background: var(--panel-soft); }
-.product-shell .session-chat-turn__summary strong { font-size: 12px; }
-.product-shell .session-chat-turn__summary em, .product-shell .session-detail-tab-toolbar > span { font-size: 11px; }
-.product-shell .session-chat-turn__number { width: 26px; height: 26px; font-size: 10px; background: var(--panel); border-radius: 4px; }
-.product-shell .session-chat-turn__body .conv-surface--user { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 6px; }
-.product-shell .session-chat-turn__body .conv-surface--agent { max-width: calc(100% - 38px); }
-.product-shell .session-chat-turn__body .conv-message-head { font-size: 11px; color: var(--text-faint); margin-bottom: 8px; }
-.product-shell .session-chat-turn__body .conv-meta { font-size: 11px; }
+.product-shell .session-detail-tab-toolbar > span { font-size: 11px; }
 .product-shell .session-chat-process { background: var(--panel-soft); }
 .product-shell .session-chat-process summary span, .product-shell .session-chat-process summary em { font-size: 11px; }
 .product-shell .session-chat-process__entries .conv-code { font-size: 12px; }

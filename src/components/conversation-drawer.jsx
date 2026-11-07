@@ -3,7 +3,7 @@ import { Badge, Button, Drawer, Group, Paper, Progress, ScrollArea, Select, Slid
 import { IconCopy, IconPhoto } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { formatBytes, formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
+import { formatBytes, formatDateTime, formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
 import { buildConversationTurns, looksLikeMarkdownContent, parseConversationMessageContent } from "../lib/conversation-models";
 import { loadDialogueBody } from "../lib/dialogue-body-loader";
 import { JsonCodeBlock } from "./json-code-block";
@@ -670,7 +670,7 @@ function DialogueBody({ entry, highlightQuery }) {
   </div>;
 }
 
-export function ConversationEntry({ entry, highlightQuery = "" }) {
+export function ConversationEntry({ entry, highlightQuery = "", compact = false, continued = false }) {
   if (entry.kind === "tool") {
     return (
       <div className={`conv-row conv-row--tool conv-row--${entry.category} ${entry.isError ? "is-error" : ""}`}>
@@ -706,19 +706,26 @@ export function ConversationEntry({ entry, highlightQuery = "" }) {
     );
   }
 
+  const isUser = entry.role === "user";
+  const grouped = compact ? continued : entry.grouped;
+  const speaker = isUser ? "用户" : (compact && entry.agentPrefix) || "Agent";
+  const showSpeaker = compact ? !continued : !isUser;
+  const fullTime = formatFullDateTime(entry.time);
   return (
-    <div data-dialogue-event-id={entry.eventId} className={`conv-row conv-row--message conv-row--${entry.role} ${entry.grouped ? "is-grouped" : ""}`}>
-      <div className={`conv-avatar conv-avatar--${entry.role}`}>{entry.role === "user" ? "U" : "A"}</div>
+    <div data-dialogue-event-id={entry.eventId} className={`conv-row conv-row--message conv-row--${entry.role}${grouped ? " is-grouped" : ""}`}>
+      <div className={`conv-avatar conv-avatar--${entry.role}`} aria-hidden="true">{isUser ? "U" : "A"}</div>
       <div
         className={`conv-surface conv-surface--${entry.role}`}
-        aria-label={entry.role === "user" ? "用户消息" : "Agent 消息"}
+        aria-label={isUser ? "用户消息" : "Agent 消息"}
       >
-        <div className={`conv-message-head${entry.role === "user" ? " conv-message-head--user" : ""}`}>
-          {entry.role === "agent" ? <Text className="conv-role-label">Agent</Text> : null}
+        <div className={`conv-message-head${isUser ? " conv-message-head--user" : ""}`}>
+          {showSpeaker ? <Text className="conv-role-label" title={compact ? speaker : undefined}>{speaker}</Text> : null}
           <BookmarkButton entry={entry} />
-          <Text className="conv-meta">{formatFullDateTime(entry.time)}</Text>
+          <Text component="time" dateTime={entry.time || undefined} title={compact ? fullTime : undefined} className="conv-meta">
+            {compact ? formatDateTime(entry.time) : fullTime}
+          </Text>
         </div>
-        {entry.agentPrefix ? (
+        {!compact && entry.agentPrefix ? (
           <Text className="conv-agent-prefix">[agent={entry.agentPrefix}]</Text>
         ) : null}
         <DialogueBody entry={entry} highlightQuery={highlightQuery} />
