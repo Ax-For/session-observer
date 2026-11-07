@@ -4,7 +4,7 @@ import { IconDownload, IconRefresh } from "@tabler/icons-react";
 import { ChartPlot } from "./data-chart";
 import { apiClient } from "../api/client";
 import { useDailyHistory } from "../hooks/use-daily-history";
-import { downloadBlob, formatDateTime, formatHumanNumber, formatNumber } from "../lib/formatters";
+import { downloadBlob, formatDateTime, formatHumanNumber, formatNumber, PLATFORM_OPTIONS } from "../lib/formatters";
 import { modeEvidence, modeLabel } from "../lib/execution-mode-labels";
 import "../styles/daily-history.css";
 
@@ -116,7 +116,7 @@ export function DailyHistoryPanel() {
         <label>开始日期<input type="date" value={values.from} onChange={(e) => updateDraft({ from: e.target.value })} /></label>
         <label>结束日期<input type="date" value={values.to} onChange={(e) => updateDraft({ to: e.target.value })} /></label>
         <label>来源<select value={values.source} onChange={(e) => updateDraft({ source: e.target.value, model: "" })}>
-          <option value="">全部来源</option><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+          <option value="">全部来源</option>{PLATFORM_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>模型<select value={values.model} onChange={(e) => updateDraft({ model: e.target.value })}>
           <option value="">全部模型</option>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
         <Button size="xs" variant="default" type="submit" disabled={loading}>应用筛选</Button>

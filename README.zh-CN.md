@@ -1,6 +1,6 @@
 # Session Observer
 
-**面向 Codex 与 Claude Code 的本地优先会话观测工作台。** 将散落在本机的 JSONL 会话记录整理成语义事件流、可搜索的会话库、Token 与成本账本，以及运行健康面板，全程不需要上传 prompt、工具输出或源码路径。
+**面向 Codex、Claude Code 和 Qwen Code 的本地优先会话观测工作台。** 将散落在本机的 JSONL 会话记录整理成语义事件流、可搜索的会话库、Token 与成本账本，以及运行健康面板，全程不需要上传 prompt、工具输出或源码路径。
 
 [![CI](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -158,7 +158,7 @@ npm run test:memory    # 400 MiB 密集日志内存验收
 server.js              本地 HTTP API 与前端静态资源服务
 manage.sh              服务生命周期和内存约束参数
 server/                按需扫描、源文件监听、摘要缓存和路由
-shared/                Codex / Claude Code 解析、去重、Token、Trace 和聚合逻辑
+shared/                原生会话解析、去重、Token、Trace 和聚合逻辑
 src/app.jsx            React 外壳、URL 状态和工作区编排
 src/components/        总览、Token、事件流、会话库和详情工作面
 src/hooks/             数据加载、源文件变化、分页和会话操作
@@ -176,6 +176,7 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 | `PORT` | `8787` | HTTP 端口 |
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex 会话目录 |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code 项目目录 |
+| `QWEN_PROJECTS_DIR` | `~/.qwen/projects` | Qwen Code 项目目录，跟随 `QWEN_RUNTIME_DIR` 或 `QWEN_HOME` |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex 标题元数据数据库 |
 | `OBSERVER_DAILY_TOKEN_BUDGET` | 未启用 | 当天 Token 预算 |
 | `OBSERVER_WEEKLY_TOKEN_BUDGET` | 未启用 | 近 7 天 Token 预算 |
@@ -183,7 +184,7 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 | `OBSERVER_WEEKLY_COST_BUDGET_USD` | 未启用 | 近 7 天估算成本预算 |
 | `OBSERVER_DIALOGUE_SEARCH` | `sqlite` | 默认使用轻量问答正文缓存；`scan` 可退回旧的有限扫描模式 |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | 未启用 | 附加通用 JSONL 数据源清单 |
-| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | Codex / Claude Code 本机目录列表；默认随 `OBSERVER_DATA_DIR` |
+| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | 原生来源的本机目录列表，默认随 `OBSERVER_DATA_DIR` |
 | `OBSERVER_ACCESS_TOKEN` | 未启用 | 非本机监听必须设置；HTTP Basic 密码 |
 | `OBSERVER_ALLOWED_HOSTS` | 未启用 | 逗号分隔的额外 Host 白名单，含端口 |
 | `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | 显式设为 `1` 才允许修改、删除原始会话 |
@@ -198,11 +199,14 @@ PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```json
 {
   "codex": ["default", "/absolute/path/another-codex/sessions"],
-  "claude": ["default", "/absolute/path/another-claude/projects"]
+  "claude": ["default", "/absolute/path/another-claude/projects"],
+  "qwen": ["default", "/absolute/path/another-qwen/projects"]
 }
 ```
 
 每个来源可列 1–8 个位置。`default` 保留当前默认目录（包括单目录环境变量覆盖），省略它可替换默认目录。名为 `sessions` 的 Codex 目录会同时发现同级 `archived_sessions`。工作台的 **运行总览 → 服务状态 → 数据目录** 可检查生效的目录；普通会话日志参与实时和回放，归档和压缩日志参与历史和基线。历史去重按原生响应 ID（旧 Codex 按会话与响应时间）进行。
+
+Qwen Code 的 `<项目>/chats/*.jsonl` 接入事件流、会话回放、Token 账本和实时测速，`chats/archive/*.jsonl` 纳入每日历史与模型基线。测速优先使用日志记录的请求耗时，推理速度与费用按已记录的用量和本地价格显示。原始会话以只读方式访问。
 
 长期汇总位于 `.runtime/performance-history.sqlite`（或 `OBSERVER_RUNTIME_DIR`），只保留每日数字、来源、模型与去重哈希。需清除本地汇总时，先停止服务，移走该数据库及同名 `-wal`、`-shm` 文件；重启后会从仍可读取的日志重建。
 

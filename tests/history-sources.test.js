@@ -49,3 +49,20 @@ test("changing a directory's native parser also changes its summary cache signat
   const claude = listSourceFileRecords({ locations: [{ path: root, sourceType: "claude" }], custom: [] });
   assert.notEqual(codex[0].signature, claude[0].signature);
 });
+
+test("Qwen Code discovers chat transcripts, with archived chats restricted to history", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "observer-qwen-roots-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const chats = path.join(root, "project", "chats");
+  const active = path.join(chats, "active.jsonl");
+  const archive = path.join(chats, "archive", "older.jsonl");
+  const unrelated = path.join(root, "project", "internal.jsonl");
+  fs.mkdirSync(path.dirname(archive), { recursive: true });
+  for (const file of [active, archive, unrelated]) fs.writeFileSync(file, "{}\n");
+  fs.symlinkSync(unrelated, path.join(chats, "linked.jsonl"));
+  const locations = resolveSourceLocations({ qwen: root });
+  const files = listSourceFileRecords({ locations, custom: [] });
+  assert.deepEqual(files.map((row) => [row.file, row.sourceType]), [[fs.realpathSync(active), "qwen"]]);
+  assert.deepEqual(listHistoryFileRecords({ locations }).map((row) => [row.file, row.archive]),
+    [[fs.realpathSync(active), false], [fs.realpathSync(archive), true]]);
+});

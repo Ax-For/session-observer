@@ -3,7 +3,7 @@ import { ActionIcon, Table, Tooltip, useComputedColorScheme } from "@mantine/cor
 import { IconChartBar, IconTable } from "@tabler/icons-react";
 import { activityOptions, compositionOptions, platformValues, pricedAmount, trendOptions } from "../lib/chart-options";
 import { createChart } from "../lib/chart-runtime";
-import { formatNumber } from "../lib/formatters";
+import { formatNumber, PLATFORM_OPTIONS } from "../lib/formatters";
 import { useInterfaceMotion } from "./interface-motion";
 
 const builders = { activity: activityOptions, trend: trendOptions, composition: compositionOptions };
@@ -50,7 +50,7 @@ export function ChartPlot({ option, height, label }) {
 function ChartDataTable({ data, kind, metric, height, label }) {
   const isCost = metric === "cost";
   const headers = kind === "activity" ? ["时间", "事件", "Token"]
-    : isCost ? ["时间", "Token", "成本估算 (USD)"] : ["时间", "Codex", "Claude Code", "其他", "合计 Token"];
+    : isCost ? ["时间", "Token", "成本估算 (USD)"] : ["时间", ...PLATFORM_OPTIONS.map(({ label }) => label), "其他", "合计 Token"];
   return (
     <div className="data-chart__table" style={{ height }} tabIndex={0} aria-label={`${label}数据明细`}>
       <Table stickyHeader striped highlightOnHover>
@@ -61,7 +61,7 @@ function ChartDataTable({ data, kind, metric, height, label }) {
           const amount = pricedAmount(row);
           const values = kind === "activity" ? [row.events, row.tokens]
             : isCost ? [row.tokens, amount == null ? "未计价" : `$${Number(amount).toFixed(4)}`]
-              : [parts.codex, parts.claude, parts.other, row.tokens];
+              : [...PLATFORM_OPTIONS.map(({ value }) => parts[value]), parts.other, row.tokens];
           return <Table.Tr key={`${row.time || row.label}-${index}`}>
             <Table.Td>{row.label}</Table.Td>
             {values.map((value, i) => <Table.Td key={i}>{typeof value === "string" ? value : formatNumber(value || 0)}</Table.Td>)}

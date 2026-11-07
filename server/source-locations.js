@@ -6,10 +6,11 @@ function canonical(directory) {
   try { return fs.realpathSync(directory); } catch { return path.resolve(directory); }
 }
 
-function resolveSourceLocations({ codex, claude, manifest = {}, codexConfig }) {
+function resolveSourceLocations({ codex, claude, qwen, manifest = {}, codexConfig }) {
   const roots = [];
   const seen = new Set();
-  for (const [sourceType, fallback] of Object.entries({ codex, claude })) {
+  for (const [sourceType, fallback] of Object.entries({ codex, claude, qwen })) {
+    if (!fallback) continue;
     const locations = manifest[sourceType] ?? ["default"];
     if (!Array.isArray(locations) || locations.length < 1 || locations.length > 8) {
       throw new RangeError("Each source needs one to eight locations");
@@ -53,7 +54,8 @@ function readSmallFile(file, limit = 64 * 1024) {
 let nativeLocations;
 function getNativeLocations() {
   if (nativeLocations) return nativeLocations;
-  const options = { codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, codexConfig: config.CODEX_CONFIG_FILE };
+  const options = { codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, qwen: config.QWEN_PROJECTS_DIR,
+    codexConfig: config.CODEX_CONFIG_FILE };
   try {
     const manifest = JSON.parse(readSmallFile(config.SOURCE_LOCATIONS_FILE));
     if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) throw new RangeError("Expected a source locations object");
@@ -68,8 +70,16 @@ function getNativeLocations() {
 function locationFor(file, roots = getNativeLocations()) {
   return roots.find((root) => {
     const relative = path.relative(root.path, file);
-    return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+      && (root.sourceType !== "qwen" || qwenTranscriptKind(file));
   });
 }
 
-module.exports = { resolveSourceLocations, getNativeLocations, locationFor, readSmallFile };
+function qwenTranscriptKind(file) {
+  if (!file.endsWith(".jsonl")) return null;
+  const directory = path.dirname(file);
+  if (path.basename(directory) === "chats") return "active";
+  return path.basename(directory) === "archive" && path.basename(path.dirname(directory)) === "chats" ? "archive" : null;
+}
+
+module.exports = { resolveSourceLocations, getNativeLocations, locationFor, qwenTranscriptKind, readSmallFile };

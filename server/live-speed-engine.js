@@ -63,7 +63,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       context.project = bounded(path.basename(p.cwd || ""));
       context.parentSessionId = bounded(p.parent_thread_id || p.source?.subagent?.thread_spawn?.parent_thread_id);
     }
-    if (source === "claude" && !context.sessionId && obj.sessionId) context.sessionId = bounded(obj.sessionId);
+    if ((source === "claude" || source === "qwen") && !context.sessionId && obj.sessionId) context.sessionId = bounded(obj.sessionId);
     const signal = signalForRecord(obj, context, source);
     const ms = Date.parse(obj.timestamp);
     if (!Number.isFinite(ms) || ms > clock() + 5000 || ms < clock() - retentionMs) return;
@@ -82,7 +82,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     agent.project = bounded(context.project || path.basename(obj.cwd || p.cwd || "")) || agent.project || "本地工作区";
     agent.title = context.title || agent.title || sessionId;
     agent.parentSessionId = child ? child[1] : context.parentSessionId || "";
-    const model = bounded(p.model || obj.message?.model);
+    const model = bounded(p.model || obj.model || obj.message?.model || signal?.model);
     if (model && model !== "<synthetic>") agent.model = model;
     if (ms < agent.lastLineMs) return;
     agent.lastLineMs = ms;
@@ -107,7 +107,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       agent.phase = "idle"; agent.start = agent.first = null; agent.streaming = agent.explicit = false;
     } else if (signal.kind === "start") {
       if (!agent.streaming && (!agent.explicit || signal.explicit)) {
-        agent.start = ms; agent.first = null; agent.explicit = Boolean(signal.explicit);
+        agent.start = signal.startMs ?? ms; agent.first = null; agent.explicit = Boolean(signal.explicit);
       }
       agent.phase = "generating";
     } else if (signal.kind === "content") {
@@ -149,7 +149,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
         return;
       }
       if (!record) {
-        record = { id: responseId, nativeId: signal.responseId || null, agentId: key, sourceType: source, model: agent.model || "", startMs: agent.start, endMs: ms,
+        record = { id: responseId, nativeId: signal.responseId || null, agentId: key, sourceType: source, model: agent.model || "", startMs: signal.startMs ?? agent.start, endMs: ms,
           firstMs: signal.kind === "snapshot" ? signal.hasContent ? ms : null : agent.first ?? null, output: null, final: false };
       }
       record.endMs = Math.max(record.endMs, ms);
@@ -161,7 +161,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       agent.latestEnd = Math.max(agent.latestEnd || 0, ms);
       const stop = obj.message?.stop_reason;
       const tool = stop === "tool_use" || (!stop && obj.message?.content?.some?.((part) => part.type === "tool_use"));
-      agent.phase = source === "codex" || tool ? "tools" : !stop || stop === "pause_turn" ? "generating" : "idle";
+      agent.phase = signal.phase || (source === "codex" || tool ? "tools" : !stop || stop === "pause_turn" ? "generating" : "idle");
       if (record.final) { agent.start = agent.first = null; agent.streaming = agent.explicit = false; }
       else agent.streaming = true;
     }

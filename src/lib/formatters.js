@@ -3,6 +3,11 @@ import sourceAdapters from "../../shared/source-adapters.js";
 const zhNumber = new Intl.NumberFormat("zh-CN");
 const { NATIVE_SOURCE_TYPES, getSourceAdapter } = sourceAdapters;
 export const PLATFORM_OPTIONS = NATIVE_SOURCE_TYPES.map((value) => ({ value, label: getSourceAdapter(value).label }));
+const platformStyles = new Map([
+  ["codex", { mark: "CX", color: "blue" }],
+  ["claude", { mark: "CC", color: "orange" }],
+  ["qwen", { mark: "QC", color: "teal" }],
+]);
 
 export function formatNumber(value) {
   const num = Number(value);
@@ -66,10 +71,16 @@ export function formatFullDateTime(value) {
   }).format(date);
 }
 
-export function platformLabel(value) {
-  if (value === "codex") return "Codex";
-  if (value === "claude") return "Claude Code";
-  return "Unknown";
+export function platformLabel(value, fallback = "Unknown") {
+  return PLATFORM_OPTIONS.find((platform) => platform.value === value)?.label || fallback;
+}
+
+export function platformMark(value) {
+  return platformStyles.get(value)?.mark || "·";
+}
+
+export function platformBadgeColor(value, claudeColor = "orange") {
+  return value === "claude" ? claudeColor : platformStyles.get(value)?.color || "gray";
 }
 
 export function callTypeLabel(value) {

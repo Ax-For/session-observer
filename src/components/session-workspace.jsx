@@ -50,6 +50,7 @@ import {
   formatDateTime,
   formatNumber,
   platformLabel,
+  platformBadgeColor,
   shortSessionId,
 } from "../lib/formatters";
 import { buildSessionArtifacts, buildSessionPresentation } from "../lib/activity-models";
@@ -196,7 +197,7 @@ function ActiveSessionsPanel({ overview, onOpenSessionDetail }) {
                   {session.activeChildCount > 0 ? <span className="active-session-row__children">含 {formatNumber(session.activeChildCount)} 个活跃子 Agent</span> : null}
                 </span>
                 <span className="active-session-row__meta">
-                  <Badge radius="xl" size="xs" variant="light" color={session.sourceType === "codex" ? "blue" : "orange"}>
+                  <Badge radius="xl" size="xs" variant="light" color={platformBadgeColor(session.sourceType)}>
                     {platformLabel(session.sourceType)}
                   </Badge>
                   <span>{formatAgeText(session.ageMs)}</span>
@@ -1066,7 +1067,7 @@ function SessionRow({
           {clipText(session.latestAgentMessage || session.latestUserMessage || session.firstUserMessage || session.cwd || "暂无对话内容", 120)}
         </span>
         <div className="session-row__meta-line">
-          <Badge radius="xl" color={session.sourceType === "codex" ? "blue" : "orange"} variant="light" size="xs">
+          <Badge radius="xl" color={platformBadgeColor(session.sourceType)} variant="light" size="xs">
             {platformLabel(session.sourceType)}
           </Badge>
           <span>{formatDateTime(session.latest)}</span>
@@ -1276,9 +1277,9 @@ export function SessionWorkspace({
                   <SectionIcon size={16} stroke={1.7} aria-hidden="true" />
                   <div className="session-section__copy">
                     <Title order={3} className="session-section__title" title={sectionPath}>{clipText(sectionTitle, 72)}</Title>
-                    <Text className="session-section__subline" title={sectionPath}>
+                    {section.groupType !== "platform" && <Text className="session-section__subline" title={sectionPath}>
                       {clipText(sectionPath, 92)}
-                    </Text>
+                    </Text>}
                   </div>
                 </Group>
                 <div className="session-section__metrics" title={`${sectionHasTokenData ? formatCompactNumber(sectionTokenTotal) : "未记录"} Token`}>
@@ -1290,7 +1291,7 @@ export function SessionWorkspace({
                 sessions={section.sessions}
                 renderSession={(session) => (
                   <SessionRow
-                    canMutate={canMutate}
+                    canMutate={canMutate && session.sourceType !== "qwen"}
                     session={session}
                     selectedSet={selectedSet}
                     selectedSessionId={selectedSessionId}

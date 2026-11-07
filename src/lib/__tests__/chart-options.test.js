@@ -14,7 +14,8 @@ describe("ECharts data presentation", () => {
 
   test("platform stacks reconcile to recorded totals, including unattributed usage", () => {
     const options = trendOptions([{ label: "11/06", tokens: 100, platforms: [{ key: "codex", total: 40 }, { key: "claude", total: 50 }] }]);
-    expect(options.series.map((series) => series.data[0])).toEqual([40, 50, 10]);
+    expect(options.series.map((series) => series.name)).toEqual(["Codex", "Claude Code", "Qwen Code", "其他 / 未归属"]);
+    expect(options.series.map((series) => series.data[0])).toEqual([40, 50, 0, 10]);
     expect(options.series.every((series) => series.stack === "tokens")).toBe(true);
     expect(options.tooltip.renderMode).toBe("richText");
   });

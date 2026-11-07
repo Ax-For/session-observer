@@ -38,7 +38,8 @@ async function main() {
   const server = spawn(process.execPath, ["--max-old-space-size=64", "--max-semi-space-size=4", "--optimize-for-size", "--expose-gc", "server.js"], {
     cwd: path.resolve(__dirname, ".."), stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, PATH: "/usr/bin:/bin", HOST: "127.0.0.1", PORT: String(port), CODEX_SESSIONS_DIR: codex,
-      CLAUDE_PROJECTS_DIR: claude, CODEX_STATE_DB: path.join(root, "none.sqlite"), CODEX_SESSION_INDEX: path.join(root, "none.jsonl"),
+      CLAUDE_PROJECTS_DIR: claude, QWEN_PROJECTS_DIR: path.join(root, "qwen"), CODEX_STATE_DB: path.join(root, "none.sqlite"),
+      CODEX_SESSION_INDEX: path.join(root, "none.jsonl"),
       OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_RUNTIME_DIR: path.join(root, "runtime"),
       OBSERVER_SOURCE_LOCATIONS_FILE: path.join(root, "missing-locations.json"), OBSERVER_DIALOGUE_SEARCH: "sqlite" },
   });

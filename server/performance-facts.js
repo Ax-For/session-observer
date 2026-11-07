@@ -1,7 +1,12 @@
 const { estimateTokenCost } = require("../shared/token-pricing");
+const { qwenToolEvents, qwenUsage } = require("../shared/qwen-code");
 
 const token = (value) => Math.min(1e12, Math.max(0, Math.trunc(Number(value) || 0)));
 function usageFor(obj, source, cumulative = false) {
+  if (source === "qwen") {
+    const usage = qwenUsage(obj);
+    return { input: usage?.input, cachedInput: usage?.cachedInput, reasoning: usage?.reasoning };
+  }
   const p = obj.payload || {};
   const usage = source === "claude" ? obj.message?.usage || {} : obj.type === "token_usage_record" ? p.usage || {}
     : p.info?.[cumulative ? "total_token_usage" : "last_token_usage"] || {};
@@ -14,6 +19,9 @@ function usageFor(obj, source, cumulative = false) {
 }
 
 function estimateResponseCost(response) {
+  if (response.sourceType === "qwen" && (response.input == null || response.output == null)) {
+    return { known: false, estimatedUsd: 0 };
+  }
   const { input = 0, cachedInput = 0, cacheCreation = 0, output = 0 } = response;
   return estimateTokenCost({
     input: Math.max(0, input - cachedInput - cacheCreation),
@@ -27,6 +35,7 @@ function estimateResponseCost(response) {
   });
 }
 function toolEvents(obj, source) {
+  if (source === "qwen") return qwenToolEvents(obj);
   const p = obj.payload || {};
   if (source === "codex" && obj.type === "response_item") {
     if (["function_call", "custom_tool_call"].includes(p.type)) return [{ kind: "call", id: p.call_id, tool: p.name }];

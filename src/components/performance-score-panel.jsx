@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useComputedColorScheme } from "@mantine/core";
 import { ChartPlot } from "./data-chart";
+import { platformLabel as platform } from "../lib/formatters";
 
 const LABELS = { T: "输出吞吐", L: "首段延迟", N: "工具节奏", R: "推理吞吐", H: "缓存命中", U: "工具耗时", S: "工具成功率" };
 const WEIGHTS = { T: "30%", L: "20%", N: "15%", R: "10%", H: "10%", U: "10%", S: "5%" };
 const number = (v, digits = 0) => Number(v).toLocaleString("zh-CN", { maximumFractionDigits: digits });
-const platform = (v) => v === "codex" ? "Codex" : "Claude Code";
 const measure = (row) => row.id === "H" || row.id === "S" ? `${number(row.measure * 100, 1)}%`
   : row.id === "L" || row.id === "U" ? `${number(row.measure)} ms`
     : `${number(row.measure, 1)} ${row.id === "N" ? "次/分" : "tok/s"}`;

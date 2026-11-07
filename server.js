@@ -47,6 +47,7 @@ const {
   mergeSessionMetaRecords: mergeSessionMetaRecordsCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
   parseCodexLineToEvent: parseCodexLineToEventCore,
+  parseQwenCodeLineToEvent,
   toPositiveInt: toPositiveIntCore,
   toTimeMs: toTimeMsCore,
 } = ObserverCore;
@@ -54,6 +55,7 @@ const {
 const parsers = {
   parseCodexLineToEvent: parseCodexLineToEventCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
+  parseQwenCodeLineToEvent,
   parseGenericLineToEvent,
 };
 

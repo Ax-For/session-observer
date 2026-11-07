@@ -7,6 +7,7 @@
 
   const LIVE_HISTORY_MINUTES = Object.freeze([1, 5, 15, 30]);
   const DEFAULT_HISTORY_MINUTES = 5;
+  const qwenCodeApi = typeof require === "function" ? require("./qwen-code") : globalThis.ObserverQwenCode;
   const timestamp = (value) => {
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
@@ -15,6 +16,7 @@
 
   // Keep only timing/usage facts, never raw message bodies. One signal per source record.
   function signalForRecord(obj, context, source) {
+    if (source === "qwen") return qwenCodeApi?.qwenSignal(obj, context);
     const p = obj.payload || {};
     if (source === "codex") {
       if (obj.type === "session_meta") {
@@ -72,7 +74,7 @@
         state.start = state.first = null; state.streaming = state.explicit = false;
       } else if (signal.kind === "start") {
         if (!state.streaming && (!state.explicit || signal.explicit)) {
-          state.start = ms; state.first = null; state.explicit = Boolean(signal.explicit);
+          state.start = signal.startMs ?? ms; state.first = null; state.explicit = Boolean(signal.explicit);
         }
       } else if (signal.kind === "content") {
         if (!state.streaming) state.first = ms;
@@ -101,7 +103,7 @@
           continue;
         }
         records.set(id, { id, eventId: event.eventId || event.id || "", time: event.time, model: event.model || "unknown",
-          sourceType: event.sourceType, startMs: state.start, endMs: ms,
+          sourceType: event.sourceType, startMs: signal.startMs ?? state.start, endMs: ms,
           firstMs: signal.kind === "snapshot" ? (signal.hasContent ? ms : null) : state.first,
           outputTokens: output, final: signal.final, explicitStart: state.explicit });
         // A usage record alone is not evidence that the next request has started.

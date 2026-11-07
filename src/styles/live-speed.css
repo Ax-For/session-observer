@@ -26,6 +26,7 @@
 .live-speed__sources dt { font-size: 11px; color: var(--text-soft); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 .live-speed__sources i { width: 5px; height: 5px; border-radius: 50%; background: var(--platform-codex); }
 .live-speed__sources i.is-claude { background: var(--platform-claude); }
+.live-speed__sources i.is-qwen { background: var(--platform-qwen); }
 .live-speed__sources dd { margin: 0; color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-speed__sources small { font-size: 9px; color: var(--text-faint); }
 .live-speed__chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; font-size: 10px; color: var(--text-faint); }

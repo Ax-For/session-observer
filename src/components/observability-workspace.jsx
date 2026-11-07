@@ -5,7 +5,7 @@ import { AnimatedSymbol } from "./animated-symbol";
 import { DataChart } from "./data-chart";
 import { LiveSpeedPanel } from "./live-speed-panel";
 import { DailyHistoryPanel } from "./daily-history-panel";
-import { CHART_COLORS } from "../lib/chart-options";
+import { CHART_COLORS, platformValues } from "../lib/chart-options";
 import {
   Alert,
   Badge,
@@ -39,7 +39,9 @@ import {
   formatDateTime,
   formatHumanNumber,
   formatNumber,
+  platformBadgeColor,
   platformLabel,
+  PLATFORM_OPTIONS,
   shortSessionId,
 } from "../lib/formatters";
 
@@ -799,10 +801,7 @@ function OperationalKpiStrip({ rows }) {
 
 function OverviewHealthBand({ runtime, sources, index, generatedAt, health }) {
   const memory = runtime?.memory || {};
-  const sourceRows = [
-    { label: "Codex 数据", source: sources?.codex },
-    { label: "Claude 数据", source: sources?.claude },
-  ];
+  const sourceRows = PLATFORM_OPTIONS.map(({ value, label }) => ({ label: `${label} 数据`, source: sources?.[value] }));
   const dataDelay = timestampAgeMs(health?.lastEventAt, generatedAt);
 
   return (
@@ -1521,7 +1520,7 @@ function ActiveSessionSnapshot({ overview, onOpenSessionDetail }) {
                 {session.activeChildCount > 0 ? <span>含 {formatNumber(session.activeChildCount)} 个活跃子 Agent</span> : null}
               </span>
               <span className="mc-active-row__side">
-                <Badge radius="xl" size="xs" variant="light" color={session.sourceType === "codex" ? "blue" : "orange"}>
+                <Badge radius="xl" size="xs" variant="light" color={platformBadgeColor(session.sourceType)}>
                   {platformLabel(session.sourceType)}
                 </Badge>
                 <em>{formatAgeText(session.ageMs)}</em>
@@ -1566,12 +1565,9 @@ function SystemReadinessPanel({ runtime, sources, index, generatedAt, health }) 
   const heapShare = percentValue(heapUsed, heapTotal);
   const cachedFiles = finiteToken(index?.cachedFiles);
   const reusedFiles = finiteToken(index?.reusedFiles);
-  const sourceFileCount = finiteToken(sources?.codex?.files) + finiteToken(sources?.claude?.files);
+  const sourceRows = PLATFORM_OPTIONS.map(({ value, label }) => [label, sources?.[value]]);
+  const sourceFileCount = sourceRows.reduce((count, [, source]) => count + finiteToken(source?.files), 0);
   const dataDelay = timestampAgeMs(health?.lastEventAt, generatedAt);
-  const sourceRows = [
-    ["Codex", sources?.codex],
-    ["Claude Code", sources?.claude],
-  ];
 
   return (
     <div className="v2-system-readiness">
@@ -1621,8 +1617,12 @@ function SystemReadinessPanel({ runtime, sources, index, generatedAt, health }) 
 
 function TokenRangeSummary({ range }) {
   const tokens = range?.tokens || {};
-  const platforms = tokens.byPlatform || [];
   const effectiveTotal = finiteToken(tokens.effectiveTotal) || finiteToken(tokens.total);
+  const platformTotals = platformValues({ tokens: effectiveTotal, platforms: tokens.byPlatform });
+  const platforms = PLATFORM_OPTIONS.map(({ value, label }) => ({
+    key: value, label, total: platformTotals[value], color: `var(--platform-${value}, var(--text-faint))`,
+  }));
+  if (platformTotals.other > 0) platforms.push({ key: "other", label: "其他来源", total: platformTotals.other, color: "var(--text-faint)" });
   const activeDays = Math.max(1, finiteToken(range?.health?.activeDays));
   const comparison = range?.comparison || {};
   const changes = [
@@ -1654,24 +1654,29 @@ function TokenRangeSummary({ range }) {
       <div className="v5-token-range-summary__platforms">
         <span>平台构成</span>
         <div aria-label="范围内 Token 平台构成">
-          {platforms.map((platform) => (
+          {platforms.filter((platform) => platform.total > 0).map((platform) => (
             <i
               key={platform.key}
-              title={`${platformLabel(platform.key)} ${tokenLabel(platform.total)}`}
+              title={`${platform.label} ${formatNumber(platform.total)} Token`}
               style={{
                 width: `${percentValue(platform.total, effectiveTotal)}%`,
-                background: platform.key === "claude" ? "var(--platform-claude)" : "var(--platform-codex)",
+                background: platform.color,
               }}
             />
           ))}
         </div>
-        <ul>
-          {platforms.slice(0, 3).map((platform) => (
-            <li key={platform.key}>
-              <span>{platformLabel(platform.key)}</span>
-              <strong>{percentLabel(percentValue(platform.total, effectiveTotal))}</strong>
-            </li>
-          ))}
+        <ul aria-label="各平台 Token 占比">
+          {platforms.map(({ key, label, total }) => {
+            const share = percentValue(total, effectiveTotal);
+            return (
+              <li key={key}>
+                <span>{label}</span>
+                {total > 0
+                  ? <strong title={`${formatNumber(total)} Token`}>{share < 0.1 ? "<0.1%" : percentLabel(share)}</strong>
+                  : <span className="v5-token-range-summary__no-usage">暂无用量</span>}
+              </li>
+            );
+          })}
         </ul>
       </div>
       <div className="v5-token-range-summary__leaders">

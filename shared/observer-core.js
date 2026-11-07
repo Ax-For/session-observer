@@ -14,6 +14,7 @@
     if (typeof require === "function") return require("./response-performance");
     return typeof globalThis !== "undefined" ? globalThis.ObserverResponsePerformance : null;
   })();
+  const qwenCodeApi = typeof require === "function" ? require("./qwen-code") : globalThis.ObserverQwenCode;
   const traceModelApi = (() => {
     try {
       if (typeof require === "function") return require("./trace-model");
@@ -611,7 +612,7 @@
     if (!hasTokenUsageData(tokenUsage)) return 0;
     const input = Number(tokenUsage?.input);
     const countedInput = Number.isFinite(input) ? input : 0;
-    if (sourceType === "claude" || sourceType === "codex") {
+    if (sourceType === "claude" || sourceType === "codex" || sourceType === "qwen") {
       return countedInput + tokenCacheReadInput(tokenUsage) + tokenCacheCreationInput(tokenUsage);
     }
     return countedInput;
@@ -1986,6 +1987,7 @@
     mergeSessionMetaRecords,
     parseClaudeCodeLineToEvent,
     parseCodexLineToEvent,
+    parseQwenCodeLineToEvent: qwenCodeApi?.parseQwenCodeLineToEvent,
     tokenCacheCreationInput,
     tokenCacheReadInput,
     tokenCountedTotal,

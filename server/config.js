@@ -32,6 +32,9 @@ const SOURCE_LOCATIONS_FILE = process.env.OBSERVER_SOURCE_LOCATIONS_FILE || path
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(codexHome, "sessions");
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
+const qwenRuntime = process.env.QWEN_RUNTIME_DIR || process.env.QWEN_HOME || path.join(os.homedir(), ".qwen");
+const QWEN_PROJECTS_DIR = process.env.QWEN_PROJECTS_DIR
+  || path.join(qwenRuntime.startsWith("~/") ? path.join(os.homedir(), qwenRuntime.slice(2)) : qwenRuntime, "projects");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
 const CODEX_SESSION_INDEX = process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
@@ -165,6 +168,7 @@ module.exports = {
   DIST_INDEX,
   SESSIONS_DIR,
   CLAUDE_PROJECTS_DIR,
+  QWEN_PROJECTS_DIR,
   CLAUDE_SESSIONS_DIR,
   CODEX_SESSION_INDEX,
   STATE_DB,

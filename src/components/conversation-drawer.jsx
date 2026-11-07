@@ -3,7 +3,7 @@ import { Badge, Button, Drawer, Group, Paper, Progress, ScrollArea, Select, Slid
 import { IconCopy, IconPhoto } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { formatBytes, formatDateTime, formatFullDateTime, formatNumber, platformLabel, shortSessionId } from "../lib/formatters";
+import { formatBytes, formatDateTime, formatFullDateTime, formatNumber, platformBadgeColor, platformLabel, shortSessionId } from "../lib/formatters";
 import { buildConversationTurns, looksLikeMarkdownContent, parseConversationMessageContent } from "../lib/conversation-models";
 import { loadDialogueBody } from "../lib/dialogue-body-loader";
 import { JsonCodeBlock } from "./json-code-block";
@@ -187,7 +187,7 @@ export function ConversationDrawer({
         <Stack gap="lg">
           <div>
             <Group gap="xs" mb={6}>
-              <Badge radius="xl" variant="light" color={session.sourceType === "codex" ? "blue" : "violet"}>
+              <Badge radius="xl" variant="light" color={platformBadgeColor(session.sourceType, "violet")}>
                 {platformLabel(session.sourceType)}
               </Badge>
               <Badge radius="xl" variant="light" color="gray">

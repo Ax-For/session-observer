@@ -25,8 +25,12 @@ test("chart values, metric switches and theme changes remain usable", async ({ p
   await page.goto("/?tab=tokens");
   const trend = page.getByTestId("token-trend-chart");
   await expect(trend.locator(".data-chart__plot svg")).toBeVisible();
+  await expect(trend.locator("svg").getByText("Qwen Code", { exact: true })).toBeVisible();
+  const qwenUsage = page.getByRole("list", { name: "各平台 Token 占比" }).getByRole("listitem").filter({ hasText: "Qwen Code" });
+  await expect(qwenUsage).toContainText("暂无用量");
   await trend.getByRole("button", { name: "查看数据明细" }).click();
   await expect(trend.getByRole("columnheader", { name: "Codex", exact: true })).toBeVisible();
+  await expect(trend.getByRole("columnheader", { name: "Qwen Code", exact: true })).toBeVisible();
   await expect(trend.getByRole("cell", { name: "50,400", exact: true }).first()).toBeVisible();
   await trend.getByRole("button", { name: "返回图表" }).click();
   await page.getByText("金额", { exact: true }).click();

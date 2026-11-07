@@ -28,6 +28,9 @@ import {
   clipText,
   formatCompactNumber,
   formatNumber,
+  platformLabel,
+  platformMark,
+  PLATFORM_OPTIONS,
   shortSessionId,
 } from "../lib/formatters";
 import {
@@ -117,7 +120,7 @@ function EventRow({ event, onOpenEvent, onOpenSessionDetail, searchQuery }) {
         <span className="event-row__rail" aria-hidden="true"><span className="event-row__dot" /></span>
         <div className="event-row__body">
           <div className="event-row__kicker">
-            <span className="event-row__platform">{event.sourceType === "codex" ? "CX" : "CC"}</span>
+            <span className={`event-row__platform is-${event.sourceType}`} title={platformLabel(event.sourceType)}>{platformMark(event.sourceType)}</span>
             {dialogueRole ? <span className="event-row__speaker">{dialogueRole === "user" ? "用户" : "Agent"}</span> : null}
             {!dialogueRole ? <span className="event-row__type">{callTypeLabel(event.callType)}</span> : null}
             <span className="event-row__model">{event.model || "unknown"}</span>
@@ -248,7 +251,7 @@ function ActivityRunRow({ run, onOpenEvent, onOpenSessionDetail, searchQuery }) 
     <article className={`activity-run${expanded ? " is-expanded" : ""}${run.toolErrors ? " has-errors" : ""}`}>
       <div className="activity-run__main">
         <button type="button" className="activity-run__toggle" aria-expanded={expanded} onClick={() => setExpanded((current) => !current)}>
-          <span className={`activity-run__source is-${run.sourceType}`}>{run.sourceType === "codex" ? "CX" : "CC"}</span>
+          <span className={`activity-run__source is-${run.sourceType}`} title={platformLabel(run.sourceType)}>{platformMark(run.sourceType)}</span>
           <span className="activity-run__copy">
             <span className="activity-run__kicker">
               <strong>{run.userPreview ? "用户回合" : run.hasTools ? "工具运行" : "会话活动"}</strong>
@@ -404,11 +407,14 @@ function StreamWindowInsights({ summary, runs }) {
     (row) => callTypeLabel(row.key),
   );
   const modelSummary = formatInsightList(summary?.topModels, (row) => row.value);
-  const platformSummary = formatInsightList(
-    summary?.platforms,
-    (row) => row.sessions,
-    (row) => row.key === "codex" ? "Codex" : row.key === "claude" ? "Claude" : row.key,
-  );
+  const countsByPlatform = new Map((summary?.platforms || []).map(({ key, sessions }) => [key, Number(sessions) || 0]));
+  const platforms = PLATFORM_OPTIONS.map(({ value, label }) => {
+    const count = countsByPlatform.get(value) || 0;
+    countsByPlatform.delete(value);
+    return { label, count };
+  });
+  const otherSessions = [...countsByPlatform.values()].reduce((sum, count) => sum + count, 0);
+  if (otherSessions > 0) platforms.push({ label: "其他来源", count: otherSessions });
 
   return (
     <section className="stream-window-insights" aria-label="当前窗口分析">
@@ -429,7 +435,9 @@ function StreamWindowInsights({ summary, runs }) {
       </div>
       <div>
         <span>平台覆盖</span>
-        <strong>{platformSummary}</strong>
+        <dl className="stream-window-insights__platforms" aria-label="各平台匹配会话">
+          {platforms.map(({ label, count }) => <div key={label}><dt>{label}</dt><dd>{formatCompactNumber(count)}</dd></div>)}
+        </dl>
         <em>{formatNumber(summary?.counts?.sessions || 0)} 个匹配会话</em>
       </div>
     </section>
@@ -484,8 +492,8 @@ export function StreamWorkspace({
                 return (
                   <div key={session.sessionId} className={`session-rail__item${active ? " is-active" : ""}`}>
                     <button type="button" className="session-rail__focus" onClick={() => onSelectSession?.(session.sessionId)}>
-                      <span className={`session-rail__mark session-rail__mark--${session.sourceType === "codex" ? "codex" : "claude"}`}>
-                        {session.sourceType === "codex" ? "CX" : "CC"}
+                      <span className={`session-rail__mark session-rail__mark--${session.sourceType}`} title={platformLabel(session.sourceType)}>
+                        {platformMark(session.sourceType)}
                       </span>
                       <span className="session-rail__main">
                         <span className="session-rail__title-row">

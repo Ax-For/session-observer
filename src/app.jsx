@@ -33,7 +33,7 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import { apiClient } from "./api/client";
-import { formatNumber, shortSessionId } from "./lib/formatters";
+import { formatNumber, platformLabel, PLATFORM_OPTIONS, shortSessionId } from "./lib/formatters";
 import { mergeEventPages } from "./lib/event-pages";
 import { BookmarkLibrary, LibraryProvider, SavedViews } from "./components/analysis/library-context";
 import { DiagnosticsDrawer } from "./components/analysis/analysis-panels";
@@ -313,14 +313,20 @@ export function App() {
       || {},
     [observabilityPayload.summary?.sessions?.byCwd, observabilityPayload.summary?.sessions?.groups],
   );
+  const streamSourceSessions = useMemo(
+    () => streamFilters.platform
+      ? currentStream.sessions.filter((session) => session.sourceType === streamFilters.platform)
+      : currentStream.sessions,
+    [currentStream.sessions, streamFilters.platform],
+  );
   const streamSummary = useMemo(() => buildDashboardSummary({
     events: currentStream.events,
-    sessions: currentStream.sessions,
+    sessions: selectedSessionId ? streamSourceSessions.filter((session) => session.sessionId === selectedSessionId) : streamSourceSessions,
     totalVisible: currentStream.totalVisible,
     totalMatching: currentStream.totalMatching,
     totalLoaded: currentStream.events.length,
     tokenWindows: currentStream.tokenWindows,
-  }), [currentStream]);
+  }), [currentStream, selectedSessionId, streamSourceSessions]);
   const streamScope = useMemo(() => buildStreamScope({
     selectedSessionId,
     sessions: currentStream.sessions,
@@ -330,10 +336,10 @@ export function App() {
     mode,
   }), [currentStream.sessions, deferredQuery, mode, quickFilter, selectedSessionId, streamFilters.platform]);
   const streamSessions = useMemo(
-    () => deferredQuery ? currentStream.sessions.map((session) => ({ ...session,
+    () => deferredQuery ? streamSourceSessions.map((session) => ({ ...session,
       title: session.sessionTitle || session.title || shortSessionId(session.sessionId), latest: session.lastEventTime,
-    })) : buildStreamSessionRailItems(buildSessionCatalog(currentStream.sessions).filter((session) => !session.isSubagent)),
-    [currentStream.sessions, deferredQuery],
+    })) : buildStreamSessionRailItems(buildSessionCatalog(streamSourceSessions).filter((session) => !session.isSubagent)),
+    [streamSourceSessions, deferredQuery],
   );
 
   const sessionGroups = sessionsPayload.groups;
@@ -739,6 +745,8 @@ export function App() {
   }
 
   const canMutateSessions = capabilities?.allowSourceMutations === true;
+  const canDeleteSelection = canMutateSessions
+    && !sessionCatalog.some((session) => session.sourceType === "qwen" && selectedSessionIds.includes(session.sessionId));
   const activeStreamFilters = [
     streamFilters.model ? {
       key: "model",
@@ -752,7 +760,7 @@ export function App() {
     } : null,
     streamFilters.platform ? {
       key: "platform",
-      label: `平台 ${streamFilters.platform === "codex" ? "Codex" : "Claude Code"}`,
+      label: `平台 ${platformLabel(streamFilters.platform)}`,
       clear: () => setStreamFilters((current) => ({ ...current, platform: "" })),
     } : null,
     streamFilters.start ? {
@@ -868,7 +876,7 @@ export function App() {
             </div>
             <div className="product-local-state" title={refreshStatus.title}>
               <div><IconStack2 size={17} /><strong>本地数据</strong><span className={`refresh-status-dot is-${refreshStatus.tone}`} /></div>
-              <span>Codex · Claude Code</span>
+              <span>{PLATFORM_OPTIONS.map(({ label }) => label).join(" · ")}</span>
               <small>{formatNumber(cachedFileCount)} 个文件 · 按需读取</small>
             </div>
           </AppShell.Navbar>
@@ -1024,10 +1032,7 @@ export function App() {
                       <Select
                         label="平台"
                         placeholder="全部平台"
-                        data={[
-                          { value: "codex", label: "Codex" },
-                          { value: "claude", label: "Claude Code" },
-                        ]}
+                        data={PLATFORM_OPTIONS}
                         value={streamFilters.platform}
                         onChange={(value) => setStreamFilters((current) => ({ ...current, platform: value || "" }))}
                         clearable
@@ -1145,10 +1150,7 @@ export function App() {
                       <Select
                         aria-label="会话平台"
                         placeholder="全部平台"
-                        data={[
-                          { value: "codex", label: "Codex" },
-                          { value: "claude", label: "Claude Code" },
-                        ]}
+                        data={PLATFORM_OPTIONS}
                         value={sessionFilters.platform}
                         onChange={(value) => setSessionFilters((current) => ({ ...current, platform: value || "" }))}
                         clearable
@@ -1207,7 +1209,7 @@ export function App() {
                         >
                           对比会话
                         </Button>
-                        <Button variant="light" radius="sm" color="red" size="xs" onClick={batchDelete} disabled={!canMutateSessions}>
+                        <Button variant="light" radius="sm" color="red" size="xs" onClick={batchDelete} disabled={!canDeleteSelection}>
                           批量删除
                         </Button>
                       </div>

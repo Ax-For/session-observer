@@ -1,9 +1,9 @@
-import { formatHumanNumber, formatNumber } from "./formatters";
+import { formatHumanNumber, formatNumber, PLATFORM_OPTIONS } from "./formatters";
 
 export const CHART_COLORS = {
   input: "#3275e5", cacheRead: "#24a879", cacheWrite: "#23a6b7",
   output: "#8b70d7", reasoning: "#b68138",
-  codex: "#4774ce", claude: "#ad7954", other: "#a1a9b5",
+  codex: "#4774ce", claude: "#ad7954", qwen: "#2b8476", other: "#a1a9b5",
 };
 
 const number = (value) => Math.max(0, Number(value) || 0);
@@ -16,9 +16,11 @@ export function pricedAmount(row) {
 
 export function platformValues(row) {
   const entries = row.platforms || [];
-  const codex = entries.filter((entry) => entry.key === "codex").reduce((sum, entry) => sum + number(entry.total), 0);
-  const claude = entries.filter((entry) => entry.key === "claude").reduce((sum, entry) => sum + number(entry.total), 0);
-  return { codex, claude, other: Math.max(0, number(row.tokens) - codex - claude) };
+  const totals = Object.fromEntries(PLATFORM_OPTIONS.map(({ value }) => [
+    value, entries.filter((entry) => entry.key === value).reduce((sum, entry) => sum + number(entry.total), 0),
+  ]));
+  const attributed = Object.values(totals).reduce((sum, total) => sum + total, 0);
+  return { ...totals, other: Math.max(0, number(row.tokens) - attributed) };
 }
 
 function palette(dark) {
@@ -104,7 +106,7 @@ export function trendOptions(data, settings = {}) {
   const isCost = settings.metric === "cost";
   const points = data.map(platformValues);
   const platformSeries = [
-    { key: "codex", name: "Codex" }, { key: "claude", name: "Claude Code" },
+    ...PLATFORM_OPTIONS.map(({ value, label }) => ({ key: value, name: label })),
     ...(points.some((row) => row.other > 0) ? [{ key: "other", name: "其他 / 未归属" }] : []),
   ];
   return {
@@ -124,7 +126,7 @@ export function trendOptions(data, settings = {}) {
       areaStyle: { opacity: 0.08 },
     }] : platformSeries.map(({ key, name }) => ({
       id: key, name, type: "bar", stack: "tokens", data: points.map((row) => row[key]),
-      barMaxWidth: 30, itemStyle: { color: CHART_COLORS[key] },
+      barMaxWidth: 30, itemStyle: { color: CHART_COLORS[key] || CHART_COLORS.other },
       emphasis: { focus: "series" },
     })),
   };

@@ -1,5 +1,6 @@
 const { addRecord, emptyRecord, localDay, dayOffset, pooled, timed } = require("./performance-score");
 const { estimateResponseCost } = require("./performance-facts");
+const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
 
 const PAGE_SIZE = 30;
 const FIELDS = ["requests", "input", "cachedInput", "cacheCreation", "output", "reasoning", "unfinalized",
@@ -17,7 +18,7 @@ function parseHistoryFilters(params) {
   const rawOffset = params.get("offset") || "0", format = params.get("format") || "";
   const hasControl = Array.from(model).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
   if ((from && !validDay(from)) || (to && !validDay(to)) || (from && to && (from > to || Date.parse(to) - Date.parse(from) > 10000 * 86400000))
-    || !["", "codex", "claude"].includes(source) || model.length > 240 || hasControl
+    || (source && !NATIVE_SOURCE_TYPES.includes(source)) || model.length > 240 || hasControl
     || !/^\d{1,6}$/.test(rawOffset) || !["", "csv", "modes-csv"].includes(format)) {
     throw new RangeError("Invalid date range, source, model or page");
   }

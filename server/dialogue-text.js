@@ -13,7 +13,11 @@ function dialoguePaths(obj) {
   } else if (obj.type === "event_msg" && ["user_message", "agent_message"].includes(obj.payload?.type)) {
     contentPaths(obj.payload.message, ["payload", "message"]);
   } else if (["user", "assistant"].includes(obj.type) && !obj.isMeta && !obj.toolUseResult) {
-    contentPaths(obj.message?.content, ["message", "content"]);
+    if (Array.isArray(obj.message?.parts)) {
+      obj.message.parts.forEach((part, index) => {
+        if (!part?.thought && typeof part?.text === "string") paths.push(["message", "parts", index, "text"]);
+      });
+    } else contentPaths(obj.message?.content, ["message", "content"]);
   } else if (!["response_item", "event_msg"].includes(obj.type)) {
     const nested = obj.message && typeof obj.message === "object";
     const candidates = nested ? [["message", "content"], ["message", "text"], ["content"], ["text"], ["output"]] : [["content"], ["text"], ["output"]];

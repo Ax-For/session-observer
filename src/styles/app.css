@@ -15,6 +15,7 @@
   --accent-strong: #7db0ff;
   --platform-codex: #4d8df7;
   --platform-claude: #f49a3d;
+  --platform-qwen: #65b7aa;
   --violet: #9b8cff;
   --orange: #f1aa62;
   --success: #45c896;
@@ -74,6 +75,7 @@
   --accent-strong: #164fae;
   --platform-codex: #2367d8;
   --platform-claude: #d97706;
+  --platform-qwen: #2b8476;
   --violet: #725ef0;
   --orange: #cb7b2d;
   --success: #19875d;
@@ -4296,6 +4298,11 @@ button.mc-active-cost-row:focus-visible {
 .session-rail__mark--claude {
   background: rgba(192, 166, 255, 0.16);
   color: #b994ff;
+}
+
+.session-rail__mark--qwen {
+  background: color-mix(in srgb, var(--platform-qwen) 13%, transparent);
+  color: var(--platform-qwen);
 }
 
 .session-rail__main {

@@ -195,7 +195,7 @@ function makeIndexedEvent(event) {
   if (event.performanceSignal) {
     const signal = {};
     for (const key of ["kind", "responseId"]) setStringField(signal, key, event.performanceSignal[key]);
-    for (const key of ["output", "cumulative", "cumulativeOutput"]) {
+    for (const key of ["output", "cumulative", "cumulativeOutput", "startMs"]) {
       const value = event.performanceSignal[key];
       if (typeof value === "number" && Number.isFinite(value)) signal[key] = value;
     }

@@ -9,6 +9,7 @@ const { locationFor } = require("./source-locations");
 const { localDay, dayOffset, createDayRecorder, pooled, addRecord, emptyRecord, timed } = require("./performance-score");
 const { validDay, createUsageRecorder, readHistory } = require("./history-query");
 const { PRICING_VERSION } = require("../shared/token-pricing");
+const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
 
 const VERSION = 3;
 const hash = (text) => crypto.createHash("sha256").update(text).digest("hex");
@@ -138,7 +139,7 @@ function createPerformanceHistory({ file, listFiles, roots = [], clock = Date.no
       const legacy = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('perf_files','perf_days','perf_claims')").get().n === 3;
       if (!cycle || cycle.today !== today || cycle.version !== version) {
         const eligible = listFiles().map((record) => ({ ...record, sourceType: record.sourceType || locationFor(record.file, roots)?.sourceType }))
-          .filter((record) => ["codex", "claude"].includes(record.sourceType));
+          .filter((record) => NATIVE_SOURCE_TYPES.includes(record.sourceType));
         cycle = { today, version, eligible, index: 0, diagnostics: { files: eligible.length,
           archives: eligible.filter((row) => row.archive || row.format === "zstd" || row.file.endsWith(".jsonl.zst")).length,
           scanned: 0, cached: 0, failedFiles: 0, ...emptyCoverage() } };

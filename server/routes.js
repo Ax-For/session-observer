@@ -9,7 +9,7 @@ const sessionMeta = require("./session-meta");
 const { createSessionExport } = require("./session-export");
 const recentEventsReader = require("./recent-events-reader");
 const sourceFiles = require("./source-files");
-const { listSourceAdapters } = require("../shared/source-adapters");
+const { NATIVE_SOURCE_TYPES, listSourceAdapters } = require("../shared/source-adapters");
 const SessionInsights = require("../shared/session-insights");
 const { analyzeTurns, agentRelations, gitEvidence } = require("./analysis-services");
 const { readCompactJsonRecord } = require("./compact-json-record");
@@ -474,8 +474,7 @@ function buildObservabilityPayload(records, summary, extra = {}) {
       uptimeSeconds: Math.round(process.uptime()),
     },
     sources: {
-      codex: sourceFiles.nativeSourceStatus("codex", records),
-      claude: sourceFiles.nativeSourceStatus("claude", records),
+      ...Object.fromEntries(NATIVE_SOURCE_TYPES.map((key) => [key, sourceFiles.nativeSourceStatus(key, records)])),
       adapters: listSourceAdapters(),
       dialogueSearch: _deps.dialogueSearchIndex?.state?.() || { enabled: false, mode: "scan" },
     },

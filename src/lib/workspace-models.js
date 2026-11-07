@@ -1,4 +1,5 @@
 import ObserverCore from "../../shared/observer-core.js";
+import { platformLabel } from "./formatters";
 
 /**
  * @typedef {Object} SessionGroup
@@ -14,11 +15,6 @@ import ObserverCore from "../../shared/observer-core.js";
  * @property {string[]} models
  * @property {string[]} sourceFiles
  */
-
-const PLATFORM_LABELS = {
-  codex: "Codex",
-  claude: "Claude Code",
-};
 
 const {
   buildSessionGroups,
@@ -493,7 +489,7 @@ export function buildSessionSections(groups, filters = {}) {
         : groupBy === "platform"
           ? session.sourceType || "unknown"
           : cwd;
-      const label = groupBy === "platform" ? (PLATFORM_LABELS[key] || "Unknown") : key;
+      const label = groupBy === "platform" ? platformLabel(key) : key;
       const current = sectionMap.get(key) || {
         key,
         cwd: key,
@@ -751,7 +747,7 @@ export function buildStreamScope({
   return {
     title,
     subtitle: [
-      PLATFORM_LABELS[scopePlatform] || "跨平台",
+      platformLabel(scopePlatform, "跨平台"),
       QUICK_FILTER_LABELS[quickFilter] || QUICK_FILTER_LABELS.all,
       mode === "raw" ? "原始记录" : "观测事件",
     ].join(" · "),

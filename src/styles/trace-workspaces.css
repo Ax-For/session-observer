@@ -188,6 +188,26 @@
   white-space: nowrap;
 }
 
+.stream-window-insights__platforms {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.64rem;
+}
+
+.stream-window-insights__platforms > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.stream-window-insights__platforms dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .activity-feed__list {
   display: grid;
 }
@@ -248,6 +268,11 @@
 
 .activity-run__source.is-claude {
   color: var(--orange);
+}
+
+.activity-run__source.is-qwen,
+.event-row__platform.is-qwen {
+  color: var(--platform-qwen);
 }
 
 .activity-run__copy {

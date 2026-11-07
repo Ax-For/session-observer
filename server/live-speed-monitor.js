@@ -1,7 +1,7 @@
 const fs = require("fs");
 const { createLiveSpeedEngine } = require("./live-speed-engine");
 const { localDay } = require("./performance-score");
-const { locationFor } = require("./source-locations");
+const { locationFor, qwenTranscriptKind } = require("./source-locations");
 const { readConfiguredTier } = require("./execution-modes");
 const { DEFAULT_HISTORY_MINUTES } = require("../shared/response-performance");
 
@@ -28,7 +28,7 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
     if (closed || mtimeMs < clock() - 30 * 60_000) return;
     if (files.has(file)) { files.get(file).changedAt = Math.max(files.get(file).changedAt || 0, mtimeMs); return; }
     const root = file.endsWith(".jsonl") && locationFor(file, activeRoots);
-    if (!root) return;
+    if (!root || (root.sourceType === "qwen" && qwenTranscriptKind(file) !== "active")) return;
     if (files.size >= maxFiles) {
       const oldest = [...files.values()].sort((a, b) => a.mtimeMs - b.mtimeMs)[0];
       if (oldest.mtimeMs >= mtimeMs) { omittedFiles++; return; }

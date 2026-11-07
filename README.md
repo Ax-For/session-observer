@@ -1,6 +1,6 @@
 # Session Observer
 
-**A local-first observability workbench for Codex and Claude Code.** Turn scattered JSONL transcripts into a semantic activity stream, searchable session library, token and cost ledger, and runtime health dashboard - without uploading prompts, tool output, or source paths.
+**A local-first observability workbench for Codex, Claude Code and Qwen Code.** Turn scattered JSONL transcripts into a semantic activity stream, searchable session library, token and cost ledger, and runtime health dashboard - without uploading prompts, tool output, or source paths.
 
 [![CI](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ax-For/session-observer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -144,7 +144,7 @@ npm run check          # Lint, all tests, and production build
 server.js              Local HTTP API and built frontend
 manage.sh              Service lifecycle and memory-oriented Node flags
 server/                On-demand scanning, source watchers, summary cache, and routes
-shared/                Codex / Claude Code parsing, dedupe, token, trace, and aggregation logic
+shared/                Native log parsing, dedupe, token, trace, and aggregation logic
 src/app.jsx            React shell, URL state, and workspace orchestration
 src/components/        Overview, token, event stream, session library, and detail surfaces
 src/hooks/             Data loading, source changes, paging, and session actions
@@ -162,6 +162,7 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 | `PORT` | `8787` | HTTP port |
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex transcript directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code project directory |
+| `QWEN_PROJECTS_DIR` | `~/.qwen/projects` | Qwen Code project directory, follows `QWEN_RUNTIME_DIR` or `QWEN_HOME` |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata database |
 | `OBSERVER_DAILY_TOKEN_BUDGET` | disabled | Daily Token warning threshold |
 | `OBSERVER_WEEKLY_TOKEN_BUDGET` | disabled | Seven-day Token warning threshold |
@@ -170,7 +171,7 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 | `OBSERVER_MIN_CACHE_COVERAGE` | `70` | Minimum cache-read coverage percentage |
 | `OBSERVER_DIALOGUE_SEARCH` | `sqlite` | Compact disk-backed dialogue cache; `scan` opts into the legacy bounded scanner |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | disabled | JSON manifest for additional generic JSONL sources |
-| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | Local Codex and Claude Code location lists; follows `OBSERVER_DATA_DIR` by default |
+| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | Native source location lists; follows `OBSERVER_DATA_DIR` by default |
 | `OBSERVER_ACCESS_TOKEN` | disabled | Required for non-loopback binding; HTTP Basic password |
 | `OBSERVER_ALLOWED_HOSTS` | disabled | Comma-separated additional allowed hosts, including port |
 | `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | Set to `1` to allow source transcript rename/delete |
@@ -185,11 +186,14 @@ To read multiple native session directories, create `source-locations.json` and 
 ```json
 {
   "codex": ["default", "/absolute/path/another-codex/sessions"],
-  "claude": ["default", "/absolute/path/another-claude/projects"]
+  "claude": ["default", "/absolute/path/another-claude/projects"],
+  "qwen": ["default", "/absolute/path/another-qwen/projects"]
 }
 ```
 
 Use one to eight locations per source. `default` keeps the normal location, including an existing single-directory override. Omit it to replace that location. A Codex `sessions` folder also discovers its sibling `archived_sessions`. Archives and compressed logs feed history and the baseline; normal session logs also feed live monitoring and replay. The settings are loaded from the local filesystem at service start.
+
+The observer reads Qwen Code's `<project>/chats/*.jsonl` for the event stream, session replay, token ledger and live speed. `chats/archive/*.jsonl` feeds retained history and the model baseline. Speed uses the recorded request duration when available. Reasoning and estimated cost require the corresponding token counts and model price. Qwen Code transcripts are read-only.
 
 Daily aggregates, model names and deduplication hashes are stored in `performance-history.sqlite` under the runtime directory. To reset history, stop the service and move that database and its `-wal` and `-shm` sidecars aside; the next start rebuilds from the logs that remain available.
 

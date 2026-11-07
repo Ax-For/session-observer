@@ -172,7 +172,7 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
       <span>日志间隔测速，包含首段等待。子 Agent 独立计数。</span>
       <details>
         <summary>测速口径{limited ? " · 部分日志未覆盖" : ""}</summary>
-        <p>实测将已完成响应的用量分摊到请求区间。进行中的请求参考该会话最近 3 次响应，再回退到同模型或同平台样本。响应完成后用实测替换估算。超过 5 分钟无新事件视为空闲。</p>
+        <p>实测将已完成响应的用量分摊到请求区间。Qwen Code 优先使用日志记录的请求耗时。进行中的请求参考该会话最近 3 次响应，再回退到同模型或同平台样本。响应完成后用实测替换估算。超过 5 分钟无新事件视为空闲。</p>
         <p>总吞吐合计输入与输出，推理 Token 已计入输出。费用优先使用日志金额，再按本地价格表估算。缺少推理用量或价格时显示有记录的部分。</p>
         <p>读取最近 30 分钟内写入的最多 {data?.monitor?.maxFiles || 64} 个日志，每个从末尾 1 MiB 开始恢复。当前跟踪 {data?.monitor?.trackedFiles || 0} 个文件，可测响应 {data?.measuredResponses || 0}，未测响应 {data?.unmeasuredResponses || 0}。{limited ? `跳过记录 ${data.monitor.skippedLines}，未跟踪文件 ${data.monitor.omittedFiles}，读取错误 ${data.monitor.readErrors}。` : ""}</p>
       </details>

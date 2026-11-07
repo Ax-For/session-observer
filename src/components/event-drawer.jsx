@@ -6,6 +6,7 @@ import {
   callTypeLabel,
   formatFullDateTime,
   platformLabel,
+  platformBadgeColor,
   shortSessionId,
 } from "../lib/formatters";
 import { readableEventSummary } from "../lib/event-display";
@@ -48,7 +49,7 @@ export function EventDrawer({ event, opened, onClose, onCopy, onCopySessionId, o
         <Stack gap="md">
           <div className="event-detail-hero">
             <Group gap="xs" className="event-detail-hero__badges">
-              <Badge radius="xl" variant="light" color={event.sourceType === "codex" ? "blue" : "violet"}>
+              <Badge radius="xl" variant="light" color={platformBadgeColor(event.sourceType, "violet")}>
                 {platformLabel(event.sourceType)}
               </Badge>
               <Badge radius="xl" variant="outline" color="gray">

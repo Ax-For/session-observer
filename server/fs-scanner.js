@@ -395,13 +395,15 @@ function getPathSignature(target) {
 }
 
 /**
- * Check if a file path belongs to Codex or Claude Code, returning the appropriate parser.
+ * Resolve a transcript's source and parser, including configured roots.
  */
 function resolveParserForFile(filePath, parsers) {
   const location = locationFor(filePath);
   const adapter = location ? getSourceAdapter(location.sourceType) : resolveSourceAdapterForFile(filePath);
   const parser = parsers[adapter.parserKey] || parsers.parseCodexLineToEvent;
-  const sessionsDir = location?.path || (adapter.key === "claude" ? config.CLAUDE_PROJECTS_DIR : config.SESSIONS_DIR);
+  const sessionsDir = location?.path || {
+    codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, qwen: config.QWEN_PROJECTS_DIR,
+  }[adapter.key] || config.SESSIONS_DIR;
   return { adapter, parser, sessionsDir };
 }
 

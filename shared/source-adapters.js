@@ -28,6 +28,15 @@
       pathMarkers: ["/.claude/"],
       capabilities: ["events", "conversation", "tokens", "rename", "delete", "export"],
     },
+    {
+      key: "qwen",
+      label: "Qwen Code",
+      sessionGlob: "~/.qwen/projects/*/chats/*.jsonl",
+      metadataSources: [],
+      parserKey: "parseQwenCodeLineToEvent",
+      pathMarkers: ["/.qwen/projects/"],
+      capabilities: ["events", "conversation", "tokens", "export"],
+    },
   ];
 
   const NATIVE_SOURCE_TYPES = Object.freeze(SOURCE_ADAPTERS.map(({ key }) => key));

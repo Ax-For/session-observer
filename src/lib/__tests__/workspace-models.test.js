@@ -248,6 +248,14 @@ describe("buildSessionSections", () => {
     ]);
   });
 
+  test("Qwen Code uses the same platform name in session groups and the focused stream", () => {
+    const sessions = { "/fixture": [{ sessionId: "qwen-session", cwd: "/fixture", sourceType: "qwen", sessionTitle: "Qwen session" }] };
+    const [section] = buildSessionSections(sessions, { groupBy: "platform", platform: "qwen" });
+    expect(section).toMatchObject({ key: "qwen", label: "Qwen Code", total: 1 });
+    expect(buildStreamScope({ sessions, selectedSessionId: "qwen-session" }).subtitle).toBe("Qwen Code · 全部事件 · 观测事件");
+    expect(buildStreamScope({ sessions, platform: "qwen" }).subtitle).toBe("Qwen Code · 全部事件 · 观测事件");
+  });
+
   test("can hide unnamed sessions", () => {
     expect(buildSessionSections(sampleGroups, {
       query: "",
