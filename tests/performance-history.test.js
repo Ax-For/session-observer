@@ -49,13 +49,13 @@ function fixture(t) {
   return { write, options, dbFile, now, today: localDay(now) };
 }
 
-test("whole-file Codex and Claude histories produce matching normalized facts, cache safely, and exclude today", (t) => {
+test("whole-file Codex and Claude histories produce matching normalized facts, cache safely, and exclude today", async (t) => {
   const f = fixture(t), yesterday = dayOffset(f.today, -1);
   f.write("codex", "a", rows("codex", "a", yesterday));
   f.write("claude", "b", rows("claude", "b", yesterday));
   f.write("codex", "today", rows("codex", "today", f.today));
   const history = createPerformanceHistory(f.options);
-  const first = history.refresh();
+  const first = await history.refresh();
   assert.equal(first.status, "ready"); assert.equal(first.models.length, 2);
   for (const model of first.models) {
     assert.equal(model.n, 20); assert.equal(model.tools, 20); assert.ok(model.score > 0);
@@ -65,44 +65,45 @@ test("whole-file Codex and Claude histories produce matching normalized facts, c
     assert.equal(model.components.find((r) => r.id === "S").measure, 0);
     assert.equal(model.trend.filter((r) => r.score != null).length, 1);
   }
-  const cached = history.refresh(); assert.equal(cached.coverage.cached, 3); assert.equal(cached.coverage.scanned, 0);
+  const cached = await history.refresh(); assert.equal(cached.coverage.cached, 3); assert.equal(cached.coverage.scanned, 0);
   assert.equal(fs.statSync(f.dbFile).mode & 0o777, 0o600);
   assert.deepEqual(cached.models, first.models);
   const db = new DatabaseSync(f.dbFile);
-  const contents = db.prepare("SELECT value FROM perf_days").all().map((r) => r.value).join("") + JSON.stringify(db.prepare("SELECT * FROM perf_files").all());
+  const contents = db.prepare("SELECT value FROM history_days").all().map((r) => r.value).join("") + JSON.stringify(db.prepare("SELECT * FROM history_files").all());
   assert.equal(contents.includes("SECRET"), false); assert.equal(contents.includes(".jsonl"), false);
-  assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((r) => r.name), ["perf_claims", "perf_days", "perf_files"]);
-  assert.ok(db.prepare("SELECT key FROM perf_claims").all().every((r) => /^[a-f0-9]{64}$/.test(r.key)));
+  assert.deepEqual(db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((r) => r.name),
+    ["history_claims", "history_days", "history_files", "history_legacy_replaced", "history_meta"]);
+  assert.ok(db.prepare("SELECT key FROM history_claims").all().every((r) => /^[a-f0-9]{64}$/.test(r.key)));
   db.close();
-  const advanced = createPerformanceHistory({ ...f.options, clock: () => new Date(`${dayOffset(f.today, 1)}T23:59:59`).getTime() }).refresh();
+  const advanced = await createPerformanceHistory({ ...f.options, clock: () => new Date(`${dayOffset(f.today, 1)}T23:59:59`).getTime() }).refresh();
   assert.equal(advanced.models.find((r) => r.sourceType === "codex").n, 40);
 });
 
-test("copied Claude histories cannot inflate cached baselines or duplicate their tool actions", (t) => {
+test("copied Claude histories cannot inflate cached baselines or duplicate their tool actions", async (t) => {
   const f = fixture(t), records = rows("claude", "original", dayOffset(f.today, -1));
   f.write("claude", "original", records);
   const history = createPerformanceHistory(f.options);
-  const first = history.refresh().models[0];
+  const first = (await history.refresh()).models[0];
   f.write("claude", "copy", records.map((r) => ({ ...r, sessionId: "copy" })));
-  const result = history.refresh();
+  const result = await history.refresh();
   assert.equal(result.models[0].n, 20); assert.equal(result.models[0].tools, 20);
   assert.equal(result.models[0].score, first.score); assert.ok(result.coverage.duplicateRecords > 0);
 });
 
-test("changed files replace their contributions, compact large payloads, and disclose malformed/incomplete rows", (t) => {
+test("changed files replace their contributions, compact large payloads, and disclose malformed/incomplete rows", async (t) => {
   const f = fixture(t), day = dayOffset(f.today, -1);
   const file = f.write("claude", "a", rows("claude", "a", day, 19));
   const history = createPerformanceHistory(f.options);
-  assert.equal(history.refresh().models[0].score, null);
+  assert.equal((await history.refresh()).models[0].score, null);
   const records = rows("claude", "a", day, 20);
   records[1].message.content.unshift({ type: "image", source: { data: "x".repeat(512 * 1024) } });
   f.write("claude", "a", [...records, "malformed"]);
   fs.appendFileSync(file, '{"partial":');
-  const result = history.refresh();
+  const result = await history.refresh();
   assert.equal(result.models[0].n, 20); assert.ok(result.models[0].score > 0);
   assert.equal(result.coverage.compactedLines, 1); assert.equal(result.coverage.skippedLines, 1); assert.equal(result.coverage.partialFiles, 1);
   fs.unlinkSync(file);
-  assert.equal(history.refresh().models[0].n, 20);
+  assert.equal((await history.refresh()).models[0].n, 20);
 });
 
 test("live parsing uses first content, cache/reasoning and first tool results without duplicating snapshots", () => {

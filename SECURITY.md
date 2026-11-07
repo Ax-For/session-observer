@@ -31,4 +31,5 @@ Include:
 - Git evidence executes read-only commands with hooks and filesystem monitors disabled. It reports time correlation, not authorship.
 - Saved views and bookmarks include queries, short message labels and identifiers. Runtime audit/cache files and the optional SQLite dialogue cache are sensitive local data; protect backups and never publish them.
 - Raw JSONL transcripts should never be committed or attached to public issues.
+- Native transcript locations are configured by the local operator in `source-locations.json`, never supplied to a browser API. Daily history and its CSVs contain aggregate usage, model names, timing and mode summaries. They inherit the same HTTP policy; their SQLite store uses owner-only permissions and intentionally retains aggregates after source-log deletion.
 - Screenshots, logs, and exports should be sanitized before sharing.

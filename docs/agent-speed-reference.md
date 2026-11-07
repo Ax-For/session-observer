@@ -18,6 +18,8 @@ and the distinction between observed and estimated speed.
 | Three-second live throughput and in-flight prediction | Added to Overview: per-platform and per-session output, generating/tools/idle phases, separate measured/estimated values |
 | Five-minute live history | Added: 300 one-second buckets, recomputed from response intervals so completed usage replaces predictions |
 | Composite performance score against a 14-day model baseline | Added to Overview: current score, same-source/model baseline, relative change, seven component measures, model selector and daily trend |
+| Several folders per source and compressed Codex archives | Native directory lists plus Codex archive discovery for history and baselines |
+| Retained daily usage, model speed and modes | Token → 每日历史: calendar filters, score trends and daily usage / execution-mode CSVs |
 | Floating orb, network traffic and remote reporting | Outside this local session workspace's current scope |
 
 ## Measurement contract
@@ -150,12 +152,11 @@ of answer quality. It is independent of the user's historical baseline.
   do not require an in-memory response array. Repeated Claude snapshots merge;
   inherited Codex metadata/history is excluded. Cross-file response ownership is
   retained as SHA-256 digests to avoid counting copied histories again.
-- Only daily numeric aggregates, model names, hashed file fingerprints and hashed
+- The initial 14-day implementation kept only daily numeric aggregates, model names, hashed file fingerprints and hashed
   response ownership survive in `.runtime/performance-history.sqlite` (mode 0600).
   No prompts, commands, tool output or raw response IDs are stored. The temporary
   response/tool facts are dropped after each refresh. Hash claims and day records
-  expire outside the current baseline window. Aggregates of removed logs remain
-  until they age out, matching the reference's history behavior.
+  expired outside the baseline window. The extended history below keeps the new aggregates beyond that window.
 - File transactions replace changed contributions; unchanged files reuse cached
   aggregates. Fingerprints include inode and ctime as well as size/mtime. Parser
   version/timezone changes rebuild existing files. Scans run at startup, every ten
@@ -184,6 +185,18 @@ browser errors or horizontal overflow. The 400.3 MiB harness now explicitly wait
 for the baseline scan and checks all 800 oversized records were parsed without
 inventing a score for unfinished responses; peak combined server/descendant RSS
 was **172.9 MiB** in that run (browser excluded).
+
+## Native locations and retained daily history
+
+The next integration follows [Agent Speed v1.6.2](https://github.com/zoefix/agent-speed/releases/tag/v1.6.2), especially [location lists and daily history](https://github.com/zoefix/agent-speed/blob/v1.6.2/spec/METRICS.md) and [execution-mode evidence](https://github.com/zoefix/agent-speed/blob/v1.6.2/spec/EXECUTION-MODES.md).
+
+- The local location manifest is shared by the session index, query worker and live monitor. Overlapping roots, resolved root aliases and hard links are read once. The history scan also discovers Codex `archived_sessions` beside configured `sessions` roots and reads `.jsonl.zst` without writing an uncompressed copy. Its frame reader supports concatenated and skippable frames; decoder windows are capped at 16 MiB. Corrupt archives leave the last successful contribution intact and are surfaced as failed files.
+- The existing background scan now maintains daily contributions for every readable date. Response IDs (or stable fallback identities for legacy records) and tool-call identities are hashed for deduplication across copies and moves. Input includes cache reads and writes; output includes reported reasoning. Mean output speed pools measured output and duration; unmeasured and unfinished responses are disclosed and do not produce a made-up speed. Price estimates follow the local pricebook and log-provided message costs. Missing sources retain their last calculated daily contribution.
+- The scan commits each file and yields to interactive queries between batches. Its progress is shown while initial backfill runs. If the worker stops, the next scan reuses completed files and retries the incomplete ones.
+- The 14-day score baseline still excludes today and requires 20 measured responses. Previous-version baseline aggregates from unavailable logs remain usable inside that window when their replacements have not been read. They do not invent a full usage row. The daily history is paginated; date filters and both CSV exports use the same aggregate rows. Model cells are escaped for spreadsheets.
+- Codex request and turn facts and Claude's explicit response speed and effort are collected when logged. The live list labels configuration, selections, recorded facts and served values. Configured-only values never enter daily mode counts. Missing facts are grouped as unknown. Daily performance scores still compare the same source and model across modes.
+
+Verified on 2026-11-07: strict lint, 152 frontend tests, 198 core tests and production build passed. All 32 desktop browser cases passed, including archive discovery, alternate Claude roots, CSV scope, source removal, model scores and mode evidence. Real-data browser review at 1280/1440 in light/dark checked pagination, speed charts, aligned controls and overflow. The service completed all 279 source files, including 236 compressed Codex files, with zero failed/skipped records; available history reached 2026-03-23. The 400.3 MiB regression workload, now including daily-history assertions, peaked at 168 MiB combined server/descendant RSS (browser excluded). The existing 1180 px desktop shell still overflows at 390 px.
 
 ## Earlier response-analysis verification on 2026-11-07
 

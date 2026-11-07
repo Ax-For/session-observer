@@ -37,7 +37,7 @@ npm install
 | 页面 | 主要用途 |
 | --- | --- |
 | **运行总览** | 实时输出 tok/s、近 5 分钟速度曲线、各 Agent 状态、7 项综合性能评分与 14 天同模型基线、服务与数据源健康、今日活动、24 小时负载和工作区集中度 |
-| **Token 账本** | 非缓存输入、缓存命中、缓存写入、输出、推理输出、估算成本、效率指标、趋势与预测、模型归因、工作区归因和高成本会话 |
+| **Token 账本** | Token 与成本归因、效率、趋势、高消耗会话，以及可按日期、来源和模型筛选并导出 CSV 的每日历史 |
 | **事件流** | 按用户回合归组的语义活动、问答/工具/用量/原始视图、按钮触发搜索、筛选、高亮、实时跟随/暂停，以及跳转到会话详情 |
 | **会话管理** | 活跃会话、工作区分组、目录树、完整会话统计、开始与最近时间、可折叠对话、活动、用量、文件/工具、命令、错误、上下文压缩和原始诊断 |
 
@@ -120,14 +120,17 @@ Session Observer 不会把完整会话库长期保留在内存中：
 | 来源 | 默认路径 | 使用的数据 |
 | --- | --- | --- |
 | Codex 会话 | `~/.codex/sessions/**/*.jsonl` | Prompt、Agent 消息、工具调用、Token、模型、时间和工作目录 |
+| Codex 归档 | `~/.codex/archived_sessions/` 及会话目录内的 `*.jsonl.zst` | 每日用量、执行模式和性能统计；归档用于历史和基线 |
 | Claude Code 项目 | `~/.claude/projects/**/*.jsonl` | 项目会话、消息、工具活动、模型和用量 |
 | Codex state DB | `~/.codex/state_5.sqlite` | 会话标题元数据，通过 `sqlite3` CLI 读取 |
 
 服务通过文件系统通知感知源文件变化，并将变化推送给浏览器。事件分页和搜索仍按需读取，不会转化成永久驻留内存的全局索引。
 
+打开 **Token → 每日历史**，可以筛选日期、来源和模型，查看平均输出速度、每日综合分和执行模式，并导出汇总 CSV。历史以服务端本地日期统计，按请求结束日归属；移除源文件后，已收录的汇总仍保留。费用为已识别请求的估算，已移除日志的估算保留上次计算值。运行总览的会话行区分配置值、选择值、日志记录与实际生效的档位。
+
 ## 环境要求
 
-- Node.js LTS 或更新版本
+- Node.js 22.15 或更新的 LTS（读取 Zstandard 归档需要内置解码器）
 - npm
 - `sqlite3` CLI，用于读取 Codex 标题元数据
 - 现代桌面浏览器
@@ -180,6 +183,7 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 | `OBSERVER_WEEKLY_COST_BUDGET_USD` | 未启用 | 近 7 天估算成本预算 |
 | `OBSERVER_DIALOGUE_SEARCH` | `sqlite` | 默认使用轻量问答正文缓存；`scan` 可退回旧的有限扫描模式 |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | 未启用 | 附加通用 JSONL 数据源清单 |
+| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | Codex / Claude Code 本机目录列表；默认随 `OBSERVER_DATA_DIR` |
 | `OBSERVER_ACCESS_TOKEN` | 未启用 | 非本机监听必须设置；HTTP Basic 密码 |
 | `OBSERVER_ALLOWED_HOSTS` | 未启用 | 逗号分隔的额外 Host 白名单，含端口 |
 | `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | 显式设为 `1` 才允许修改、删除原始会话 |
@@ -188,6 +192,19 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```
+
+需要读取第二套会话目录时，在本机创建 `source-locations.json`，然后运行 `./manage.sh restart`：
+
+```json
+{
+  "codex": ["default", "/absolute/path/another-codex/sessions"],
+  "claude": ["default", "/absolute/path/another-claude/projects"]
+}
+```
+
+每个来源可列 1–8 个位置。`default` 保留当前默认目录（包括单目录环境变量覆盖），省略它可替换默认目录。名为 `sessions` 的 Codex 目录会同时发现同级 `archived_sessions`。工作台的 **运行总览 → 服务状态 → 数据目录** 可检查生效的目录；普通会话日志参与实时和回放，归档和压缩日志参与历史和基线。历史去重按原生响应 ID（旧 Codex 按会话与响应时间）进行。
+
+长期汇总位于 `.runtime/performance-history.sqlite`（或 `OBSERVER_RUNTIME_DIR`），只保留每日数字、来源、模型与去重哈希。需清除本地汇总时，先停止服务，移走该数据库及同名 `-wal`、`-shm` 文件；重启后会从仍可读取的日志重建。
 
 ## 隐私模型
 

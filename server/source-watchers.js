@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const config = require("./config");
 const sourceFiles = require("./source-files");
+const { getNativeLocations } = require("./source-locations");
+const { loadCustomSources } = require("./custom-sources");
 
 function createSourceWatchers(onChange, { onFileChange, onRecords } = {}) {
   const handles = new Map();
@@ -12,13 +14,15 @@ function createSourceWatchers(onChange, { onFileChange, onRecords } = {}) {
   const changed = (reason) => { lastChangeAt = new Date().toISOString(); onChange(reason); };
   function reconcile() {
     try {
-      const targets = [config.SESSIONS_DIR, config.CLAUDE_PROJECTS_DIR, path.dirname(config.STATE_DB)];
-      for (const target of targets) {
+      const targets = new Map([[path.dirname(config.STATE_DB), false]]);
+      for (const root of getNativeLocations()) if (!root.archive) targets.set(root.path, true);
+      for (const source of loadCustomSources()) for (const directory of source.directories) targets.set(directory, true);
+      for (const [target, recursive] of targets) {
         if (!fs.existsSync(target) && handles.has(target)) { handles.get(target).close(); handles.delete(target); }
         if (!fs.existsSync(target) || handles.has(target)) continue;
         try {
-          const watcher = fs.watch(target, { recursive: target !== path.dirname(config.STATE_DB) }, (_event, filename) => {
-            if (target === path.dirname(config.STATE_DB) && filename && !/state_.*sqlite|session_index\.jsonl/.test(String(filename))) return;
+          const watcher = fs.watch(target, { recursive }, (_event, filename) => {
+            if (!recursive && filename && !/state_.*sqlite|session_index\.jsonl/.test(String(filename))) return;
             if (filename) onFileChange?.(path.join(target, String(filename)));
             changed("watch");
           });

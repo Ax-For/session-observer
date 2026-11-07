@@ -4,6 +4,7 @@ import { useLiveSpeed } from "../hooks/use-live-speed";
 import { ChartPlot } from "./data-chart";
 import { PerformanceScorePanel } from "./performance-score-panel";
 import { usePerformanceBaseline } from "../hooks/use-performance-baseline";
+import { modeEvidence, modeLabel } from "../lib/execution-mode-labels";
 import "../styles/live-speed.css";
 
 const rate = (value) => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -64,7 +65,9 @@ export function LiveSpeedView({ data, status, onOpenSessionDetail, baseline, onR
           <label><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} />显示空闲</label></div>
         <div className="live-speed__list">
           {rows.length ? rows.map((row) => <button key={row.id} className="live-speed__session" onClick={() => onOpenSessionDetail?.(row)} aria-label={`查看会话 ${row.title}`}>
-            <span className="live-speed__identity"><strong title={row.title}>{row.parentSessionId ? "↳ " : ""}{row.title === row.sessionId ? row.project : row.title}</strong><span title={`${row.project} · ${row.model}`}>{row.sourceType === "codex" ? "Codex" : "Claude"} · {row.project} · {row.model}{row.parentSessionId ? " · 子 Agent" : ""}</span></span>
+            <span className="live-speed__identity"><strong title={row.title}>{row.parentSessionId ? "↳ " : ""}{row.title === row.sessionId ? row.project : row.title}</strong><span title={`${row.project} · ${row.model}`}>{row.sourceType === "codex" ? "Codex" : "Claude"} · {row.project} · {row.model}{row.parentSessionId ? " · 子 Agent" : ""}</span>
+              {fresh && (row.modes?.tier || row.modes?.effort) && <span className="live-speed__modes" title={[["档位", row.modes.tier], ["推理强度", row.modes.effort]].map(([kind, mode]) => `${kind}：${mode ? `${modeLabel(mode.value)} · ${modeEvidence(mode.evidence)}` : "未知"}`).join("；")}>
+                {[row.modes.tier, row.modes.effort].filter(Boolean).map((mode) => `${modeLabel(mode.value)}（${modeEvidence(mode.evidence)}）`).join(" · ")}</span>}</span>
             <span className={`live-speed__phase is-${row.phase}`}>{phaseNames[row.phase]}</span>
             <span className="live-speed__row-rate">{!fresh || row.unknown ? "待测速" : `${row.estimated > 0 ? "≈ " : ""}${rate(row.measured + row.estimated)}`}<small>{fresh && !row.unknown ? "tok/s" : ""}</small></span>
           </button>) : <div className="live-speed__empty">{fresh ? "当前没有正在生成或执行工具的会话" : "等待实时日志连接"}<span>{fresh ? "启动 Codex 或 Claude Code 后，这里会自动更新。" : "连接恢复后自动继续监测。"}</span></div>}

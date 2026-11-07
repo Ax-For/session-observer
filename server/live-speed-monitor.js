@@ -1,7 +1,8 @@
 const fs = require("fs");
-const path = require("path");
 const { createLiveSpeedEngine } = require("./live-speed-engine");
 const { localDay } = require("./performance-score");
+const { locationFor } = require("./source-locations");
+const { readConfiguredTier } = require("./execution-modes");
 
 function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLineBytes = 128 * 1024, seedBytes = 1024 * 1024 } = {}) {
   let baseline = { status: "loading", models: [] };
@@ -18,23 +19,21 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
   let omittedFiles = 0;
   let truncatedFiles = 0;
   const startedAt = clock();
-  const sourceFor = (file) => roots.find((root) => {
-    const relative = path.relative(root.path, file);
-    return relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative) && file.endsWith(".jsonl");
-  })?.sourceType;
+  const activeRoots = (roots || []).filter((root) => !root.archive);
 
   function track(file, mtimeMs = clock()) {
     if (closed || mtimeMs < clock() - 30 * 60_000) return;
     if (files.has(file)) { files.get(file).changedAt = Math.max(files.get(file).changedAt || 0, mtimeMs); return; }
-    const source = sourceFor(file);
-    if (!source) return;
+    const root = file.endsWith(".jsonl") && locationFor(file, activeRoots);
+    if (!root) return;
     if (files.size >= maxFiles) {
       const oldest = [...files.values()].sort((a, b) => a.mtimeMs - b.mtimeMs)[0];
       if (oldest.mtimeMs >= mtimeMs) { omittedFiles++; return; }
       engine.stop(oldest.context);
       files.delete(oldest.file); omittedFiles++;
     }
-    files.set(file, { file, source, mtimeMs, offset: 0, pending: Buffer.alloc(0), skip: false, initialized: false, context: { file } });
+    const configuredTier = readConfiguredTier(root.configFile);
+    files.set(file, { file, source: root.sourceType, configuredTier, mtimeMs, offset: 0, pending: Buffer.alloc(0), skip: false, initialized: false, context: { file, configuredTier } });
   }
   function discover(records) {
     omittedFiles = 0;
@@ -70,7 +69,7 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
       const identity = `${stat.dev}:${stat.ino}`;
       if (state.identity !== identity || stat.size < state.offset || (stat.size === state.offset && state.mtimeMs !== stat.mtimeMs)) {
         engine.stop(state.context);
-        state.initialized = false; state.pending = Buffer.alloc(0); state.context = { file: state.file }; state.skip = false;
+        state.initialized = false; state.pending = Buffer.alloc(0); state.context = { file: state.file, configuredTier: state.configuredTier }; state.skip = false;
       }
       state.identity = identity; state.mtimeMs = stat.mtimeMs;
       if (!state.initialized) {

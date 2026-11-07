@@ -607,20 +607,9 @@ function parseEventLineFromIndex(indexedEvent, threadMeta, parsers, applyEventSe
  */
 function computeAggregateSignature() {
   refreshIndexWindowClock();
-  const { listJsonlFiles, getPathSignature } = fsScanner;
-  const codexFiles = listJsonlFiles(config.SESSIONS_DIR);
-  const claudeFiles = listJsonlFiles(config.CLAUDE_PROJECTS_DIR);
-  const files = [...codexFiles, ...claudeFiles];
+  const { getPathSignature } = fsScanner;
+  const records = require("./source-files").listSourceFileRecords();
   const stateSignature = `${getPathSignature(config.STATE_DB)}|${getPathSignature(config.CODEX_SESSION_INDEX)}`;
-  const records = files.map((file) => {
-    const stat = fs.statSync(file);
-    return {
-      file,
-      size: stat.size,
-      mtimeMs: stat.mtimeMs,
-      signature: `${file}:${stat.size}:${stat.mtimeMs}`,
-    };
-  });
   const filtered = filterFileRecordsForIndexWindow(records, indexWindow.startMs);
   const parts = filtered.records.map((record) => record.signature);
   return {

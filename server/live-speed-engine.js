@@ -2,6 +2,7 @@ const path = require("path");
 const { signalForRecord } = require("../shared/response-performance");
 const { usageFor, toolEvents } = require("./performance-facts");
 const { evaluateAgent, highest } = require("./performance-score");
+const { executionModes } = require("./execution-modes");
 
 const RETENTION_MS = 30 * 60_000;
 const STALE_MS = 5 * 60_000;
@@ -12,7 +13,7 @@ const overlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
 // Independent, bounded implementation of agent-speed's log-boundary live rate.
 // No transcript text is retained; all rates are exclusive to the owning agent.
 function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses = 4096, retentionMs = RETENTION_MS,
-  responseStore, actionStore, maxActions = 64, baselineLookup = () => null, acceptResponse = () => true } = {}) {
+  responseStore, actionStore, maxActions = 64, baselineLookup = () => null } = {}) {
   const agents = new Map();
   const responses = responseStore || new Map();
   const actions = actionStore || new Map();
@@ -35,7 +36,6 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     if (!Number.isFinite(ms) || ms > clock() + 5000 || ms < clock() - retentionMs) return;
     if (context.performanceMeta && (ms < context.performanceMeta.startedAt - 2000
       || (context.performanceMeta.ordinal != null && Number.isSafeInteger(obj.ordinal) && obj.ordinal < context.performanceMeta.ordinal))) return;
-    if (signal?.responseId && !acceptResponse(source, signal.responseId, ms)) return;
     const child = source === "claude" && String(context.file).match(/[/\\]([^/\\]+)[/\\]subagents[/\\]agent-([^/\\]+)\.jsonl$/);
     const sessionId = child ? `${child[1]}:agent:${child[2]}` : bounded(context.sessionId || obj.sessionId || path.basename(context.file, ".jsonl"));
     const key = `${source}|${sessionId}`;
@@ -53,12 +53,14 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     if (model && model !== "<synthetic>") agent.model = model;
     if (ms < agent.lastLineMs) return;
     agent.lastLineMs = ms;
+    const modes = executionModes(obj, context, source, context.configuredTier);
+    agent.modes = modes.current;
     for (const event of toolEvents(obj, source)) {
       if (typeof event.id !== "string" || !event.id) continue;
       const id = `${key}|${bounded(event.id)}`;
       const previous = actions.get(id);
       if (event.kind === "call" && !previous && typeof event.tool === "string" && event.tool) {
-        actions.set(id, { id, agentId: key, sourceType: source, model: agent.model || "", tool: bounded(event.tool), callMs: ms, resultMs: null, failed: null });
+        actions.set(id, { id, callId: bounded(event.id), agentId: key, sourceType: source, model: agent.model || "", tool: bounded(event.tool), callMs: ms, resultMs: null, failed: null });
         if (Number.isFinite(maxActions)) {
           const own = [...actions.values()].filter((a) => a.agentId === key);
           for (const old of own.slice(0, Math.max(0, own.length - maxActions))) actions.delete(old.id);
@@ -93,24 +95,35 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
         }
         agent.cumulative = signal.cumulative; agent.cumulativeOutput = signal.cumulativeOutput;
       }
-      const responseId = `${key}|${signal.responseId || ms}`;
+      const responseId = signal.responseId ? JSON.stringify([source, signal.responseId]) : `${key}|${ms}`;
+      const recordedUsd = source === "claude" && obj.message?.id && typeof obj.costUSD === "number" && Number.isFinite(obj.costUSD) && obj.costUSD >= 0 ? obj.costUSD : null;
       let record = responses.get(responseId);
+      if (record && record.agentId !== key) {
+        if ((signal.final || record.final) && (agent.start == null || agent.start <= record.endMs)) {
+          agent.phase = "idle"; agent.start = agent.first = null; agent.streaming = agent.explicit = false;
+        }
+        return;
+      }
       // A duplicate final snapshot cannot terminate a newer request.
       if (record?.final) {
         if (signal.kind === "snapshot") {
-          for (const field of ["input", "cachedInput", "reasoning"]) record[field] = Math.max(record[field] || 0, usage[field]);
+          for (const field of Object.keys(usage)) record[field] = Math.max(record[field] || 0, usage[field]);
           if (output != null) record.output = Math.max(record.output || 0, output);
+          if (recordedUsd != null) record.recordedUsd = Math.max(record.recordedUsd || 0, recordedUsd);
+          record.modes = { ...record.modes, ...modes.response };
           responses.set(responseId, record);
         }
         return;
       }
       if (!record) {
-        record = { id: responseId, agentId: key, sourceType: source, model: agent.model || "", startMs: agent.start, endMs: ms,
+        record = { id: responseId, nativeId: signal.responseId || null, agentId: key, sourceType: source, model: agent.model || "", startMs: agent.start, endMs: ms,
           firstMs: signal.kind === "snapshot" ? signal.hasContent ? ms : null : agent.first ?? null, output: null, final: false };
       }
       record.endMs = Math.max(record.endMs, ms);
       if (output != null) record.output = Math.max(record.output || 0, output);
-      for (const field of ["input", "cachedInput", "reasoning"]) record[field] = Math.max(record[field] || 0, usage[field]);
+      for (const field of Object.keys(usage)) record[field] = Math.max(record[field] || 0, usage[field]);
+      if (recordedUsd != null) record.recordedUsd = Math.max(record.recordedUsd || 0, recordedUsd);
+      record.modes = { ...record.modes, ...modes.response };
       if (signal.hasContent && record.firstMs == null) record.firstMs = ms;
       record.final = Boolean(signal.final);
       if (record.final) record.completionOrder = ++completionOrder;
@@ -195,7 +208,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
         }
       }
       return { id: agent.id, sessionId: agent.sessionId, sourceType: agent.sourceType, title: agent.title, project: agent.project,
-        model: agent.model || "未知模型", parentSessionId: agent.parentSessionId, phase: agent.phase, lastLineMs: agent.lastLineMs,
+        model: agent.model || "未知模型", modes: agent.modes, parentSessionId: agent.parentSessionId, phase: agent.phase, lastLineMs: agent.lastLineMs,
         ...rates, unknown, recentRate: agent.referenceRate, performance };
     }).sort((a, b) => Number(b.phase !== "idle") - Number(a.phase !== "idle") || b.lastLineMs - a.lastLineMs);
     const best = highest(rows);

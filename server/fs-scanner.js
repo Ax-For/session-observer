@@ -6,12 +6,13 @@
 const fs = require("fs");
 const path = require("path");
 const config = require("./config");
-const { resolveSourceAdapterForFile } = require("../shared/source-adapters");
+const { getSourceAdapter, resolveSourceAdapterForFile } = require("../shared/source-adapters");
+const { locationFor } = require("./source-locations");
 
 /**
  * Recursively list source logs, including separately attributed child agents.
  */
-function listJsonlFiles(dir) {
+function listJsonlFiles(dir, { zstd = false } = {}) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
   const stack = [dir];
@@ -22,7 +23,7 @@ function listJsonlFiles(dir) {
       const full = path.join(current, e.name);
       if (e.isDirectory()) {
         stack.push(full);
-      } else if (e.isFile() && full.endsWith(".jsonl")) {
+      } else if (e.isFile() && (full.endsWith(".jsonl") || (zstd && full.endsWith(".jsonl.zst")))) {
         out.push(full);
       }
     }
@@ -168,8 +169,9 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
     tailBuffer: "",
     endedWithNewline: options.initialEndedWithNewline === true,
   };
-  if (!fs.existsSync(file)) return result;
-  const fd = fs.openSync(file, "r");
+  if (!options.regularFileOnly && !fs.existsSync(file)) return result;
+  const fd = fs.openSync(file, options.regularFileOnly ? fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK : "r");
+  if (options.regularFileOnly && !fs.fstatSync(fd).isFile()) { fs.closeSync(fd); throw new Error("Source is not a regular file"); }
   const buffer = Buffer.alloc(64 * 1024);
   let parts = [];
   let partsLength = 0;
@@ -223,7 +225,10 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
       const readLength = Math.min(buffer.length, endOffset - byteOffset);
       if (readLength <= 0) break;
       const bytesRead = fs.readSync(fd, buffer, 0, readLength, byteOffset);
-      if (bytesRead <= 0) break;
+      if (bytesRead <= 0) {
+        if (options.regularFileOnly && Number.isFinite(endOffset)) throw new Error("Source truncated during history scan");
+        break;
+      }
 
       let segmentStart = 0;
       for (let index = 0; index < bytesRead; index += 1) {
@@ -393,9 +398,10 @@ function getPathSignature(target) {
  * Check if a file path belongs to Codex or Claude Code, returning the appropriate parser.
  */
 function resolveParserForFile(filePath, parsers) {
-  const adapter = resolveSourceAdapterForFile(filePath);
+  const location = locationFor(filePath);
+  const adapter = location ? getSourceAdapter(location.sourceType) : resolveSourceAdapterForFile(filePath);
   const parser = parsers[adapter.parserKey] || parsers.parseCodexLineToEvent;
-  const sessionsDir = adapter.key === "claude" ? config.CLAUDE_PROJECTS_DIR : config.SESSIONS_DIR;
+  const sessionsDir = location?.path || (adapter.key === "claude" ? config.CLAUDE_PROJECTS_DIR : config.SESSIONS_DIR);
   return { adapter, parser, sessionsDir };
 }
 

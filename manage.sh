@@ -11,8 +11,8 @@ OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-4}"
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8787}"
-SESSIONS_DIR="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
-CLAUDE_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+SESSIONS_DIR="${CODEX_SESSIONS_DIR:-${CODEX_HOME:-$HOME/.codex}/sessions}"
+CLAUDE_DIR="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"
 
 usage() {
   cat <<EOF
@@ -32,6 +32,8 @@ Environment variables:
   PORT                 Default: 8787
   CODEX_SESSIONS_DIR   Default: \$HOME/.codex/sessions
   CLAUDE_PROJECTS_DIR  Default: \$HOME/.claude/projects
+  OBSERVER_SOURCE_LOCATIONS_FILE
+                       Optional local native directory lists (source-locations.json)
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS
                        Default: 0, retain per-file parsed event arrays only when needed
   INDEX_MAX_EVENTS

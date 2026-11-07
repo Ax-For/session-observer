@@ -5,7 +5,6 @@
  */
 const config = require("./config");
 const fsScanner = require("./fs-scanner");
-const sessionOps = require("./session-ops");
 const sessionMeta = require("./session-meta");
 const { createSessionExport } = require("./session-export");
 const recentEventsReader = require("./recent-events-reader");
@@ -475,8 +474,8 @@ function buildObservabilityPayload(records, summary, extra = {}) {
       uptimeSeconds: Math.round(process.uptime()),
     },
     sources: {
-      codex: sessionOps.directoryStatus(config.SESSIONS_DIR),
-      claude: sessionOps.directoryStatus(config.CLAUDE_PROJECTS_DIR),
+      codex: sourceFiles.nativeSourceStatus("codex", records),
+      claude: sourceFiles.nativeSourceStatus("claude", records),
       adapters: listSourceAdapters(),
       dialogueSearch: _deps.dialogueSearchIndex?.state?.() || { enabled: false, mode: "scan" },
     },

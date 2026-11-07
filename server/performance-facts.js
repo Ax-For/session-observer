@@ -4,7 +4,8 @@ function usageFor(obj, source, cumulative = false) {
   const usage = source === "claude" ? obj.message?.usage || {} : obj.type === "token_usage_record" ? p.usage || {}
     : p.info?.[cumulative ? "total_token_usage" : "last_token_usage"] || {};
   const cachedInput = token(source === "claude" ? usage.cache_read_input_tokens : usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens);
-  return { input: token(token(usage.input_tokens) + (source === "claude" ? cachedInput + token(usage.cache_creation_input_tokens) : 0)), cachedInput,
+  const cacheCreation = source === "claude" ? token(usage.cache_creation_input_tokens) : 0;
+  return { input: token(token(usage.input_tokens) + (source === "claude" ? cachedInput + cacheCreation : 0)), cachedInput, cacheCreation,
     reasoning: token(source === "claude" ? usage.output_tokens_details?.thinking_tokens : usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens) };
 }
 function toolEvents(obj, source) {

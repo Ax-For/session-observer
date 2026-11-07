@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const { parser } = require("stream-json");
 
 // Decode metadata after large image/tool payloads without packing those strings.
-function readCompactJsonRecord(file, offset, length, options = {}) {
+function createCompactJsonDecoder(options = {}) {
   const stringLimit = options.stringLimit || 64 * 1024;
   const retainedLimit = 512 * 1024;
   const stack = [];
@@ -70,21 +70,17 @@ function readCompactJsonRecord(file, offset, length, options = {}) {
       scalarKind = "";
     } else if (["trueValue", "falseValue", "nullValue"].includes(name)) attach(value);
   });
-  const fd = fs.openSync(file, "r");
-  try {
-    const buffer = Buffer.allocUnsafe(16 * 1024);
-    for (let position = offset; position < offset + length;) {
-      const bytes = fs.readSync(fd, buffer, 0, Math.min(buffer.length, offset + length - position), position);
-      if (!bytes) throw new Error("JSON source changed while reading");
-      decoder.write(buffer.subarray(0, bytes));
-      if (decoder.errored || error) throw decoder.errored || error;
-      position += bytes;
-    }
+  function write(chunk) {
+    decoder.write(chunk);
+    if (decoder.errored || error) throw decoder.errored || error;
+  }
+  function finish() {
     decoder.end("\n");
     if (decoder.errored || error) throw decoder.errored || error;
     if (stack.length || scalarKind === "startString" || !root || typeof root !== "object") throw new Error("Incomplete JSON record");
     return { value: root, truncated, textTruncated };
-  } finally {
+  }
+  function close() {
     // Stream close events run on the next tick. A synchronous JSONL scan can
     // create thousands of decoders before that tick; detach captured records now.
     decoder.removeAllListeners("data");
@@ -94,8 +90,24 @@ function readCompactJsonRecord(file, offset, length, options = {}) {
     scalar = "";
     stack.length = 0;
     decoder.destroy();
-    fs.closeSync(fd);
   }
+  return { write, finish, close };
 }
 
-module.exports = { readCompactJsonRecord };
+function readCompactJsonRecord(file, offset, length, options = {}) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const decoder = createCompactJsonDecoder(options);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error("JSON source is not a regular file");
+    const buffer = Buffer.allocUnsafe(16 * 1024);
+    for (let position = offset; position < offset + length;) {
+      const bytes = fs.readSync(fd, buffer, 0, Math.min(buffer.length, offset + length - position), position);
+      if (!bytes) throw new Error("JSON source changed while reading");
+      decoder.write(buffer.subarray(0, bytes));
+      position += bytes;
+    }
+    return decoder.finish();
+  } finally { decoder.close(); fs.closeSync(fd); }
+}
+
+module.exports = { readCompactJsonRecord, createCompactJsonDecoder };

@@ -52,6 +52,20 @@ test("Claude repeated snapshots finalize once and do not terminate a newer reque
   assert.equal(s.estimated, 0);
 });
 
+test("the same native response arriving from a second source directory contributes only once to live rates", () => {
+  const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
+  for (const [file, sessionId] of [["original.jsonl", "original"], ["mirror.jsonl", "mirror"]]) {
+    const context = { file };
+    engine.ingest({ type: "user", timestamp: at(98), sessionId, message: { content: "start" } }, context, "claude");
+    engine.ingest({ ...assistant(100, "native-response-id", 90, "end_turn"), sessionId }, context, "claude");
+  }
+  const view = engine.snapshot();
+  assert.equal(view.measuredResponses, 1);
+  assert.equal(view.measured, 30);
+  assert.equal(view.generating, 0);
+  assert.equal(view.estimated, 0);
+});
+
 test("unknown speed, stale phases, inherited history and source sums stay honest", () => {
   let now = base + 100_000;
   const engine = createLiveSpeedEngine({ clock: () => now });

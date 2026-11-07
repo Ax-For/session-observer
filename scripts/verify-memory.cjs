@@ -39,7 +39,8 @@ async function main() {
     cwd: path.resolve(__dirname, ".."), stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, PATH: "/usr/bin:/bin", HOST: "127.0.0.1", PORT: String(port), CODEX_SESSIONS_DIR: codex,
       CLAUDE_PROJECTS_DIR: claude, CODEX_STATE_DB: path.join(root, "none.sqlite"), CODEX_SESSION_INDEX: path.join(root, "none.jsonl"),
-      OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_RUNTIME_DIR: path.join(root, "runtime"), OBSERVER_DIALOGUE_SEARCH: "sqlite" },
+      OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_RUNTIME_DIR: path.join(root, "runtime"),
+      OBSERVER_SOURCE_LOCATIONS_FILE: path.join(root, "missing-locations.json"), OBSERVER_DIALOGUE_SEARCH: "sqlite" },
   });
   let logs = "";
   server.stderr.on("data", (chunk) => { logs = (logs + chunk).slice(-10000); });
@@ -108,6 +109,11 @@ async function main() {
     assert.equal(baseline.coverage.compactedLines, records);
     assert.equal(baseline.coverage.identifiedResponses, records);
     assert.equal(baseline.models.length, 0, "unfinished responses cannot establish a baseline");
+    const daily = await measure("daily-history", () => request("/api/usage-history?source=claude"));
+    assert.equal(daily.totals.requests, records);
+    assert.equal(daily.totals.input + daily.totals.output, records * 330);
+    assert.equal(daily.totals.unfinalized, records);
+    assert.equal(daily.totals.outputTokS, null, "unfinished requests must not fabricate speed");
     await measure("historical-recalculation", () => request("/api/observability/recalculate", { method: "POST" }));
     await request("/api/diagnostics/recover", { method: "POST" });
     await measure("detail-after-worker-restart", () => request(`/api/events/detail?eventId=${encodeURIComponent(event.eventId)}`));

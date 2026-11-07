@@ -12,10 +12,9 @@ const { createQueryExecutor } = require("./server/query-executor");
 const { policyError, readBody } = require("./server/http-policy");
 const { createSourceWatchers } = require("./server/source-watchers");
 const { createLiveSpeedMonitor } = require("./server/live-speed-monitor");
-const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: [
-  { path: config.SESSIONS_DIR, sourceType: "codex" },
-  { path: config.CLAUDE_PROJECTS_DIR, sourceType: "claude" },
-] });
+const { getNativeLocations } = require("./server/source-locations");
+const { parseHistoryFilters, historyCsv } = require("./server/history-query");
+const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: getNativeLocations() });
 const executor = isQueryWorker ? null : createQueryExecutor();
 const { createPerformanceBaselineService } = require("./server/performance-baseline-service");
 const performanceBaseline = isQueryWorker ? null : createPerformanceBaselineService({ executor, onUpdate: liveSpeed.setBaseline });
@@ -140,11 +139,21 @@ function readJsonBody(req, res, onPayload) {
   readBody(req, res, sendJson, onPayload);
 }
 
+function usageHistoryStatus() {
+  const { status, generatedAt, timezone, coverage, progress, error } = performanceBaseline.state();
+  return { status, generatedAt, timezone, coverage, progress, error };
+}
+
 function runQuery(req, res, operation, args = []) {
   const controller = new AbortController();
   res.on("close", () => { if (!res.writableEnded) controller.abort(); });
   executor.run(operation, args, { signal: controller.signal }).then((payload) => {
     if (res.destroyed) return;
+    if (operation === "readUsageHistory" && typeof payload.csv === "string") {
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${payload.filename}"` });
+      return res.end(payload.csv);
+    }
     if (payload?.runtime) {
       payload.runtime.workerMemory = payload.runtime.memory;
       payload.runtime.memory = { ...process.memoryUsage(), rss: executor.state().combinedRss };
@@ -209,6 +218,17 @@ const server = http.createServer((req, res) => {
     if (u.pathname === "/api/performance-baseline/refresh" && req.method === "POST") {
       performanceBaseline.refresh();
       return sendJson(req, res, 202, performanceBaseline.state());
+    }
+    if (u.pathname === "/api/usage-history/status" && req.method === "GET") return sendJson(req, res, 200, usageHistoryStatus());
+    if (u.pathname === "/api/usage-history/refresh" && req.method === "POST") {
+      performanceBaseline.refresh();
+      return sendJson(req, res, 202, usageHistoryStatus());
+    }
+    if (u.pathname === "/api/usage-history" && req.method === "GET") {
+      let filters;
+      try { filters = parseHistoryFilters(u.searchParams); }
+      catch (error) { return sendJson(req, res, 400, { error: error.message }); }
+      return runQuery(req, res, "readUsageHistory", [filters, u.searchParams.get("format")]);
     }
     if (u.pathname === "/api/live-speed" && req.method === "GET") return liveSpeed.stream(req, res);
     if (u.pathname === "/api/live-speed/snapshot" && req.method === "GET") return sendJson(req, res, 200, liveSpeed.snapshot());
@@ -456,12 +476,19 @@ process.on("unhandledRejection", (reason) => {
 if (isQueryWorker) {
   const performanceHistory = require("./server/performance-history").createPerformanceHistory({
     file: require("path").join(config.RUNTIME_DIR, "performance-history.sqlite"),
-    listFiles: require("./server/source-files").listSourceFileRecords,
-    roots: [{ path: config.SESSIONS_DIR, sourceType: "codex" }, { path: config.CLAUDE_PROJECTS_DIR, sourceType: "claude" }],
+    listFiles: require("./server/source-files").listHistoryFileRecords,
+    loadPrices: analysisServices.loadPrices,
+    scanBudgetMs: 4000,
     onProgress: (progress) => { if (activeJobId) process.send?.({ id: activeJobId, progress }); },
   });
   const operations = {
     performanceBaseline: performanceHistory.refresh,
+    readUsageHistory: (filters, format) => {
+      const data = performanceHistory.read(filters, { exportAll: format === "csv" });
+      if (!format) return data;
+      const kind = format === "modes-csv" ? "execution-modes" : "daily-usage";
+      return { csv: historyCsv(data, format === "modes-csv"), filename: `session-observer-${kind}-${data.range.from}-${data.range.to}.csv` };
+    },
     queryEvents: routes.queryEvents, querySessions: routes.querySessions,
     queryObservability: routes.queryObservability, recalculateObservability: routes.recalculateObservability,
     querySessionReplay: routes.querySessionReplay, querySessionComparison: routes.querySessionComparison,
@@ -475,15 +502,15 @@ if (isQueryWorker) {
     readAnnotation: (id) => ({ annotation: routes.getSessionAnnotation(id) }),
     writeAnnotation: (id, value) => ({ annotation: routes.setSessionAnnotation(id, value) }),
   };
-  process.on("message", (message) => {
+  process.on("message", async (message) => {
     if (message.operation === "invalidate") { routes.invalidateCaches(); return; }
     try {
       activeJobId = message.id;
       if (!Object.hasOwn(operations, message.operation)) throw new Error("Unsupported query operation");
-      const result = operations[message.operation](...message.args);
+      const result = await operations[message.operation](...message.args);
       activeJobId = null;
       process.send?.({ id: message.id, result, memory: process.memoryUsage() }, () => indexManager.trimHeapNow());
-    } catch (error) { process.send?.({ id: message.id, error: String(error.message || error) }); }
+    } catch (error) { activeJobId = null; process.send?.({ id: message.id, error: String(error.message || error) }); }
   });
   process.on("disconnect", () => process.exit(0));
 } else {

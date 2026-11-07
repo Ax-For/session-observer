@@ -75,6 +75,10 @@ async function requestDownload(url) {
 }
 
 export const apiClient = {
+  fetchUsageHistory(params, options) { return request(`/api/usage-history?${buildQuery(params)}`, options); },
+  fetchUsageHistoryStatus(options) { return request("/api/usage-history/status", options); },
+  refreshUsageHistory() { return request("/api/usage-history/refresh", { method: "POST" }); },
+  downloadUsageHistory(params, format = "csv") { return requestDownload(`/api/usage-history?${buildQuery({ ...params, format })}`); },
   fetchDiagnostics(options) { return request("/api/diagnostics", options); },
   recoverDiagnostics() { return request("/api/diagnostics/recover", { method: "POST" }); },
   cancelQuery(id) { return request("/api/diagnostics/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); },

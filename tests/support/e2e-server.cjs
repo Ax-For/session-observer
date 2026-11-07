@@ -6,12 +6,18 @@ const { execFileSync } = require("child_process");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "observer-e2e-"));
 const codex = path.join(root, ".codex", "sessions");
 const claude = path.join(root, ".claude", "projects");
+const archive = path.join(root, ".codex", "archived_sessions");
+const extraCodex = path.join(root, "extra-codex");
+const extraClaude = path.join(root, "extra-claude");
+const locationsFile = path.join(root, "source-locations.json");
 const repo = path.join(root, "demo-project");
 fs.mkdirSync(codex, { recursive: true });
 fs.mkdirSync(claude, { recursive: true });
+for (const dir of [archive, extraCodex, extraClaude]) fs.mkdirSync(dir);
+fs.writeFileSync(locationsFile, JSON.stringify({ codex: ["default", extraCodex], claude: ["default", extraClaude] }));
 fs.mkdirSync(repo);
 const liveManifest = path.join(os.tmpdir(), `observer-e2e-live-${process.env.PORT || "8878"}.json`);
-fs.writeFileSync(liveManifest, JSON.stringify({ codex, claude }));
+fs.writeFileSync(liveManifest, JSON.stringify({ codex, claude, archive, extraCodex, extraClaude }));
 process.on("exit", () => fs.rmSync(liveManifest, { force: true }));
 const now = Date.now();
 execFileSync("git", ["init", "-q"], { cwd: repo });
@@ -44,6 +50,6 @@ fs.writeFileSync(path.join(childDir, "agent-helper.jsonl"), JSON.stringify({ typ
 Object.assign(process.env, { HOST: "127.0.0.1", PORT: process.env.PORT || "8878", CODEX_SESSIONS_DIR: codex, CLAUDE_PROJECTS_DIR: claude,
   CODEX_STATE_DB: path.join(root, "missing.sqlite"), CODEX_SESSION_INDEX: path.join(root, "missing-index.jsonl"),
   OBSERVER_RUNTIME_DIR: path.join(root, "runtime"), OBSERVER_SESSION_ANNOTATIONS_FILE: path.join(root, "annotations.json"),
-  OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_DIALOGUE_SEARCH: "sqlite" });
+  OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_SOURCE_LOCATIONS_FILE: locationsFile, OBSERVER_DIALOGUE_SEARCH: "sqlite" });
 process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 require("../../server.js");

@@ -27,13 +27,15 @@ const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "sql
   ? "scan"
   : "sqlite";
 const SOURCE_ADAPTERS_FILE = process.env.OBSERVER_SOURCE_ADAPTERS_FILE || "";
+const SOURCE_LOCATIONS_FILE = process.env.OBSERVER_SOURCE_LOCATIONS_FILE || path.join(DATA_DIR, "source-locations.json");
 
-const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
-const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
+const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(codexHome, "sessions");
+const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
 const CODEX_SESSION_INDEX = process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
-const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(os.homedir(), ".codex", "config.toml");
+const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(path.basename(SESSIONS_DIR) === "sessions" ? path.dirname(SESSIONS_DIR) : codexHome, "config.toml");
 
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1000;
@@ -156,6 +158,7 @@ module.exports = {
   DIALOGUE_SEARCH_DB,
   DIALOGUE_SEARCH_MODE,
   SOURCE_ADAPTERS_FILE,
+  SOURCE_LOCATIONS_FILE,
   STATIC_ROOT,
   ensureFrontendBuild,
   DIST_ROOT,

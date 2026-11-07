@@ -4,6 +4,7 @@ import { MotionSkeleton, RefreshIcon, useInterfaceMotion } from "./interface-mot
 import { AnimatedSymbol } from "./animated-symbol";
 import { DataChart } from "./data-chart";
 import { LiveSpeedPanel } from "./live-speed-panel";
+import { DailyHistoryPanel } from "./daily-history-panel";
 import { CHART_COLORS } from "../lib/chart-options";
 import {
   Alert,
@@ -1608,6 +1609,12 @@ function SystemReadinessPanel({ runtime, sources, index, generatedAt, health }) 
           );
         })}
       </div>
+      {sourceRows.some(([, source]) => source?.locations?.length) && <details className="product-source-locations">
+        <summary>数据目录</summary>
+        <ul>{sourceRows.flatMap(([label, source]) => (source?.locations || []).map((location) => <li key={`${label}:${location.path}`}>
+          <span>{label} · {location.archive ? "历史归档" : "会话"}{location.exists ? "" : " · 未发现"}</span><code>{location.path}</code>
+        </li>))}</ul>
+      </details>}
     </div>
   );
 }
@@ -1787,6 +1794,7 @@ export function ObservabilityWorkspace({
   const [usageMetric, setUsageMetric] = useState("tokens");
   const [tokenRangeKey, setTokenRangeKey] = useState("week");
   const [overviewAnalysis, setOverviewAnalysis] = useState("workspaces");
+  const [tokenView, setTokenView] = useState("ledger");
   const summary = payload?.summary || {};
   const health = summary.health || {};
   const tokens = summary.tokens || {};
@@ -1992,7 +2000,10 @@ export function ObservabilityWorkspace({
         </>
       ) : null}
 
-      {view === "tokens" ? (
+      {view === "tokens" && <div className="usage-history-switch"><SegmentedControl size="sm" aria-label="Token 账本视图" value={tokenView} onChange={setTokenView}
+        data={[{ label: "近期账本", value: "ledger" }, { label: "每日历史", value: "history" }]} /></div>}
+      {view === "tokens" && tokenView === "history" && <DailyHistoryPanel />}
+      {view === "tokens" && tokenView === "ledger" ? (
         <>
           <TokenRangeToolbar
             range={{ ...selectedTokenRange, cache: summary.cache }}

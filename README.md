@@ -37,7 +37,7 @@ The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or 
 | Surface | What it is for |
 | --- | --- |
 | **Overview** | Live output tok/s, five-minute speed history, per-agent phases, seven-component performance scores versus 14-day model baselines, runtime/source health, today's activity, 24-hour load and workspace concentration |
-| **Token ledger** | Uncached input, cache hits, cache creation, output, reasoning output, estimated cost, efficiency ratios, forecasts, trends, model attribution, workspace attribution, and high-cost sessions |
+| **Token ledger** | Token and cost attribution, efficiency, trends, high-cost sessions, and retained daily history with date, source and model filters and CSV exports |
 | **Event stream** | Semantic activity grouped by user turn, dedicated Q&A/tool/usage/raw views, explicit search, filters, highlighted dialogue matches, live follow/pause, and direct jumps into session detail |
 | **Session library** | Active sessions, workspace grouping, directory tree, stable full-session totals, start and latest timestamps, collapsible conversations, activity, usage, files/tools, commands, errors, compactions, and raw diagnostics |
 
@@ -108,14 +108,17 @@ Screenshots use sanitized example data. They do not contain real prompts, local 
 | Source | Default path | Data used |
 | --- | --- | --- |
 | Codex sessions | `~/.codex/sessions/**/*.jsonl` | Prompts, agent messages, tool calls, token usage, models, timestamps, and working directories |
+| Codex archives | `~/.codex/archived_sessions/` and `*.jsonl.zst` in session roots | Daily usage, execution modes and performance for history and the baseline |
 | Claude Code projects | `~/.claude/projects/**/*.jsonl` | Project sessions, messages, tool activity, models, and usage |
 | Codex state DB | `~/.codex/state_5.sqlite` | Session title metadata, read through the `sqlite3` CLI |
 
 Source changes are observed through filesystem notifications and streamed to the browser. Event pages and searches are still read on demand rather than held in a permanent in-memory index.
 
+Open **Token → 每日历史** to filter by date, source and model, see daily output speed and scores, and download aggregate CSVs. Recorded daily totals survive source-log removal. The live agent list identifies whether a mode was configured, selected, recorded or served.
+
 ## Requirements
 
-- Node.js LTS or newer
+- Node.js 22.15 or newer LTS (for streaming Zstandard archives)
 - npm
 - `sqlite3` CLI for Codex title metadata
 - A modern desktop browser
@@ -167,6 +170,7 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 | `OBSERVER_MIN_CACHE_COVERAGE` | `70` | Minimum cache-read coverage percentage |
 | `OBSERVER_DIALOGUE_SEARCH` | `sqlite` | Compact disk-backed dialogue cache; `scan` opts into the legacy bounded scanner |
 | `OBSERVER_SOURCE_ADAPTERS_FILE` | disabled | JSON manifest for additional generic JSONL sources |
+| `OBSERVER_SOURCE_LOCATIONS_FILE` | `~/.session-observer/source-locations.json` | Local Codex and Claude Code location lists; follows `OBSERVER_DATA_DIR` by default |
 | `OBSERVER_ACCESS_TOKEN` | disabled | Required for non-loopback binding; HTTP Basic password |
 | `OBSERVER_ALLOWED_HOSTS` | disabled | Comma-separated additional allowed hosts, including port |
 | `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | Set to `1` to allow source transcript rename/delete |
@@ -175,6 +179,19 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
 ```
+
+To read multiple native session directories, create `source-locations.json` and restart the service:
+
+```json
+{
+  "codex": ["default", "/absolute/path/another-codex/sessions"],
+  "claude": ["default", "/absolute/path/another-claude/projects"]
+}
+```
+
+Use one to eight locations per source. `default` keeps the normal location, including an existing single-directory override. Omit it to replace that location. A Codex `sessions` folder also discovers its sibling `archived_sessions`. Archives and compressed logs feed history and the baseline; normal session logs also feed live monitoring and replay. The settings are loaded from the local filesystem at service start.
+
+Daily aggregates, model names and deduplication hashes are stored in `performance-history.sqlite` under the runtime directory. To reset history, stop the service and move that database and its `-wal` and `-shm` sidecars aside; the next start rebuilds from the logs that remain available.
 
 Custom JSONL sources can be registered without changing the scanner:
 
