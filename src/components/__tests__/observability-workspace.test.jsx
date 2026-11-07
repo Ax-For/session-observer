@@ -483,7 +483,7 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.getByText("近期会话")).toBeInTheDocument();
     expect(screen.getByText("今日对话")).toBeInTheDocument();
     expect(screen.getByText("今日 Token")).toBeInTheDocument();
-    expect(screen.getByText("今日成本")).toBeInTheDocument();
+    expect(screen.queryByText("今日成本")).not.toBeInTheDocument();
     expect(screen.getByText("缓存覆盖")).toBeInTheDocument();
     expect(screen.getByText("24 小时负载走势")).toBeInTheDocument();
     expect(screen.getByTestId("overview-activity-chart")).toBeInTheDocument();
@@ -526,15 +526,13 @@ describe("ObservabilityWorkspace", () => {
     expect(screen.queryByText("按天 Token 趋势")).not.toBeInTheDocument();
   });
 
-  test("uses today's cache coverage rather than lifetime totals and does not imply unpriced use is free", () => {
+  test("uses today's cache coverage rather than lifetime totals", () => {
     const todayPayload = structuredClone(payload);
-    todayPayload.summary.tokens.windows.day = { total: 1000, input: 100, inputTotal: 1000, cacheReadInput: 900, knownTokenTotal: 0, estimatedUsd: 0 };
+    todayPayload.summary.tokens.windows.day = { total: 1000, input: 100, inputTotal: 1000, cacheReadInput: 900 };
     render(<MantineProvider><ObservabilityWorkspace payload={todayPayload} view="overview" /></MantineProvider>);
     const kpis = screen.getByLabelText("当前运行摘要");
     expect(within(kpis).getByText("90%")).toBeInTheDocument();
     expect(within(kpis).getByText("900 今日命中输入")).toBeInTheDocument();
-    expect(within(kpis).getByText("未计价")).toBeInTheDocument();
-    expect(within(kpis).queryByText("$0")).not.toBeInTheDocument();
   });
 
   test("keeps unavailable costs and undefined cache ratios honest across token attribution", () => {

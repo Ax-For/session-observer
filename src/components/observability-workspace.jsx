@@ -1870,13 +1870,6 @@ export function ObservabilityWorkspace({
       symbol: "cpu",
     },
     {
-      label: "今日成本",
-      value: costAmountLabel(tokenWindows.day, tokenWindows.day?.total || 0),
-      meta: "按已识别模型价格估算",
-      tone: "success",
-      symbol: "dollarSign",
-    },
-    {
       label: "缓存覆盖",
       value: percentLabel(cacheCoverage),
       meta: `${tokenLabel(cacheReadToken(tokenWindows.day))} 今日命中输入`,

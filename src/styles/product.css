@@ -134,7 +134,7 @@ body { font-size: 14px; background: var(--bg); }
 .product-shell .mc-panel-heading h3 { font-size: 14px; line-height: 1.4; font-weight: 650; }
 .product-shell .mc-panel-heading .v2-panel-note, .product-shell .mc-muted-line, .product-shell .mc-empty { color: var(--text-faint); font-size: 12px; }
 .product-shell .mc-eyebrow, .product-shell .eyebrow { font-size: 11px; text-transform: none; color: var(--text-faint); }
-.product-shell .v2-overview-strip .mc-operational-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: var(--panel); border: 1px solid var(--line) !important; border-radius: 8px; overflow: hidden; }
+.product-shell .v2-overview-strip .mc-operational-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); background: var(--panel); border: 1px solid var(--line) !important; border-radius: 8px; overflow: hidden; }
 .product-shell .mc-operational-strip__item { padding: 15px 16px 12px; min-height: 124px; border: 0; border-right: 1px solid var(--line); background: none; }
 .product-shell .mc-operational-strip__item:last-child { border: 0; }
 .product-kpi-heading { display: flex; justify-content: flex-start; align-items: center; gap: 8px; height: 28px; }
