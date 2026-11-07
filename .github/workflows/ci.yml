@@ -12,7 +12,8 @@ permissions:
 jobs:
   check:
     name: Lint, test, and build
-    runs-on: ubuntu-latest
+    # Keep the runner on an Ubuntu release supported by the locked Playwright version.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
