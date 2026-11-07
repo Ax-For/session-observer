@@ -1,5 +1,5 @@
 const { addRecord, emptyRecord, localDay, dayOffset, pooled, timed } = require("./performance-score");
-const { estimateTokenCost } = require("../shared/token-pricing");
+const { estimateResponseCost } = require("./performance-facts");
 
 const PAGE_SIZE = 30;
 const FIELDS = ["requests", "input", "cachedInput", "cacheCreation", "output", "reasoning", "unfinalized",
@@ -46,9 +46,7 @@ function createUsageRecorder() {
     const key = JSON.stringify([day, response.sourceType, model]);
     if (!rows.has(key)) rows.set(key, { day, sourceType: response.sourceType, model, usage: totals(), modes: new Map() });
     const row = rows.get(key), measured = timed(response);
-    const estimate = estimateTokenCost({ input: Math.max(0, input - cachedInput - cacheCreation), cacheReadInput: cachedInput,
-      cacheCreationInput: cacheCreation, output: output || 0 }, model,
-    { time: new Date(response.endMs).toISOString(), speed: response.modes?.tier?.value, recordedUsd: response.recordedUsd });
+    const estimate = estimateResponseCost(response);
     const counts = { requests: 1, input, cachedInput, cacheCreation, output: output || 0, reasoning,
       unfinalized: response.final ? 0 : 1, measured: measured ? 1 : 0, measuredOutput: measured?.output || 0,
       measuredMs: measured?.durationMs || 0, pricedRequests: estimate.known ? 1 : 0, estimatedUsd: estimate.estimatedUsd };

@@ -11,6 +11,121 @@ const start = (s) => ({ type: "event_msg", timestamp: at(s), payload: { type: "t
 const usage = (s, id, output = 100) => ({ type: "token_usage_record", timestamp: at(s), payload: { response_id: id, usage: { output_tokens: output } } });
 const end = (s) => ({ type: "event_msg", timestamp: at(s), payload: { type: "task_complete" } });
 const assistant = (s, id, output, stop) => ({ type: "assistant", timestamp: at(s), sessionId: "c", message: { id, model: "claude-test", usage: { output_tokens: output }, stop_reason: stop, content: [{ type: "text" }] } });
+const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
+
+test("longer live charts include older responses and average each bucket without changing the current rate", () => {
+  const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
+  const context = { file: "codex.jsonl" };
+  const responses = [
+    { startAt: -1104, endAt: -1100, input: 240, output: 60, reasoning: 20 },
+    { startAt: -504, endAt: -500, input: 200, output: 100, reasoning: 40 },
+    { startAt: -24, endAt: -20, input: 180, output: 120, reasoning: 60 },
+    { startAt: 98, endAt: 100, input: 30, output: 30, reasoning: 10 },
+  ];
+  engine.ingest({ type: "turn_context", timestamp: at(-1105), payload: { model: "gpt-5.4" } }, context, "codex");
+  for (const { startAt, endAt, input, output, reasoning } of responses) {
+    engine.ingest(start(startAt), context, "codex");
+    engine.ingest({ type: "token_usage_record", timestamp: at(endAt), payload: { response_id: String(endAt), usage: {
+      input_tokens: input, output_tokens: output, reasoning_output_tokens: reasoning,
+    } } }, context, "codex");
+  }
+
+  const windows = [1, 5, 15, 30];
+  const snapshots = engine.snapshotRanges(windows);
+  assert.deepEqual([...snapshots.values()].map((view) => view.history.length), [60, 300, 300, 300]);
+  assert.deepEqual([...snapshots.values()].map((view) => view.historyBucketMs), [1000, 1000, 3000, 6000]);
+  const expected = [[30, 60, 10], [150, 360, 70], [250, 660, 110], [310, 960, 130]];
+  for (const [index, minutes] of windows.entries()) {
+    const view = snapshots.get(minutes);
+    assert.equal(view.historyWindowMs, minutes * 60_000);
+    assert.equal(view.windowMs, 3000);
+    closeTo(view.measured, 10);
+    closeTo(view.rates.total.measured, 20);
+    closeTo(view.rates.reasoning.measured, 10 / 3);
+    const sumOf = (read) => view.history.reduce((sum, bucket) => sum + read(bucket), 0) * view.historyBucketMs / 1000;
+    closeTo(sumOf((bucket) => bucket.measured), expected[index][0]);
+    closeTo(sumOf((bucket) => bucket.rates.total.measured), expected[index][1]);
+    closeTo(sumOf((bucket) => bucket.rates.reasoning.measured), expected[index][2]);
+    assert.equal(view.history.at(-1).time - view.history[0].time + view.historyBucketMs, view.historyWindowMs);
+  }
+  assert.deepEqual(engine.snapshot(), snapshots.get(5));
+});
+
+test("the live window and buckets count cached input once, clamp thinking to output and use recorded or local prices", () => {
+  const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
+  const codex = { file: "codex.jsonl" };
+  engine.ingest({ type: "turn_context", timestamp: at(97), payload: { model: "gpt-5.4" } }, codex, "codex");
+  engine.ingest(start(98), codex, "codex");
+  engine.ingest({ type: "token_usage_record", timestamp: at(100), payload: { response_id: "codex-r", usage: {
+    input_tokens: 300, cached_input_tokens: 100, output_tokens: 90, reasoning_output_tokens: 30,
+  } } }, codex, "codex");
+  const claude = { file: "claude.jsonl" };
+  engine.ingest({ type: "api-request", timestamp: at(97), sessionId: "c" }, claude, "claude");
+  const result = assistant(100, "claude-r", 30, "end_turn");
+  result.costUSD = 0.006;
+  Object.assign(result.message.usage, { input_tokens: 70, cache_read_input_tokens: 30, cache_creation_input_tokens: 20,
+    output_tokens_details: { thinking_tokens: 50 } });
+  engine.ingest(result, claude, "claude");
+
+  const snapshot = engine.snapshot();
+  closeTo(snapshot.measured, 40);
+  closeTo(snapshot.rates.total.measured, 180);
+  closeTo(snapshot.rates.reasoning.measured, 20);
+  closeTo(snapshot.rates.cost.measured, 0.002625);
+  assert.equal(snapshot.rates.cost.knownShare, 1);
+  assert.equal(snapshot.rates.reasoning.partial, false);
+  for (const key of ["total", "reasoning", "cost"]) {
+    closeTo(snapshot.sources.reduce((n, source) => n + source.rates[key].measured, 0), snapshot.rates[key].measured);
+    closeTo(snapshot.history.slice(-3).reduce((n, bucket) => n + bucket.rates[key].measured, 0) / 3, snapshot.rates[key].measured);
+  }
+  closeTo(snapshot.agents.reduce((n, agent) => n + agent.rates.total.measured, 0), 180);
+});
+
+test("in-flight and unfinished intervals share a reference set and a final snapshot replaces all estimates", () => {
+  const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
+  const context = { file: "claude.jsonl" };
+  const begin = (s) => engine.ingest({ type: "api-request", timestamp: at(s), sessionId: "c" }, context, "claude");
+  function put(s, id, input, output, reasoning, costUSD, stop) {
+    const row = assistant(s, id, output, stop);
+    Object.assign(row.message.usage, { input_tokens: input, output_tokens_details: { thinking_tokens: reasoning } });
+    engine.ingest({ ...row, costUSD }, context, "claude");
+  }
+  begin(88); put(90, "priced", 100, 100, 40, 0.002, "end_turn");
+  begin(91); put(95, "unpriced", 400, 200, undefined, undefined, "end_turn");
+  begin(98); put(99, "active", 5, 2);
+  let snapshot = engine.snapshot();
+  closeTo(snapshot.rates.total.estimated, (800 / 6) * 2 / 3);
+  closeTo(snapshot.rates.reasoning.estimated, (40 / 6) * 2 / 3);
+  closeTo(snapshot.rates.reasoning.knownShare, 1 / 3);
+  closeTo(snapshot.rates.cost.estimated, (0.002 / 2) * 2 / 3);
+  assert.equal(snapshot.rates.cost.measured, 0);
+
+  put(100, "active", 300, 60, 18, 0.006, "end_turn");
+  snapshot = engine.snapshot();
+  closeTo(snapshot.rates.total.measured, 120);
+  closeTo(snapshot.rates.reasoning.measured, 6);
+  closeTo(snapshot.rates.cost.measured, 0.002);
+  for (const key of ["total", "reasoning", "cost"]) assert.equal(snapshot.rates[key].estimated, 0);
+});
+
+test("unknown prices and missing reasoning stay unavailable until the window goes idle", () => {
+  let now = base + 100_000;
+  const engine = createLiveSpeedEngine({ clock: () => now });
+  const context = { file: "claude.jsonl" };
+  engine.ingest({ type: "api-request", timestamp: at(98), sessionId: "c" }, context, "claude");
+  engine.ingest(assistant(100, "unpriced", 150, "end_turn"), context, "claude");
+  let snapshot = engine.snapshot();
+  for (const key of ["reasoning", "cost"]) {
+    assert.equal(snapshot.rates[key].available, false);
+    assert.equal(snapshot.rates[key].knownShare, 0);
+  }
+  now += 4000;
+  snapshot = engine.snapshot();
+  for (const key of ["reasoning", "cost"]) {
+    assert.equal(snapshot.rates[key].available, true);
+    assert.equal(snapshot.rates[key].measured, 0);
+  }
+});
 
 test("live rate uses 3s overlap, replaces predictions with usage and excludes tool waits", () => {
   let now = base + 100_000;

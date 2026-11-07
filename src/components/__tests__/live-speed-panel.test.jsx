@@ -30,3 +30,19 @@ test("history preserves exact measured and estimated series in a nonanimated cha
   expect(option.series.map((s) => s.data)).toEqual([[10], [20]]);
   expect(option.animation).toBe(false);
 });
+
+test("new live metrics switch the trend, keep missing reasoning unavailable and disclose partial cost coverage", () => {
+  const rates = { total: { measured: 100, estimated: 50 }, reasoning: { available: false },
+    cost: { measured: 0.00042, estimated: 0, available: true, partial: true, knownShare: 0.5 } };
+  const snapshot = { ...data, rates };
+  const { rerender } = render(<MantineProvider><LiveSpeedView data={snapshot} status="connected" /></MantineProvider>);
+  expect(screen.getByTestId("live-speed-throughput")).toHaveTextContent("150.0");
+  expect(screen.getByTestId("live-speed-reasoning")).toHaveTextContent("—");
+  expect(screen.getByTestId("live-speed-cost")).toHaveTextContent("0.00042");
+  expect(screen.getByText("已计价 50% 输出")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "总吞吐" }));
+  expect(screen.getByRole("img", { name: "近 5 分钟总吞吐趋势" })).toBeInTheDocument();
+  rerender(<MantineProvider><LiveSpeedView data={snapshot} status="reconnecting" /></MantineProvider>);
+  expect(screen.getByTestId("live-speed-throughput")).toHaveTextContent("—");
+  expect(screen.getByTestId("live-speed-cost")).toHaveTextContent("—");
+});

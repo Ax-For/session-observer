@@ -33,3 +33,18 @@ test("a silent connection becomes stale and malformed frames preserve the previo
   act(() => source.speed({ data: "malformed" })); expect(result.current.data.generatedAt).toBe(1);
   act(() => vi.advanceTimersByTime(8000)); expect(result.current.status).toBe("reconnecting");
 });
+
+test("changing the chart range closes the old stream and ignores its late frames", () => {
+  vi.stubGlobal("EventSource", Source);
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const { result, rerender } = renderHook((minutes) => useLiveSpeed(true, minutes), { initialProps: 5 });
+  const original = Source.instances[0];
+  act(() => original.speed({ data: JSON.stringify({ generatedAt: 1, historyWindowMs: 300_000, history: [] }) }));
+  rerender(30);
+  const longer = Source.instances[1];
+  expect(original.closed).toBe(true);
+  expect(longer.url).toBe("/api/live-speed?minutes=30");
+  act(() => longer.speed({ data: JSON.stringify({ generatedAt: 2, historyWindowMs: 1_800_000, history: [] }) }));
+  act(() => original.speed({ data: JSON.stringify({ generatedAt: 3, historyWindowMs: 300_000, history: [] }) }));
+  expect(result.current.data.historyWindowMs).toBe(1_800_000);
+});

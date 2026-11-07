@@ -12,6 +12,7 @@ const { createQueryExecutor } = require("./server/query-executor");
 const { policyError, readBody } = require("./server/http-policy");
 const { createSourceWatchers } = require("./server/source-watchers");
 const { createLiveSpeedMonitor } = require("./server/live-speed-monitor");
+const { DEFAULT_HISTORY_MINUTES, LIVE_HISTORY_MINUTES } = require("./shared/response-performance");
 const { getNativeLocations } = require("./server/source-locations");
 const { parseHistoryFilters, historyCsv } = require("./server/history-query");
 const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: getNativeLocations() });
@@ -144,10 +145,16 @@ function usageHistoryStatus() {
   return { status, generatedAt, timezone, coverage, progress, error };
 }
 
+function reloadLivePrices() {
+  try { analysisServices.loadPrices(); }
+  catch { console.warn("[live-speed] Unable to reload the local pricebook."); }
+}
+
 function runQuery(req, res, operation, args = []) {
   const controller = new AbortController();
   res.on("close", () => { if (!res.writableEnded) controller.abort(); });
   executor.run(operation, args, { signal: controller.signal }).then((payload) => {
+    if (operation === "savePrices") reloadLivePrices();
     if (res.destroyed) return;
     if (operation === "readUsageHistory" && typeof payload.csv === "string") {
       res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store",
@@ -230,8 +237,13 @@ const server = http.createServer((req, res) => {
       catch (error) { return sendJson(req, res, 400, { error: error.message }); }
       return runQuery(req, res, "readUsageHistory", [filters, u.searchParams.get("format")]);
     }
-    if (u.pathname === "/api/live-speed" && req.method === "GET") return liveSpeed.stream(req, res);
-    if (u.pathname === "/api/live-speed/snapshot" && req.method === "GET") return sendJson(req, res, 200, liveSpeed.snapshot());
+    if (req.method === "GET" && ["/api/live-speed", "/api/live-speed/snapshot"].includes(u.pathname)) {
+      const values = u.searchParams.getAll("minutes");
+      const minutes = values.length ? LIVE_HISTORY_MINUTES.find((option) => String(option) === values[0]) : DEFAULT_HISTORY_MINUTES;
+      if (values.length > 1 || minutes == null) return sendJson(req, res, 400, { error: "Invalid live speed history range" });
+      if (u.pathname === "/api/live-speed") return liveSpeed.stream(req, res, minutes);
+      return sendJson(req, res, 200, liveSpeed.snapshot(minutes));
+    }
     if (u.pathname === "/api/source-events" && req.method === "GET") {
       streamSourceEvents(req, res);
       return;
@@ -526,7 +538,10 @@ if (isQueryWorker) {
   console.log(`Session Observer running at http://${config.HOST}:${config.PORT}`);
   console.log(`Codex sessions: ${config.SESSIONS_DIR}`);
   console.log(`Claude Code sessions: ${config.CLAUDE_PROJECTS_DIR}`);
-    watchers = createSourceWatchers(boundScheduleSourceRefresh, { onFileChange: liveSpeed.notify, onRecords: liveSpeed.discover });
+    watchers = createSourceWatchers(boundScheduleSourceRefresh, {
+      onFileChange: liveSpeed.notify,
+      onRecords(records) { liveSpeed.discover(records); reloadLivePrices(); },
+    });
     liveSpeed.start();
     performanceBaseline.start();
   });

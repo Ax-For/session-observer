@@ -1,4 +1,8 @@
+import sourceAdapters from "../../shared/source-adapters.js";
+
 const zhNumber = new Intl.NumberFormat("zh-CN");
+const { NATIVE_SOURCE_TYPES, getSourceAdapter } = sourceAdapters;
+export const PLATFORM_OPTIONS = NATIVE_SOURCE_TYPES.map((value) => ({ value, label: getSourceAdapter(value).label }));
 
 export function formatNumber(value) {
   const num = Number(value);

@@ -5,6 +5,8 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createResponsePerformance() {
   "use strict";
 
+  const LIVE_HISTORY_MINUTES = Object.freeze([1, 5, 15, 30]);
+  const DEFAULT_HISTORY_MINUTES = 5;
   const timestamp = (value) => {
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
@@ -127,5 +129,5 @@
       firstContentSamples: waits.length, firstContentP50Ms: percentile(0.5), firstContentP95Ms: percentile(0.95) };
   }
 
-  return { signalForRecord, buildResponsePerformance };
+  return { signalForRecord, buildResponsePerformance, LIVE_HISTORY_MINUTES, DEFAULT_HISTORY_MINUTES };
 });

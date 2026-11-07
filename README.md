@@ -36,7 +36,7 @@ The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or 
 
 | Surface | What it is for |
 | --- | --- |
-| **Overview** | Live output tok/s, five-minute speed history, per-agent phases, seven-component performance scores versus 14-day model baselines, runtime/source health, today's activity, 24-hour load and workspace concentration |
+| **Overview** | Live output, total throughput, reasoning speed and estimated USD/s with 1-, 5-, 15- or 30-minute trends and source breakdowns, agent phases, seven-component performance scores versus 14-day model baselines, runtime/source health, today's activity, 24-hour load and workspace concentration |
 | **Token ledger** | Token and cost attribution, efficiency, trends, high-cost sessions, and retained daily history with date, source and model filters and CSV exports |
 | **Event stream** | Semantic activity grouped by user turn, dedicated Q&A/tool/usage/raw views, explicit search, filters, highlighted dialogue matches, live follow/pause, and direct jumps into session detail |
 | **Session library** | Active sessions, workspace grouping, directory tree, stable full-session totals, start and latest timestamps, collapsible conversations, activity, usage, files/tools, commands, errors, compactions, and raw diagnostics |

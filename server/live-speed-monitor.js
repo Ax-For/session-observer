@@ -3,17 +3,20 @@ const { createLiveSpeedEngine } = require("./live-speed-engine");
 const { localDay } = require("./performance-score");
 const { locationFor } = require("./source-locations");
 const { readConfiguredTier } = require("./execution-modes");
+const { DEFAULT_HISTORY_MINUTES } = require("../shared/response-performance");
+
+const speedFrame = (snapshot) => `event: speed\ndata: ${JSON.stringify(snapshot)}\n\n`;
 
 function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLineBytes = 128 * 1024, seedBytes = 1024 * 1024 } = {}) {
   let baseline = { status: "loading", models: [] };
   let baselineByModel = new Map();
   const engine = createLiveSpeedEngine({ clock, baselineLookup: (source, model) => baseline.today === localDay(clock()) ? baselineByModel.get(JSON.stringify([source, model])) : null });
   const files = new Map();
-  const clients = new Set();
+  const clients = new Map();
+  const frames = new Map();
   let timer;
   let running;
   let closed = false;
-  let cached;
   let skippedLines = 0;
   let readErrors = 0;
   let omittedFiles = 0;
@@ -101,11 +104,20 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
       return 0;
     } finally { await handle?.close(); }
   }
-  function snapshot() {
+  function snapshotRanges(windows) {
     const baselineState = { ...baseline };
     delete baselineState.models;
-    return { ...engine.snapshot(), performanceBaseline: baselineState, monitor: { startedAt, trackedFiles: files.size, maxFiles, skippedLines, readErrors, omittedFiles, truncatedFiles,
-      warming: [...files.values()].some((state) => !state.initialized || !state.caughtUp) } };
+    const monitor = { startedAt, trackedFiles: files.size, maxFiles, skippedLines, readErrors, omittedFiles, truncatedFiles,
+      warming: [...files.values()].some((state) => !state.initialized || !state.caughtUp) };
+    const views = engine.snapshotRanges(windows);
+    for (const view of views.values()) {
+      view.performanceBaseline = baselineState;
+      view.monitor = monitor;
+    }
+    return views;
+  }
+  function snapshot(historyMinutes = DEFAULT_HISTORY_MINUTES) {
+    return snapshotRanges([historyMinutes]).get(historyMinutes);
   }
   async function tick() {
     if (closed) return;
@@ -117,26 +129,28 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
         if (budget <= 0) break;
         budget -= await readFile(state, budget);
       }
-      cached = snapshot();
-      const data = `event: speed\ndata: ${JSON.stringify(cached)}\n\n`;
-      for (const res of clients) {
+      frames.clear();
+      // Keep the engine's retention pruning active even with no connected charts.
+      const windows = clients.size ? [...new Set(clients.values())] : [DEFAULT_HISTORY_MINUTES];
+      for (const [minutes, view] of snapshotRanges(windows)) frames.set(minutes, speedFrame(view));
+      for (const [res, minutes] of clients) {
         if (res.destroyed || res.writableLength > 256 * 1024) { clients.delete(res); res.end(); }
-        else res.write(data);
+        else res.write(frames.get(minutes));
       }
     })().finally(() => { running = null; });
     return running;
   }
-  function stream(req, res) {
+  function stream(req, res, historyMinutes = DEFAULT_HISTORY_MINUTES) {
     if (clients.size >= 8) { res.writeHead(503, { "Content-Type": "application/json" }); res.end('{"error":"Too many live monitors"}'); return; }
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-    res.write(`retry: 3000\nevent: speed\ndata: ${JSON.stringify(cached || snapshot())}\n\n`);
-    clients.add(res);
+    res.write(`retry: 3000\n${frames.get(historyMinutes) || speedFrame(snapshot(historyMinutes))}`);
+    clients.set(res, historyMinutes);
     res.on("close", () => clients.delete(res));
   }
   return { discover, notify: track, tick, snapshot, stream,
     setBaseline: (value) => { baseline = value; baselineByModel = new Map((value.models || []).map((row) => [JSON.stringify([row.sourceType, row.model]), row])); },
     start: () => { if (!timer) { tick(); timer = setInterval(tick, 1000); timer.unref?.(); } },
-    close: () => { closed = true; clearInterval(timer); for (const res of clients) res.end(); clients.clear(); files.clear(); },
+    close: () => { closed = true; clearInterval(timer); for (const res of clients.keys()) res.end(); clients.clear(); frames.clear(); files.clear(); },
   };
 }
 

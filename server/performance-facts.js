@@ -1,3 +1,5 @@
+const { estimateTokenCost } = require("../shared/token-pricing");
+
 const token = (value) => Math.min(1e12, Math.max(0, Math.trunc(Number(value) || 0)));
 function usageFor(obj, source, cumulative = false) {
   const p = obj.payload || {};
@@ -5,8 +7,24 @@ function usageFor(obj, source, cumulative = false) {
     : p.info?.[cumulative ? "total_token_usage" : "last_token_usage"] || {};
   const cachedInput = token(source === "claude" ? usage.cache_read_input_tokens : usage.cached_input_tokens ?? usage.input_tokens_details?.cached_tokens);
   const cacheCreation = source === "claude" ? token(usage.cache_creation_input_tokens) : 0;
+  const reasoning = source === "claude" ? usage.output_tokens_details?.thinking_tokens
+    : usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens;
   return { input: token(token(usage.input_tokens) + (source === "claude" ? cachedInput + cacheCreation : 0)), cachedInput, cacheCreation,
-    reasoning: token(source === "claude" ? usage.output_tokens_details?.thinking_tokens : usage.reasoning_output_tokens ?? usage.output_tokens_details?.reasoning_tokens) };
+    reasoning: Number.isFinite(reasoning) ? token(reasoning) : null };
+}
+
+function estimateResponseCost(response) {
+  const { input = 0, cachedInput = 0, cacheCreation = 0, output = 0 } = response;
+  return estimateTokenCost({
+    input: Math.max(0, input - cachedInput - cacheCreation),
+    cacheReadInput: cachedInput,
+    cacheCreationInput: cacheCreation,
+    output,
+  }, response.model, {
+    time: new Date(response.endMs).toISOString(),
+    speed: response.modes?.tier?.value,
+    recordedUsd: response.recordedUsd,
+  });
 }
 function toolEvents(obj, source) {
   const p = obj.payload || {};
@@ -29,4 +47,4 @@ function toolEvents(obj, source) {
   }
   return [];
 }
-module.exports = { usageFor, toolEvents };
+module.exports = { usageFor, estimateResponseCost, toolEvents };

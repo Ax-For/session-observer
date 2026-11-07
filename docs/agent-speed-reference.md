@@ -15,8 +15,8 @@ and the distinction between observed and estimated speed.
 | --- | --- |
 | Per-response output speed and first-content waiting | Added to Session → Usage, with coverage counts and source-record navigation |
 | Tool duration and parent/child attribution | Reuse existing call-ID timing and exclusive source-log attribution |
-| Three-second live throughput and in-flight prediction | Added to Overview: per-platform and per-session output, generating/tools/idle phases, separate measured/estimated values |
-| Five-minute live history | Added: 300 one-second buckets, recomputed from response intervals so completed usage replaces predictions |
+| Three-second live throughput, reasoning and cost rate | Overview shows output, input plus output, reasoning and estimated USD/s. Each metric has a source breakdown and can drive the live chart. |
+| Live history | 1, 5, 15 or 30 minutes with up to 300 points, recomputed from response intervals so completed usage replaces predictions |
 | Composite performance score against a 14-day model baseline | Added to Overview: current score, same-source/model baseline, relative change, seven component measures, model selector and daily trend |
 | Several folders per source and compressed Codex archives | Native directory lists plus Codex archive discovery for history and baselines |
 | Retained daily usage, model speed and modes | Token → 每日历史: calendar filters, score trends and daily usage / execution-mode CSVs |
@@ -81,14 +81,16 @@ window. Existing event-retention and worker memory guards remain in effect.
 - Live output is the measured-plus-estimated overlap with the last three seconds,
   divided by three. A measured interval requires finalized usage and a request
   boundary; durations use the same 500 ms floor and 15 minute upper bound.
+- Total throughput adds normalized input and output, with cache tokens included once. Reasoning is a subset of output and requires a recorded reasoning count or a reference sample with that count. Live USD/s uses the same logged amounts and local model prices as daily history. The in-flight cost rate pools priced amounts over the duration of priced responses within the selected reference set. Coverage reflects the output associated with a known price. Missing prices or reasoning data produce unavailable or partial values. [Agent Speed measurement spec](https://github.com/zoefix/agent-speed/blob/v1.6.2/spec/METRICS.md#95-live-cost-rate)
 - A generating request uses the weighted speed of its last three measured
   responses within ten minutes, then up to ten same-model/same-platform responses
   within thirty minutes. Without a sample or start boundary, show unknown.
   Unfinished Claude intervals and the subsequent in-flight interval are disjoint.
-- The chart uses one-second buckets for the last five minutes; its peak is a
-  five-minute bucket peak, not a daily or lifetime peak. Estimates are recomputed
-  and replaced when final usage arrives. A missing final response can therefore
-  leave a gap after its phase ends; we do not persist an estimate as measured data.
+- The chart defaults to five minutes and remembers the selected range. Points
+  represent one-second averages at one and five minutes, three-second averages
+  at 15 minutes, and six-second averages at 30 minutes. The peak is the highest
+  point in the selected range. Estimates are replaced when final usage arrives.
+  A missing final response can leave a gap after its phase ends.
 - Session phase becomes idle after five minutes without recognized activity.
   Parent and child rows contribute only their own responses, never inclusive
   subtree totals. The first Codex metadata record wins over copied parent metadata.

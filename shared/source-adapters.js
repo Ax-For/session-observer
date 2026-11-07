@@ -30,6 +30,7 @@
     },
   ];
 
+  const NATIVE_SOURCE_TYPES = Object.freeze(SOURCE_ADAPTERS.map(({ key }) => key));
   const DEFAULT_ADAPTER = SOURCE_ADAPTERS[0];
 
   function cloneAdapter(adapter) {
@@ -78,6 +79,7 @@
   }
 
   return {
+    NATIVE_SOURCE_TYPES,
     getSourceAdapter,
     listSourceAdapters,
     registerSourceAdapters,
