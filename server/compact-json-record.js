@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const { parser } = require("stream-json");
+const { isDshCompressed, readDshBytes } = require("./zstd-frames");
 
 // Decode metadata after large image/tool payloads without packing those strings.
 function createCompactJsonDecoder(options = {}) {
@@ -95,6 +96,14 @@ function createCompactJsonDecoder(options = {}) {
 }
 
 function readCompactJsonRecord(file, offset, length, options = {}) {
+  if (isDshCompressed(file)) {
+    const decoder = createCompactJsonDecoder(options);
+    try {
+      const read = readDshBytes(file, offset, length, (chunk) => decoder.write(chunk));
+      if (read !== length) throw new Error("JSON source changed while reading");
+      return decoder.finish();
+    } finally { decoder.close(); }
+  }
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   const decoder = createCompactJsonDecoder(options);
   try {

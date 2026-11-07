@@ -174,7 +174,7 @@ describe("StreamWorkspace", () => {
     expect(screen.getByText("2 个活动")).toBeInTheDocument();
     expect(screen.getByText("Token Usage 60 · Tool Call 40")).toBeInTheDocument();
     const platformCounts = screen.getByLabelText("各平台匹配会话");
-    expect(platformCounts).toHaveTextContent("Codex12Claude Code19Qwen Code0");
+    expect(platformCounts).toHaveTextContent("Codex12Claude Code19Qwen Code0DeepSeek Harness0");
     fireEvent.click(screen.getAllByRole("button", { name: /查看会话详情 Incident triage/ })[0]);
     expect(onOpenSessionDetail).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: "sess-1" }), { order: "desc" });
   });

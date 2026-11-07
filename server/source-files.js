@@ -5,7 +5,7 @@
 const fs = require("fs");
 const fsScanner = require("./fs-scanner");
 const { loadCustomSources } = require("./custom-sources");
-const { getNativeLocations, qwenTranscriptKind } = require("./source-locations");
+const { getNativeLocations, qwenTranscriptKind, isDshTranscript } = require("./source-locations");
 
 function statFile(file, stat = fs.statSync(file)) {
   return {
@@ -21,7 +21,9 @@ function discover(roots, history = false) {
   const files = [];
   for (const root of roots) {
     if (root.archive && !history) continue;
-    for (const file of fsScanner.listJsonlFiles(root.path, { zstd: history && root.sourceType === "codex" })) {
+    const dsh = root.sourceType === "dsh";
+    for (const file of fsScanner.listJsonlFiles(root.path, { zstd: history && root.sourceType === "codex", dsh })) {
+      if (dsh && !isDshTranscript(file)) continue;
       const qwenKind = root.sourceType === "qwen" ? qwenTranscriptKind(file) : null;
       if (root.sourceType === "qwen" && (!qwenKind || (!history && qwenKind === "archive"))) continue;
       if (paths.has(file)) continue;
@@ -32,7 +34,8 @@ function discover(roots, history = false) {
         const identity = `${stat.dev}:${stat.ino}`;
         if (stat.ino && identities.has(identity)) continue;
         identities.add(identity);
-        files.push({ ...statFile(file, stat), sourceType: root.sourceType, archive: Boolean(root.archive || qwenKind === "archive"), format: file.endsWith(".zst") ? "zstd" : "jsonl" });
+        files.push({ ...statFile(file, stat), sourceType: root.sourceType, archive: Boolean(root.archive || qwenKind === "archive"),
+          format: /\.zstd?$/.test(file) ? "zstd" : "jsonl" });
       } catch { /* File moved between enumeration and stat. */ }
     }
   }

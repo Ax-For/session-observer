@@ -163,6 +163,7 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex transcript directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code project directory |
 | `QWEN_PROJECTS_DIR` | `~/.qwen/projects` | Qwen Code project directory, follows `QWEN_RUNTIME_DIR` or `QWEN_HOME` |
+| `DSH_SESSIONS_DIR` | `~/.dsh/sessions` | DeepSeek Harness sessions directory, follows `DSH_HOME` |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex title metadata database |
 | `OBSERVER_DAILY_TOKEN_BUDGET` | disabled | Daily Token warning threshold |
 | `OBSERVER_WEEKLY_TOKEN_BUDGET` | disabled | Seven-day Token warning threshold |

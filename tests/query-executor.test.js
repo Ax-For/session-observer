@@ -39,6 +39,7 @@ test("real query process reopens an event after losing every in-memory locator",
   ].map(JSON.stringify).join("\n") + "\n");
   const executor = createQueryExecutor({ env: { CODEX_SESSIONS_DIR: sources, CLAUDE_PROJECTS_DIR: path.join(root, "empty"),
     QWEN_PROJECTS_DIR: path.join(root, "empty-qwen"),
+    DSH_SESSIONS_DIR: path.join(root, "empty-dsh"),
     CODEX_STATE_DB: path.join(root, "none.sqlite"), CODEX_SESSION_INDEX: path.join(root, "none.jsonl"), OBSERVER_RUNTIME_DIR: path.join(root, "runtime") } });
   t.after(() => { executor.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const filters = { order: "desc", mode: "raw", limit: 10, offset: 0, includeSummary: true, quickFilter: "all", query: "" };

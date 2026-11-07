@@ -18,6 +18,7 @@ and the distinction between observed and estimated speed.
 | Three-second live throughput, reasoning and cost rate | Overview shows output, input plus output, reasoning and estimated USD/s. Each metric has a source breakdown and can drive the live chart. |
 | Live history | 1, 5, 15 or 30 minutes with up to 300 points, recomputed from response intervals so completed usage replaces predictions |
 | Tool loop and recovery | Live rows flag repeated failed call patterns, repeated calls without known failure, and confirmed recovery. Each hint opens the matching call in replay. |
+| DeepSeek Harness | Read-only discovery of `session.vN.jsonl` and `session.vN.jsonl.zstd` under the DSH sessions root. Match `step/start` to completed usage and process appended compressed frames without storing decompressed logs. |
 | Composite performance score against a 14-day model baseline | Added to Overview: current score, same-source/model baseline, relative change, seven component measures, model selector and daily trend |
 | Several folders per source and compressed Codex archives | Native directory lists plus Codex archive discovery for history and baselines |
 | Retained daily usage, model speed and modes | Token → 每日历史: calendar filters, score trends and daily usage / execution-mode CSVs |
@@ -71,9 +72,12 @@ window. Existing event-retention and worker memory guards remain in effect.
 - `server/live-speed-monitor.js` reuses source-watcher discovery and file-change
   notifications. A serialized one-second tick reads only appended bytes. Existing
   30-second discovery reconciles missed watcher notifications.
-- Track at most 64 recently written Codex/Claude JSONL files; seed each from its
-  last 1 MiB and read its first metadata line. Each tick reads at most 2 MiB in
-  256 KiB chunks. Partial records are buffered up to 128 KiB; larger/malformed
+- Track at most 64 recently written native logs. Plain JSONL starts from its last
+  1 MiB with its first metadata line. DSH compressed logs resume on a complete
+  frame boundary and defer incomplete frames until more bytes arrive. A tick
+  budgets 2 MiB, with up to 256 KiB per file before finishing the current
+  compressed frame. Each live DSH frame is capped at 16 MiB. Partial records are
+  buffered up to 128 KiB; larger DSH records use bounded metadata parsing. Oversized or malformed
   records are skipped and disclosed in the UI. Rotation and truncation reset the
   tail context. No raw completed transcript is retained.
 - Keep at most 128 agents and 4,096 response records for 30 minutes. UI scope is

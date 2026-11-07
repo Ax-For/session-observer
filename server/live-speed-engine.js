@@ -5,6 +5,7 @@ const { evaluateAgent, highest } = require("./performance-score");
 const { executionModes } = require("./execution-modes");
 const { createResponseRates, emptyRates, addRates, publicRates } = require("./live-speed-rates");
 const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
+const { dshRecords, prepareDshRecord } = require("../shared/dsh");
 const { toolDigest, toolSignal } = require("./tool-signals");
 
 const RETENTION_MS = 30 * 60_000;
@@ -54,7 +55,15 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
   let completionOrder = 0;
   let evictedResponses = 0;
 
-  function ingest(obj, context, source, { seeded = false } = {}) {
+  function ingest(obj, context, source, { seeded = false, compacted = false } = {}) {
+    if (source === "dsh") {
+      for (const { record } of dshRecords(obj)) {
+        if (prepareDshRecord(record, context)) ingestRecord(record, context, source, seeded, compacted);
+      }
+    } else ingestRecord(obj, context, source, seeded, compacted);
+  }
+
+  function ingestRecord(obj, context, source, seeded, compacted) {
     const p = obj.payload || {};
     if (source === "codex" && obj.type === "session_meta") {
       if (context.codexMetadataSeen) return;
@@ -66,7 +75,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     }
     if ((source === "claude" || source === "qwen") && !context.sessionId && obj.sessionId) context.sessionId = bounded(obj.sessionId);
     const signal = signalForRecord(obj, context, source);
-    const ms = Date.parse(obj.timestamp);
+    const ms = source === "dsh" ? obj.time : Date.parse(obj.timestamp);
     if (!Number.isFinite(ms) || ms > clock() + 5000 || ms < clock() - retentionMs) return;
     if (context.performanceMeta && (ms < context.performanceMeta.startedAt - 2000
       || (context.performanceMeta.ordinal != null && Number.isSafeInteger(obj.ordinal) && obj.ordinal < context.performanceMeta.ordinal))) return;
@@ -80,10 +89,10 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     }
     const agent = agents.get(key);
     agent.file = context.file;
-    agent.project = bounded(context.project || path.basename(obj.cwd || p.cwd || "")) || agent.project || "本地工作区";
-    agent.title = context.title || agent.title || sessionId;
+    agent.project = bounded(context.project || path.basename(context.cwd || obj.cwd || p.cwd || "")) || agent.project || "本地工作区";
+    agent.title = context.title || context.sessionTitle || agent.title || sessionId;
     agent.parentSessionId = child ? child[1] : context.parentSessionId || "";
-    const model = bounded(p.model || obj.model || obj.message?.model || signal?.model);
+    const model = bounded(p.model || obj.model || obj.message?.model || signal?.model || (source === "dsh" ? context.model : ""));
     if (model && model !== "<synthetic>") agent.model = model;
     if (ms < agent.lastLineMs) return;
     agent.lastLineMs = ms;
@@ -95,7 +104,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       const id = `${key}|${bounded(event.id)}`;
       const previous = actions.get(id);
       if (event.kind === "call" && !previous && typeof event.tool === "string" && event.tool) {
-        const diagnostic = actionStore ? {} : { digest: toolDigest(event.args), seeded };
+        const diagnostic = actionStore ? {} : { digest: compacted ? null : toolDigest(event.args), seeded };
         actions.set(id, { id, callId: bounded(event.id), agentId: key, sourceType: source, model: agent.model || "", tool: bounded(event.tool), callMs: ms, resultMs: null, failed: null, ...diagnostic });
         if (Number.isFinite(maxActions)) {
           const own = [...actions.values()].filter((a) => a.agentId === key);
@@ -107,7 +116,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     }
     if (!signal) return;
     if (signal.kind === "end") {
-      agent.phase = "idle"; agent.start = agent.first = null; agent.streaming = agent.explicit = false;
+      agent.phase = signal.phase || "idle"; agent.start = agent.first = null; agent.streaming = agent.explicit = false;
     } else if (signal.kind === "start") {
       if (!agent.streaming && (!agent.explicit || signal.explicit)) {
         agent.start = signal.startMs ?? ms; agent.first = null; agent.explicit = Boolean(signal.explicit);

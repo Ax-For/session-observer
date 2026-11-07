@@ -20,13 +20,14 @@
 .live-speed__readout-detail { color: var(--text-faint); font-size: 10px; line-height: 1.5; }
 .live-speed__body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); padding: 17px 22px 8px; gap: 26px; }
 .live-speed__throughput { min-width: 0; }
-.live-speed__sources { margin: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.live-speed__sources { margin: 0; display: grid; grid-template-columns: minmax(0, .8fr) repeat(2, minmax(0, 1fr)) minmax(0, 1.25fr); gap: 8px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
 .live-speed__sources > div { display: grid; gap: 4px; min-width: 0; }
-.live-speed__sources > div + div { border-left: 1px solid var(--line); padding-left: 14px; }
+.live-speed__sources > div + div { border-left: 1px solid var(--line); padding-left: 8px; }
 .live-speed__sources dt { font-size: 11px; color: var(--text-soft); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 .live-speed__sources i { width: 5px; height: 5px; border-radius: 50%; background: var(--platform-codex); }
 .live-speed__sources i.is-claude { background: var(--platform-claude); }
 .live-speed__sources i.is-qwen { background: var(--platform-qwen); }
+.live-speed__sources i.is-dsh { background: var(--platform-dsh); }
 .live-speed__sources dd { margin: 0; color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-speed__sources small { font-size: 9px; color: var(--text-faint); }
 .live-speed__chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; font-size: 10px; color: var(--text-faint); }

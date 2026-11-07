@@ -7,6 +7,7 @@ const platformStyles = new Map([
   ["codex", { mark: "CX", color: "blue" }],
   ["claude", { mark: "CC", color: "orange" }],
   ["qwen", { mark: "QC", color: "teal" }],
+  ["dsh", { mark: "DS", color: "indigo" }],
 ]);
 
 export function formatNumber(value) {

@@ -7,6 +7,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "observer-e2e-"));
 const codex = path.join(root, ".codex", "sessions");
 const claude = path.join(root, ".claude", "projects");
 const qwen = path.join(root, ".qwen", "projects");
+const dsh = path.join(root, ".dsh", "sessions");
 const archive = path.join(root, ".codex", "archived_sessions");
 const extraCodex = path.join(root, "extra-codex");
 const extraClaude = path.join(root, "extra-claude");
@@ -15,11 +16,12 @@ const repo = path.join(root, "demo-project");
 fs.mkdirSync(codex, { recursive: true });
 fs.mkdirSync(claude, { recursive: true });
 fs.mkdirSync(qwen, { recursive: true });
+fs.mkdirSync(dsh, { recursive: true });
 for (const dir of [archive, extraCodex, extraClaude]) fs.mkdirSync(dir);
 fs.writeFileSync(locationsFile, JSON.stringify({ codex: ["default", extraCodex], claude: ["default", extraClaude] }));
 fs.mkdirSync(repo);
 const liveManifest = path.join(os.tmpdir(), `observer-e2e-live-${process.env.PORT || "8878"}.json`);
-fs.writeFileSync(liveManifest, JSON.stringify({ codex, claude, qwen, archive, extraCodex, extraClaude }));
+fs.writeFileSync(liveManifest, JSON.stringify({ codex, claude, qwen, dsh, archive, extraCodex, extraClaude }));
 process.on("exit", () => fs.rmSync(liveManifest, { force: true }));
 const now = Date.now();
 execFileSync("git", ["init", "-q"], { cwd: repo });
@@ -51,6 +53,7 @@ fs.writeFileSync(path.join(childDir, "agent-helper.jsonl"), JSON.stringify({ typ
   message: { id: "helper-1", model: "claude-sonnet-4-5", content: [{ type: "text", text: "子 Agent 检查完成" }], usage: { input_tokens: 200, output_tokens: 100 } } }) + "\n");
 Object.assign(process.env, { HOST: "127.0.0.1", PORT: process.env.PORT || "8878", CODEX_SESSIONS_DIR: codex, CLAUDE_PROJECTS_DIR: claude,
   QWEN_PROJECTS_DIR: qwen,
+  DSH_SESSIONS_DIR: dsh,
   CODEX_STATE_DB: path.join(root, "missing.sqlite"), CODEX_SESSION_INDEX: path.join(root, "missing-index.jsonl"),
   OBSERVER_RUNTIME_DIR: path.join(root, "runtime"), OBSERVER_SESSION_ANNOTATIONS_FILE: path.join(root, "annotations.json"),
   OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_SOURCE_LOCATIONS_FILE: locationsFile, OBSERVER_DIALOGUE_SEARCH: "sqlite" });

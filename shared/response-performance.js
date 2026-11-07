@@ -8,6 +8,7 @@
   const LIVE_HISTORY_MINUTES = Object.freeze([1, 5, 15, 30]);
   const DEFAULT_HISTORY_MINUTES = 5;
   const qwenCodeApi = typeof require === "function" ? require("./qwen-code") : globalThis.ObserverQwenCode;
+  const dshApi = typeof require === "function" ? require("./dsh") : globalThis.ObserverDsh;
   const timestamp = (value) => {
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
@@ -17,6 +18,7 @@
   // Keep only timing/usage facts, never raw message bodies. One signal per source record.
   function signalForRecord(obj, context, source) {
     if (source === "qwen") return qwenCodeApi?.qwenSignal(obj, context);
+    if (source === "dsh") return dshApi?.dshSignal(obj, context);
     const p = obj.payload || {};
     if (source === "codex") {
       if (obj.type === "session_meta") {

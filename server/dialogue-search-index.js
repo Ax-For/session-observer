@@ -5,6 +5,7 @@ const fsScanner = require("./fs-scanner");
 const { encodeReference, encodeCursor, decodeCursor } = require("./event-reference");
 const { readCompactJsonRecord } = require("./compact-json-record");
 const { streamDialogueText } = require("./dialogue-text");
+const { isDshCompressed } = require("./zstd-frames");
 
 const CHUNK_SIZE = 16384;
 const MAX_QUERY_LENGTH = 512;
@@ -60,7 +61,8 @@ function createDialogueSearchIndex(options = {}) {
     const signature = stat.size + ":" + stat.mtimeMs + ":" + stat.ino;
     const previous = connection.prepare("SELECT * FROM files WHERE file=?").get(record.file);
     if (previous?.signature === signature) return { reused: true };
-    const append = Boolean(previous && previous.signature.split(":").at(-1) === String(stat.ino) && stat.size >= previous.size && stat.size > previous.offset
+    const compressed = isDshCompressed(record.file);
+    const append = Boolean(!compressed && previous && previous.signature.split(":").at(-1) === String(stat.ino) && stat.size >= previous.size && stat.size > previous.offset
       && previous.guard === fingerprint(record.file, previous.offset));
     const { adapter, parser } = fsScanner.resolveParserForFile(record.file, options.parsers || {});
     if (!parser) return {};
@@ -110,7 +112,7 @@ function createDialogueSearchIndex(options = {}) {
                 position += CHUNK_SIZE;
               }
             };
-            streamDialogueText(record.file, locator, obj, event.content || event.summary, emit);
+            streamDialogueText(record.file, locator, obj, event.content || event.summary, emit, event);
             if (pending) insertChunk.run(id, position, Buffer.from(pending, "utf16le"), pending.toLowerCase());
             const hash = digest.digest("hex");
             const previousDialogue = context.previousDialogue;
@@ -132,6 +134,7 @@ function createDialogueSearchIndex(options = {}) {
       }, { maxLineBytes: 128 * 1024, startOffset: offset, endOffset: stat.size, initialLineNumber: lineNumber });
       const after = fs.statSync(record.file);
       if (after.ino !== stat.ino || after.size < stat.size || (after.size === stat.size && after.mtimeMs !== stat.mtimeMs)) throw new Error("Source changed during dialogue caching; retry search");
+      if (compressed) offset = stat.size;
       connection.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)").run(record.file, signature, stat.size, offset, lineNumber,
         fingerprint(record.file, offset), JSON.stringify(context), skipped);
       connection.exec("COMMIT");

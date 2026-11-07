@@ -37,6 +37,15 @@
       pathMarkers: ["/.qwen/projects/"],
       capabilities: ["events", "conversation", "tokens", "export"],
     },
+    {
+      key: "dsh",
+      label: "DeepSeek Harness",
+      sessionGlob: "~/.dsh/sessions/**/session.v*.jsonl[.zstd]",
+      metadataSources: [],
+      parserKey: "parseDshLineToEvent",
+      pathMarkers: ["/.dsh/sessions/"],
+      capabilities: ["events", "conversation", "tokens", "export"],
+    },
   ];
 
   const NATIVE_SOURCE_TYPES = Object.freeze(SOURCE_ADAPTERS.map(({ key }) => key));

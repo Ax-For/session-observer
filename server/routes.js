@@ -269,7 +269,7 @@ function getDialogueBody(eventId, options = {}) {
     const start = totalLength;
     totalLength += text.length;
     if (totalLength > offset && start < offset + limit) content += text.slice(Math.max(0, offset - start), Math.max(0, offset + limit - start));
-  });
+  }, event);
   return { content, offset, totalLength, nextOffset: offset + content.length, hasMore: offset + content.length < totalLength };
 }
 

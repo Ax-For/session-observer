@@ -6,10 +6,10 @@ function canonical(directory) {
   try { return fs.realpathSync(directory); } catch { return path.resolve(directory); }
 }
 
-function resolveSourceLocations({ codex, claude, qwen, manifest = {}, codexConfig }) {
+function resolveSourceLocations({ codex, claude, qwen, dsh, manifest = {}, codexConfig }) {
   const roots = [];
   const seen = new Set();
-  for (const [sourceType, fallback] of Object.entries({ codex, claude, qwen })) {
+  for (const [sourceType, fallback] of Object.entries({ codex, claude, qwen, dsh })) {
     if (!fallback) continue;
     const locations = manifest[sourceType] ?? ["default"];
     if (!Array.isArray(locations) || locations.length < 1 || locations.length > 8) {
@@ -54,7 +54,7 @@ function readSmallFile(file, limit = 64 * 1024) {
 let nativeLocations;
 function getNativeLocations() {
   if (nativeLocations) return nativeLocations;
-  const options = { codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, qwen: config.QWEN_PROJECTS_DIR,
+  const options = { codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, qwen: config.QWEN_PROJECTS_DIR, dsh: config.DSH_SESSIONS_DIR,
     codexConfig: config.CODEX_CONFIG_FILE };
   try {
     const manifest = JSON.parse(readSmallFile(config.SOURCE_LOCATIONS_FILE));
@@ -71,7 +71,8 @@ function locationFor(file, roots = getNativeLocations()) {
   return roots.find((root) => {
     const relative = path.relative(root.path, file);
     return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-      && (root.sourceType !== "qwen" || qwenTranscriptKind(file));
+      && (root.sourceType !== "qwen" || qwenTranscriptKind(file))
+      && (root.sourceType !== "dsh" || isDshTranscript(file));
   });
 }
 
@@ -82,4 +83,8 @@ function qwenTranscriptKind(file) {
   return path.basename(directory) === "archive" && path.basename(path.dirname(directory)) === "chats" ? "archive" : null;
 }
 
-module.exports = { resolveSourceLocations, getNativeLocations, locationFor, qwenTranscriptKind, readSmallFile };
+function isDshTranscript(file) {
+  return /^session\.v\d+\.jsonl(?:\.zstd)?$/.test(path.basename(file));
+}
+
+module.exports = { resolveSourceLocations, getNativeLocations, locationFor, qwenTranscriptKind, isDshTranscript, readSmallFile };

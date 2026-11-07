@@ -1,6 +1,6 @@
 const { readCompactJsonRecord } = require("./compact-json-record");
 
-function dialoguePaths(obj) {
+function dialoguePaths(obj, event) {
   const paths = [];
   function contentPaths(content, prefix) {
     if (typeof content === "string") paths.push(prefix);
@@ -8,7 +8,10 @@ function dialoguePaths(obj) {
       if (["text", "input_text", "output_text"].includes(block?.type) && typeof block.text === "string") paths.push([...prefix, index, "text"]);
     });
   }
-  if (obj.type === "response_item" && obj.payload?.type === "message" && ["user", "assistant"].includes(obj.payload.role)) {
+  if (event?.dshDialoguePath) {
+    const prefix = event.dshDialoguePath;
+    contentPaths(prefix.reduce((value, key) => value?.[key], obj), prefix);
+  } else if (obj.type === "response_item" && obj.payload?.type === "message" && ["user", "assistant"].includes(obj.payload.role)) {
     contentPaths(obj.payload.content, ["payload", "content"]);
   } else if (obj.type === "event_msg" && ["user_message", "agent_message"].includes(obj.payload?.type)) {
     contentPaths(obj.payload.message, ["payload", "message"]);
@@ -31,8 +34,8 @@ function dialoguePaths(obj) {
 
 // Re-read only dialogue strings after bounded metadata parsing. Images and tool
 // results never enter retained text or the disk cache.
-function streamDialogueText(file, locator, obj, fallback, emit) {
-  const paths = dialoguePaths(obj);
+function streamDialogueText(file, locator, obj, fallback, emit, event) {
+  const paths = dialoguePaths(obj, event);
   if (!paths.length) { emit(String(fallback || "")); return; }
   if (!locator.truncated) {
     paths.forEach((parts, index) => {

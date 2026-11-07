@@ -285,6 +285,7 @@ function queryRecentEvents(options = {}) {
     const record = files[fileIndex];
     const { parser, sourceType } = resolveParser(record.file, options.parsers);
     if (!parser) continue;
+    const scanBackwards = reverseEarlyStop && sourceType !== "dsh";
     scannedFiles += 1;
     const context = createParserContext(record, sourceType, hintIndexes, {
       compactContent,
@@ -326,7 +327,7 @@ function queryRecentEvents(options = {}) {
           if (!eventMatchesFiltersCore(indexed, filters)) return;
           rememberLocator(indexed);
           retain(indexed);
-          if (reverseEarlyStop && fileEvents.length > pageEnd) return false;
+          if (scanBackwards && fileEvents.length > pageEnd) return false;
           return undefined;
         }
 
@@ -356,11 +357,11 @@ function queryRecentEvents(options = {}) {
       } catch {
         // Skip invalid or partially written JSON lines.
       }
-      if (reverseEarlyStop && fileEvents.length > pageEnd) return false;
+      if (scanBackwards && fileEvents.length > pageEnd) return false;
       return undefined;
     };
 
-    const lineScan = reverseEarlyStop
+    const lineScan = scanBackwards
       ? fsScanner.forEachCompleteJsonlLineReverse(record.file, onLine, {
         countLines: false,
         maxLineBytes: Number(options.maxParseLineBytes) || config.EVENT_STREAM_MAX_PARSE_LINE_BYTES,
@@ -373,7 +374,8 @@ function queryRecentEvents(options = {}) {
     sortEvents(candidates, order);
     ObserverCore.dedupeEvents(candidates, { inPlace: true });
     if (candidates.length > pageEnd + 1) candidates.length = pageEnd + 1;
-    if (reverseEarlyStop && lineScan?.stoppedEarly) {
+    oversizedLines += lineScan?.skippedFrames || 0;
+    if (scanBackwards && lineScan?.stoppedEarly) {
       stoppedEarly = true;
     }
   }

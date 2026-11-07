@@ -177,6 +177,7 @@ tests/                 Node 侧解析、缓存、内存、路由和 Trace 测试
 | `CODEX_SESSIONS_DIR` | `~/.codex/sessions` | Codex 会话目录 |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Claude Code 项目目录 |
 | `QWEN_PROJECTS_DIR` | `~/.qwen/projects` | Qwen Code 项目目录，跟随 `QWEN_RUNTIME_DIR` 或 `QWEN_HOME` |
+| `DSH_SESSIONS_DIR` | `~/.dsh/sessions` | DeepSeek Harness 会话目录，跟随 `DSH_HOME` |
 | `CODEX_STATE_DB` | `~/.codex/state_5.sqlite` | Codex 标题元数据数据库 |
 | `OBSERVER_DAILY_TOKEN_BUDGET` | 未启用 | 当天 Token 预算 |
 | `OBSERVER_WEEKLY_TOKEN_BUDGET` | 未启用 | 近 7 天 Token 预算 |

@@ -1304,7 +1304,7 @@ export function SessionWorkspace({
                 sessions={section.sessions}
                 renderSession={(session) => (
                   <SessionRow
-                    canMutate={canMutate && session.sourceType !== "qwen"}
+                    canMutate={canMutate && !["qwen", "dsh"].includes(session.sourceType)}
                     session={session}
                     selectedSet={selectedSet}
                     selectedSessionId={selectedSessionId}

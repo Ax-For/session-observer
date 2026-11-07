@@ -14,9 +14,10 @@ const config = require("./config");
 const fsScanner = require("./fs-scanner");
 const { compactLargeJsonlLine } = require("./jsonl-compact");
 const { readCompactJsonRecord } = require("./compact-json-record");
+const { isDshCompressed } = require("./zstd-frames");
 const { makeTruncatedLineEvent } = require("./recent-events-reader");
 
-const SUMMARY_CACHE_VERSION = 16;
+const SUMMARY_CACHE_VERSION = 17;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_SESSION_MESSAGE_LENGTH = 320;
@@ -1015,6 +1016,7 @@ function parseFileSummary(record, deps) {
   const result = fsScanner.forEachCompleteJsonlLine(record.file, (line, _lineNumber, locator) => {
     ingestJsonlLine(summary, line, context, parseDeps, locator);
   }, { maxLineBytes: config.EVENT_STREAM_MAX_PARSE_LINE_BYTES });
+  summary.invalidLines += result.skippedFrames || 0;
   return {
     summary,
     context: { ...context },
@@ -1042,6 +1044,7 @@ function fileAppendGuard(file, size) {
 
 function canAppendFileSummary(cached, record) {
   return Boolean(
+    !isDshCompressed(record.file) &&
     cached &&
     cached.summary &&
     cached.context &&

@@ -39,6 +39,7 @@ async function main() {
     cwd: path.resolve(__dirname, ".."), stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, PATH: "/usr/bin:/bin", HOST: "127.0.0.1", PORT: String(port), CODEX_SESSIONS_DIR: codex,
       CLAUDE_PROJECTS_DIR: claude, QWEN_PROJECTS_DIR: path.join(root, "qwen"), CODEX_STATE_DB: path.join(root, "none.sqlite"),
+      DSH_SESSIONS_DIR: path.join(root, "dsh"),
       CODEX_SESSION_INDEX: path.join(root, "none.jsonl"),
       OBSERVER_DATA_DIR: path.join(root, "data"), OBSERVER_RUNTIME_DIR: path.join(root, "runtime"),
       OBSERVER_SOURCE_LOCATIONS_FILE: path.join(root, "missing-locations.json"), OBSERVER_DIALOGUE_SEARCH: "sqlite" },

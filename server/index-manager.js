@@ -9,6 +9,7 @@ const fsScanner = require("./fs-scanner");
 const sessionMeta = require("./session-meta");
 const { encodeReference } = require("./event-reference");
 const { readCompactJsonRecord } = require("./compact-json-record");
+const { isDshCompressed } = require("./zstd-frames");
 
 const fileEventCache = new Map();
 const stringPool = new Map();
@@ -385,6 +386,7 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
     cached.size === stat.size &&
     cached.mtimeMs === stat.mtimeMs;
   const canAppendIncrementally =
+    !isDshCompressed(file) &&
     cached &&
     hasCachedEvents &&
     cached.stateSignature === stateSignature &&
@@ -467,7 +469,7 @@ function parseFileEvents(file, stateSignature, threadMeta, parsers, applyEventSe
     lineNumber = result.lineCount;
     tailBuffer = result.tailBuffer;
     endedWithNewline = result.endedWithNewline;
-    consumeTailIfComplete();
+    if (!isDshCompressed(file)) consumeTailIfComplete();
   }
 
   const nextCache = {

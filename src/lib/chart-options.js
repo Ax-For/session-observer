@@ -3,7 +3,7 @@ import { formatHumanNumber, formatNumber, PLATFORM_OPTIONS } from "./formatters"
 export const CHART_COLORS = {
   input: "#3275e5", cacheRead: "#24a879", cacheWrite: "#23a6b7",
   output: "#8b70d7", reasoning: "#b68138",
-  codex: "#4774ce", claude: "#ad7954", qwen: "#2b8476", other: "#a1a9b5",
+  codex: "#4774ce", claude: "#ad7954", qwen: "#2b8476", dsh: "#8865ba", other: "#a1a9b5",
 };
 
 const number = (value) => Math.max(0, Number(value) || 0);

@@ -33,6 +33,7 @@ Environment variables:
   CODEX_SESSIONS_DIR   Default: \$HOME/.codex/sessions
   CLAUDE_PROJECTS_DIR  Default: \$HOME/.claude/projects
   QWEN_PROJECTS_DIR    Default: \$HOME/.qwen/projects (follows QWEN_RUNTIME_DIR or QWEN_HOME)
+  DSH_SESSIONS_DIR     Default: \$HOME/.dsh/sessions (follows DSH_HOME)
   OBSERVER_SOURCE_LOCATIONS_FILE
                        Optional local native directory lists (source-locations.json)
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS

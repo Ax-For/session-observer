@@ -10,6 +10,7 @@ const { localDay, dayOffset, createDayRecorder, pooled, addRecord, emptyRecord, 
 const { validDay, createUsageRecorder, readHistory } = require("./history-query");
 const { PRICING_VERSION } = require("../shared/token-pricing");
 const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
+const { isDshCompressed } = require("./zstd-frames");
 
 const VERSION = 4;
 const hash = (text) => crypto.createHash("sha256").update(text).digest("hex");
@@ -50,7 +51,7 @@ async function scanFile(db, record, now, coverage) {
     }
   };
   if (record.format === "zstd" || record.file.endsWith(".jsonl.zst")) {
-    return readCompressedJsonl(record.file, record.size, ingest, { onMalformed: () => coverage.skippedLines++ });
+    return readCompressedJsonl(record.file, record.size, ingest, { allowPartial: isDshCompressed(record.file), onMalformed: () => coverage.skippedLines++ });
   }
   return forEachCompleteJsonlLine(record.file, (line, _number, locator) => {
     if (!line.trim()) return;
@@ -141,7 +142,7 @@ function createPerformanceHistory({ file, listFiles, roots = [], clock = Date.no
         const eligible = listFiles().map((record) => ({ ...record, sourceType: record.sourceType || locationFor(record.file, roots)?.sourceType }))
           .filter((record) => NATIVE_SOURCE_TYPES.includes(record.sourceType));
         cycle = { today, version, eligible, index: 0, diagnostics: { files: eligible.length,
-          archives: eligible.filter((row) => row.archive || row.format === "zstd" || row.file.endsWith(".jsonl.zst")).length,
+          archives: eligible.filter((row) => row.archive || row.file.endsWith(".jsonl.zst")).length,
           scanned: 0, cached: 0, failedFiles: 0, ...emptyCoverage() } };
       }
       const { eligible, diagnostics } = cycle;

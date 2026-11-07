@@ -48,6 +48,7 @@ const {
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
   parseCodexLineToEvent: parseCodexLineToEventCore,
   parseQwenCodeLineToEvent,
+  parseDshLineToEvent,
   toPositiveInt: toPositiveIntCore,
   toTimeMs: toTimeMsCore,
 } = ObserverCore;
@@ -56,6 +57,7 @@ const parsers = {
   parseCodexLineToEvent: parseCodexLineToEventCore,
   parseClaudeCodeLineToEvent: parseClaudeCodeLineToEventCore,
   parseQwenCodeLineToEvent,
+  parseDshLineToEvent,
   parseGenericLineToEvent,
 };
 

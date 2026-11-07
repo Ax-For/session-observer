@@ -275,6 +275,11 @@
   color: var(--platform-qwen);
 }
 
+.activity-run__source.is-dsh,
+.event-row__platform.is-dsh {
+  color: var(--platform-dsh);
+}
+
 .activity-run__copy {
   display: grid;
   min-width: 0;

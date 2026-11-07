@@ -750,7 +750,7 @@ export function App() {
 
   const canMutateSessions = capabilities?.allowSourceMutations === true;
   const canDeleteSelection = canMutateSessions
-    && !sessionCatalog.some((session) => session.sourceType === "qwen" && selectedSessionIds.includes(session.sessionId));
+    && !sessionCatalog.some((session) => ["qwen", "dsh"].includes(session.sourceType) && selectedSessionIds.includes(session.sessionId));
   const activeStreamFilters = [
     streamFilters.model ? {
       key: "model",
