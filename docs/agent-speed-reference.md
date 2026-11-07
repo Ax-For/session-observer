@@ -17,6 +17,7 @@ and the distinction between observed and estimated speed.
 | Tool duration and parent/child attribution | Reuse existing call-ID timing and exclusive source-log attribution |
 | Three-second live throughput, reasoning and cost rate | Overview shows output, input plus output, reasoning and estimated USD/s. Each metric has a source breakdown and can drive the live chart. |
 | Live history | 1, 5, 15 or 30 minutes with up to 300 points, recomputed from response intervals so completed usage replaces predictions |
+| Source trends and daily peak | Select a source in Overview to scope the chart and open its daily history. Daily history retains the highest observed three-second measured output rate per day and source, independent of the chart range. |
 | Tool loop and recovery | Live rows flag repeated failed call patterns, repeated calls without known failure, and confirmed recovery. Each hint opens the matching call in replay. |
 | DeepSeek Harness | Read-only discovery of `session.vN.jsonl` and `session.vN.jsonl.zstd` under the DSH sessions root. Match `step/start` to completed usage and process appended compressed frames without storing decompressed logs. |
 | Composite performance score against a 14-day model baseline | Added to Overview: current score, same-source/model baseline, relative change, seven component measures, model selector and daily trend |

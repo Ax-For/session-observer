@@ -4,6 +4,7 @@
  * Wires together config, index manager, routes, and session ops.
  */
 const http = require("http");
+const path = require("node:path");
 const ObserverCore = require("./shared/observer-core");
 const config = require("./server/config");
 const isQueryWorker = process.argv.includes("--query-worker");
@@ -12,10 +13,14 @@ const { createQueryExecutor } = require("./server/query-executor");
 const { policyError, readBody } = require("./server/http-policy");
 const { createSourceWatchers } = require("./server/source-watchers");
 const { createLiveSpeedMonitor } = require("./server/live-speed-monitor");
+const { createPeakRecorder } = require("./server/live-speed-peaks");
 const { DEFAULT_HISTORY_MINUTES, LIVE_HISTORY_MINUTES } = require("./shared/response-performance");
+const { NATIVE_SOURCE_TYPES } = require("./shared/source-adapters");
 const { getNativeLocations } = require("./server/source-locations");
 const { parseHistoryFilters, historyCsv } = require("./server/history-query");
-const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: getNativeLocations() });
+const peakFile = path.join(config.RUNTIME_DIR, "live-speed-peaks.sqlite");
+const livePeaks = isQueryWorker ? null : createPeakRecorder(peakFile);
+const liveSpeed = isQueryWorker ? null : createLiveSpeedMonitor({ roots: getNativeLocations(), onSample: livePeaks.observe });
 const executor = isQueryWorker ? null : createQueryExecutor();
 const { createPerformanceBaselineService } = require("./server/performance-baseline-service");
 const performanceBaseline = isQueryWorker ? null : createPerformanceBaselineService({ executor, onUpdate: liveSpeed.setBaseline });
@@ -245,8 +250,11 @@ const server = http.createServer((req, res) => {
       const values = u.searchParams.getAll("minutes");
       const minutes = values.length ? LIVE_HISTORY_MINUTES.find((option) => String(option) === values[0]) : DEFAULT_HISTORY_MINUTES;
       if (values.length > 1 || minutes == null) return sendJson(req, res, 400, { error: "Invalid live speed history range" });
-      if (u.pathname === "/api/live-speed") return liveSpeed.stream(req, res, minutes);
-      return sendJson(req, res, 200, liveSpeed.snapshot(minutes));
+      const sources = u.searchParams.getAll("source");
+      const source = sources[0] || "";
+      if (sources.length > 1 || (source && !NATIVE_SOURCE_TYPES.includes(source))) return sendJson(req, res, 400, { error: "Invalid live speed history source" });
+      if (u.pathname === "/api/live-speed") return liveSpeed.stream(req, res, minutes, source);
+      return sendJson(req, res, 200, liveSpeed.snapshot(minutes, source));
     }
     if (u.pathname === "/api/source-events" && req.method === "GET") {
       streamSourceEvents(req, res);
@@ -495,7 +503,8 @@ process.on("unhandledRejection", (reason) => {
 
 if (isQueryWorker) {
   const performanceHistory = require("./server/performance-history").createPerformanceHistory({
-    file: require("path").join(config.RUNTIME_DIR, "performance-history.sqlite"),
+    file: path.join(config.RUNTIME_DIR, "performance-history.sqlite"),
+    peakFile,
     listFiles: require("./server/source-files").listHistoryFileRecords,
     loadPrices: analysisServices.loadPrices,
     scanBudgetMs: 4000,
@@ -539,7 +548,7 @@ if (isQueryWorker) {
     executor.close();
     process.exit(1);
   }
-  const shutdown = () => { watchers?.close(); performanceBaseline.close(); liveSpeed.close(); executor.close(); server.close(); };
+  const shutdown = () => { watchers?.close(); performanceBaseline.close(); liveSpeed.close(); livePeaks.close(); executor.close(); server.close(); };
   process.on("SIGTERM", () => { shutdown(); process.exit(0); });
   process.on("SIGINT", () => { shutdown(); process.exit(0); });
   server.listen(config.PORT, config.HOST, () => {

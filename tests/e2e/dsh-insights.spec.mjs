@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { zstdCompressSync } from "node:zlib";
 
-test("compressed DSH sessions feed live speed, retained usage, tool replay and dialogue search", async ({ page, request }, testInfo) => {
+test("compressed DSH sessions feed scoped trends, retained peaks, tool replay and dialogue search", async ({ page, request }, testInfo) => {
   const { dsh } = JSON.parse(fs.readFileSync(path.join(os.tmpdir(), "observer-e2e-live-8878.json"), "utf8"));
   const sessionId = `dsh-${testInfo.project.name}`;
   const folder = path.join(dsh, sessionId);
@@ -37,10 +37,13 @@ test("compressed DSH sessions feed live speed, retained usage, tool replay and d
         content: [{ type: "text", text: "检查记录。".repeat(12_000) + keyword }] },
       usage: { inputTokens: 50, cacheReadTokens: 100, cacheWriteTokens: 20, outputTokens: 60 },
     }));
+    await panel.getByRole("button", { name: "查看 DeepSeek Harness 趋势" }).click();
+    await expect(panel.getByRole("img", { name: "近 5 分钟 DeepSeek Harness 输出速度趋势" })).toBeVisible();
     await expect.poll(async () => {
-      const snapshot = await (await request.get("/api/live-speed/snapshot")).json();
-      return snapshot.agents.some((agent) => agent.sessionId === sessionId && agent.recentRate > 0);
+      const scoped = await (await request.get("/api/live-speed/snapshot?source=dsh")).json();
+      return scoped.historySource === "dsh" && scoped.history.some((point) => point.measured > 0);
     }).toBe(true);
+    expect((await request.get("/api/live-speed/snapshot?source=unknown")).status()).toBe(400);
     const warning = panel.locator(".live-speed__session-row").filter({
       has: page.getByRole("button", { name: `查看会话 ${sessionId}`, exact: true }),
     }).getByRole("button", { name: /重复失败.*查看工具回放/ });
@@ -49,11 +52,16 @@ test("compressed DSH sessions feed live speed, retained usage, tool replay and d
 
     const refresh = await request.post("/api/usage-history/refresh", { headers: { "X-Observer-Request": "1" } });
     expect(refresh.status()).toBe(202);
+    await panel.getByRole("button", { name: "查看每日历史" }).click();
+    await expect(page.getByRole("heading", { name: "每日使用历史" })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "来源", exact: true })).toHaveValue("dsh");
     await expect.poll(async () => {
       const data = await (await request.get("/api/usage-history?source=dsh")).json();
-      return data.totals.output >= 60 && data.totals.measured >= 1;
+      return data.days.some((day) => day.peakOutputTokS > 0) && data.totals.output >= 60;
     }, { timeout: 15_000 }).toBe(true);
+    await expect(page.getByRole("columnheader", { name: "实测峰值 tok/s" })).toBeVisible();
 
+    await page.getByRole("navigation", { name: "主导航" }).getByRole("radio", { name: "总览", exact: true }).click();
     await expect(warning).toBeVisible();
     await warning.click();
     await expect(page.getByRole("tab", { name: "回放", exact: true })).toHaveAttribute("aria-selected", "true");

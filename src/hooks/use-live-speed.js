@@ -3,13 +3,16 @@ import responsePerformance from "../../shared/response-performance.js";
 
 const { DEFAULT_HISTORY_MINUTES } = responsePerformance;
 
-export function useLiveSpeed(enabled = true, historyMinutes = DEFAULT_HISTORY_MINUTES) {
+export function useLiveSpeed(enabled = true, historyMinutes = DEFAULT_HISTORY_MINUTES, historySource = "") {
   const [state, setState] = useState({ data: null, status: "connecting" });
   useEffect(() => {
     if (!enabled || typeof EventSource === "undefined") return;
     let source;
     let lastMessage = 0;
-    const url = historyMinutes === DEFAULT_HISTORY_MINUTES ? "/api/live-speed" : `/api/live-speed?minutes=${historyMinutes}`;
+    const params = new URLSearchParams();
+    if (historyMinutes !== DEFAULT_HISTORY_MINUTES) params.set("minutes", String(historyMinutes));
+    if (historySource) params.set("source", historySource);
+    const url = params.size ? `/api/live-speed?${params}` : "/api/live-speed";
     const connect = () => {
       source?.close();
       source = null;
@@ -42,6 +45,6 @@ export function useLiveSpeed(enabled = true, historyMinutes = DEFAULT_HISTORY_MI
       clearInterval(timer);
       document.removeEventListener("visibilitychange", connect);
     };
-  }, [enabled, historyMinutes]);
+  }, [enabled, historyMinutes, historySource]);
   return state;
 }

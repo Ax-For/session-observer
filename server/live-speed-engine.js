@@ -180,7 +180,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     while (responses.size > maxResponses) { responses.delete(responses.keys().next().value); evictedResponses++; }
   }
 
-  function snapshotRanges(windows, now = clock()) {
+  function snapshotViews(scopes, now = clock()) {
     for (const [key, row] of responses) if (row.endMs < now - RETENTION_MS) responses.delete(key);
     for (const [key, agent] of agents) if (agent.lastLineMs < now - RETENTION_MS) agents.delete(key);
     for (const [key, action] of actions) if (!agents.has(action.agentId)) actions.delete(key);
@@ -212,7 +212,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       return rates;
     };
     const end = Math.ceil(now / 1000) * 1000;
-    const historyStart = end - Math.max(...windows) * 60_000;
+    const historyStart = end - Math.max(...scopes.map(({ minutes }) => minutes)) * 60_000;
     const intervals = measured.filter((r) => r.endMs > historyStart).map((r) => ({ ...r, rates: responseRates([r]), estimated: false }));
     const currentAgents = [...agents.values()].map((a) => ({ ...a, phase: now - a.lastLineMs > STALE_MS ? "idle" : a.phase, referenceRates: reference(a) }));
     for (const record of records) {
@@ -269,10 +269,17 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       performance: best ? { ...best.performance, agentId: best.id, title: best.title, sourceType: best.sourceType } : null,
       measuredResponses: measured.length, unmeasuredResponses: records.length - measured.length, evictedResponses,
       generating: sources.reduce((n, s) => n + s.generating, 0), tools: sources.reduce((n, s) => n + s.tools, 0), unknown: sources.reduce((n, s) => n + s.unknown, 0) };
-    return new Map(windows.map((minutes) => [minutes, { ...common, ...buildHistory(intervals, now, end, minutes) }]));
+    return scopes.map(({ minutes, source }) => ({
+      ...common, historySource: source,
+      ...buildHistory(source ? intervals.filter((interval) => interval.sourceType === source) : intervals, now, end, minutes),
+    }));
   }
-  function snapshot(now = clock(), historyMinutes = DEFAULT_HISTORY_MINUTES) {
-    return snapshotRanges([historyMinutes], now).get(historyMinutes);
+  function snapshotRanges(windows, now = clock()) {
+    const views = snapshotViews(windows.map((minutes) => ({ minutes, source: "" })), now);
+    return new Map(windows.map((minutes, index) => [minutes, views[index]]));
+  }
+  function snapshot(now = clock(), minutes = DEFAULT_HISTORY_MINUTES, source = "") {
+    return snapshotViews([{ minutes, source }], now)[0];
   }
   function stop(context) {
     const agent = agents.get(context.agentKey);
@@ -281,7 +288,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       agent.toolAvailableSince = Infinity;
     }
   }
-  return { ingest, snapshot, snapshotRanges, stop };
+  return { ingest, snapshot, snapshotRanges, snapshotViews, stop };
 }
 
 module.exports = { createLiveSpeedEngine };

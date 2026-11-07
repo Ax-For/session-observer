@@ -85,13 +85,13 @@ export function liveSpeedOptions(history, dark = false, metric = "output") {
 }
 
 export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_MINUTES, onHistoryChange,
-  onOpenSessionDetail, baseline, onRefreshBaseline, baselineError }) {
+  onOpenSessionDetail, baseline, onRefreshBaseline, baselineError, historySource = "", onSourceChange, onOpenHistory }) {
   const [showIdle, setShowIdle] = useState(false);
   const [metric, setMetric] = useState("output");
   const metricGroup = useId();
   const dark = useComputedColorScheme("light") === "dark";
   const receivedMinutes = (data?.historyWindowMs ?? DEFAULT_HISTORY_MINUTES * 60_000) / 60_000;
-  const changingRange = receivedMinutes !== historyMinutes;
+  const changingRange = receivedMinutes !== historyMinutes || (data?.historySource || "") !== historySource;
   const history = changingRange ? EMPTY_HISTORY : data?.history || EMPTY_HISTORY;
   const option = useMemo(() => liveSpeedOptions(history, dark, metric), [history, dark, metric]);
   const fresh = status === "connected" && Boolean(data) && !data.monitor?.warming;
@@ -102,6 +102,7 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
   const priority = (row) => fresh ? signalPriority[row.toolSignal?.kind] || 0 : 0;
   const rows = (data?.agents || []).filter((row) => showIdle || row.phase !== "idle" || priority(row))
     .sort((left, right) => priority(right) - priority(left));
+  const scopeLabel = historySource ? platformLabel(historySource) : "全部来源";
   const peak = metric === "output" || metric === "total" ? Math.max(0, ...history.map((r) => sum(metricRates(r, metric)))) : null;
   const limited = data?.monitor && (data.monitor.skippedLines || data.monitor.omittedFiles || data.monitor.readErrors || data.evictedResponses);
   return <section className="live-speed" aria-label="实时速度监测" data-testid="live-speed-panel">
@@ -125,12 +126,15 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
         <dl className="live-speed__sources" aria-label={`按来源的${selected.name}`}>{PLATFORM_OPTIONS.map(({ value: key, label }) => {
           const source = data?.sources?.find((s) => s.sourceType === key);
           const value = currentRate(source, metric, fresh);
-          return <div key={key}><dt><i className={`is-${key}`} />{label}</dt>
+          return <div key={key} className={historySource === key ? "is-selected" : undefined}>
+            <dt><button type="button" title={label} aria-label={`查看 ${label} 趋势`} aria-pressed={historySource === key} onClick={() => onSourceChange?.(key)}>
+              <i className={`is-${key}`} /><span>{label}</span>
+            </button></dt>
             <dd title={source && readoutDetail(source, metric, fresh)}>{value == null ? "—" : formatRate(metric, value)}<small> {selected.unit}</small></dd></div>;
         })}</dl>
         <div className="live-speed__chart-head">
           <div className="live-speed__chart-title">
-            <span>{selected.name}趋势</span>
+            <span>{scopeLabel} · {selected.name}趋势</span>
             <select aria-label="趋势时间范围" value={historyMinutes} onChange={(event) => onHistoryChange?.(Number(event.currentTarget.value))}>
               {LIVE_HISTORY_MINUTES.map((minutes) => <option key={minutes} value={minutes}>近 {minutes} 分钟</option>)}
             </select>
@@ -143,7 +147,11 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
             </>}
           </div>
         </div>
-        <ChartPlot option={option} height={142} label={`近 ${historyMinutes} 分钟${selected.name}趋势`} />
+        <ChartPlot option={option} height={142} label={`近 ${historyMinutes} 分钟${historySource ? ` ${scopeLabel} ` : ""}${selected.name}趋势`} />
+        <div className="live-speed__chart-actions">
+          {historySource && <button type="button" onClick={() => onSourceChange?.("")}>返回全部来源</button>}
+          {onOpenHistory && <button type="button" onClick={() => onOpenHistory(historySource)}>查看每日历史</button>}
+        </div>
       </div>
       <div className="live-speed__sessions">
         <div className="live-speed__session-head"><div><h3>会话状态 <span>{data?.generating || 0} 生成 · {data?.tools || 0} 工具</span></h3>
@@ -188,18 +196,24 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
         <p>实测将已完成响应的用量分摊到请求区间。Qwen Code 优先使用日志记录的请求耗时。进行中的请求参考该会话最近 3 次响应，再回退到同模型或同平台样本。响应完成后用实测替换估算。超过 5 分钟无新事件视为空闲。</p>
         <p>总吞吐合计输入与输出，推理 Token 已计入输出。费用优先使用日志金额，再按本地价格表估算。缺少推理用量或价格时显示有记录的部分。</p>
         <p>读取最近 30 分钟内写入的最多 {data?.monitor?.maxFiles || 64} 个日志。普通日志从末尾恢复，DSH 压缩日志按完整帧读取。当前跟踪 {data?.monitor?.trackedFiles || 0} 个文件，可测响应 {data?.measuredResponses || 0}，未测响应 {data?.unmeasuredResponses || 0}。{limited ? `跳过记录 ${data.monitor.skippedLines}，未跟踪文件 ${data.monitor.omittedFiles}，读取错误 ${data.monitor.readErrors}。` : ""}</p>
+        {data?.monitor?.peakWriteFailed && <p>每日峰值暂未保存。</p>}
       </details>
     </footer>
   </section>;
 }
 
-export function LiveSpeedPanel({ onOpenSessionDetail }) {
+export function LiveSpeedPanel({ onOpenSessionDetail, onOpenHistory }) {
   const [preferredMinutes, setPreferredMinutes] = useLocalStorage({
     key: "observer-live-history-minutes", defaultValue: DEFAULT_HISTORY_MINUTES, getInitialValueInEffect: false,
   });
   const historyMinutes = LIVE_HISTORY_MINUTES.includes(preferredMinutes) ? preferredMinutes : DEFAULT_HISTORY_MINUTES;
-  const state = useLiveSpeed(true, historyMinutes);
+  const [preferredSource, setHistorySource] = useLocalStorage({
+    key: "observer-live-history-source", defaultValue: "", getInitialValueInEffect: false,
+  });
+  const historySource = PLATFORM_OPTIONS.some(({ value }) => value === preferredSource) ? preferredSource : "";
+  const state = useLiveSpeed(true, historyMinutes, historySource);
   const baseline = usePerformanceBaseline(state.data?.performanceBaseline?.generatedAt, state.data?.performanceBaseline?.status);
   return <LiveSpeedView {...state} historyMinutes={historyMinutes} onHistoryChange={setPreferredMinutes}
+    historySource={historySource} onSourceChange={setHistorySource} onOpenHistory={onOpenHistory}
     onOpenSessionDetail={onOpenSessionDetail} baseline={baseline.data} onRefreshBaseline={baseline.refresh} baselineError={baseline.requestError} />;
 }

@@ -8,8 +8,9 @@ const { isDshCompressed, readZstdFrame, decodeZstdFrame } = require("./zstd-fram
 const { createCompactJsonDecoder } = require("./compact-json-record");
 
 const speedFrame = (snapshot) => `event: speed\ndata: ${JSON.stringify(snapshot)}\n\n`;
+const scopeKey = ({ minutes, source }) => `${minutes}:${source}`;
 
-function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLineBytes = 128 * 1024, seedBytes = 1024 * 1024 } = {}) {
+function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLineBytes = 128 * 1024, seedBytes = 1024 * 1024, onSample } = {}) {
   let baseline = { status: "loading", models: [] };
   let baselineByModel = new Map();
   const engine = createLiveSpeedEngine({ clock, baselineLookup: (source, model) => baseline.today === localDay(clock()) ? baselineByModel.get(JSON.stringify([source, model])) : null });
@@ -20,6 +21,7 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
   let running;
   let closed = false;
   let began = false;
+  let peakWriteFailed = false;
   let skippedLines = 0;
   let readErrors = 0;
   let omittedFiles = 0;
@@ -170,20 +172,25 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
       return 0;
     } finally { await handle?.close(); }
   }
-  function snapshotRanges(windows) {
+  function snapshotViews(scopes, observe = false) {
     const baselineState = { ...baseline };
     delete baselineState.models;
     const monitor = { startedAt, trackedFiles: files.size, maxFiles, skippedLines, readErrors, omittedFiles, truncatedFiles,
       warming: [...files.values()].some((state) => !state.initialized || !state.caughtUp) };
-    const views = engine.snapshotRanges(windows);
-    for (const view of views.values()) {
+    const views = engine.snapshotViews(scopes);
+    if (observe && !monitor.warming && onSample) {
+      try { onSample(views[0]); peakWriteFailed = false; }
+      catch { peakWriteFailed = true; }
+    }
+    monitor.peakWriteFailed = peakWriteFailed;
+    for (const view of views) {
       view.performanceBaseline = baselineState;
       view.monitor = monitor;
     }
     return views;
   }
-  function snapshot(historyMinutes = DEFAULT_HISTORY_MINUTES) {
-    return snapshotRanges([historyMinutes]).get(historyMinutes);
+  function snapshot(minutes = DEFAULT_HISTORY_MINUTES, source = "") {
+    return snapshotViews([{ minutes, source }])[0];
   }
   async function tick() {
     if (closed) return;
@@ -198,20 +205,22 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
       }
       frames.clear();
       // Keep the engine's retention pruning active even with no connected charts.
-      const windows = clients.size ? [...new Set(clients.values())] : [DEFAULT_HISTORY_MINUTES];
-      for (const [minutes, view] of snapshotRanges(windows)) frames.set(minutes, speedFrame(view));
-      for (const [res, minutes] of clients) {
+      const scopes = clients.size ? [...new Map([...clients.values()].map((scope) => [scopeKey(scope), scope])).values()]
+        : [{ minutes: DEFAULT_HISTORY_MINUTES, source: "" }];
+      snapshotViews(scopes, true).forEach((view, index) => frames.set(scopeKey(scopes[index]), speedFrame(view)));
+      for (const [res, scope] of clients) {
         if (res.destroyed || res.writableLength > 256 * 1024) { clients.delete(res); res.end(); }
-        else res.write(frames.get(minutes));
+        else res.write(frames.get(scopeKey(scope)));
       }
     })().finally(() => { running = null; });
     return running;
   }
-  function stream(req, res, historyMinutes = DEFAULT_HISTORY_MINUTES) {
+  function stream(req, res, minutes = DEFAULT_HISTORY_MINUTES, source = "") {
     if (clients.size >= 8) { res.writeHead(503, { "Content-Type": "application/json" }); res.end('{"error":"Too many live monitors"}'); return; }
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-    res.write(`retry: 3000\n${frames.get(historyMinutes) || speedFrame(snapshot(historyMinutes))}`);
-    clients.set(res, historyMinutes);
+    const scope = { minutes, source };
+    res.write(`retry: 3000\n${frames.get(scopeKey(scope)) || speedFrame(snapshot(minutes, source))}`);
+    clients.set(res, scope);
     res.on("close", () => clients.delete(res));
   }
   return { discover, notify: track, tick, snapshot, stream,

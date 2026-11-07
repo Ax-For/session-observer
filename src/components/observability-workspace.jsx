@@ -1794,12 +1794,19 @@ export function ObservabilityWorkspace({
   onRecalculate,
   onOpenConversation,
   onOpenSessionDetail,
+  onOpenUsageHistory,
   recalculating,
 }) {
   const [usageMetric, setUsageMetric] = useState("tokens");
   const [tokenRangeKey, setTokenRangeKey] = useState("week");
   const [overviewAnalysis, setOverviewAnalysis] = useState("workspaces");
   const [tokenView, setTokenView] = useState("ledger");
+  const [historyFocus, setHistoryFocus] = useState(null);
+  function openHistory(source) {
+    setHistoryFocus({ source });
+    setTokenView("history");
+    onOpenUsageHistory?.();
+  }
   const summary = payload?.summary || {};
   const health = summary.health || {};
   const tokens = summary.tokens || {};
@@ -1903,7 +1910,7 @@ export function ObservabilityWorkspace({
             health={health}
           />
 
-          <LiveSpeedPanel onOpenSessionDetail={onOpenSessionDetail} />
+          <LiveSpeedPanel onOpenSessionDetail={onOpenSessionDetail} onOpenHistory={onOpenUsageHistory ? openHistory : undefined} />
           <div className="v2-overview-primary">
             <ChartCard
               eyebrow="ACTIVITY"
@@ -2000,7 +2007,8 @@ export function ObservabilityWorkspace({
 
       {view === "tokens" && <div className="usage-history-switch"><SegmentedControl size="sm" aria-label="Token 账本视图" value={tokenView} onChange={setTokenView}
         data={[{ label: "近期账本", value: "ledger" }, { label: "每日历史", value: "history" }]} /></div>}
-      {view === "tokens" && tokenView === "history" && <DailyHistoryPanel />}
+      {view === "tokens" && tokenView === "history" && <DailyHistoryPanel
+        initialSource={historyFocus?.source || ""} initialMetric={historyFocus ? "speed" : "tokens"} />}
       {view === "tokens" && tokenView === "ledger" ? (
         <>
           <TokenRangeToolbar

@@ -58,25 +58,38 @@ function createUsageRecorder() {
   return { add, records: () => [...rows.values()].map((row) => ({ ...row, modes: [...row.modes.values()] })) };
 }
 
-function readHistory(db, filters = {}, { now = Date.now(), exportAll = false } = {}) {
+function readHistory(db, filters = {}, { now = Date.now(), exportAll = false, readPeaks } = {}) {
   const today = localDay(now), to = filters.to || today, from = filters.from || dayOffset(to, -29);
   const source = filters.source || "", model = filters.model || "", offset = filters.offset || 0;
   const range = { from, to, source, model }, days = [], summary = totals(), modes = new Map();
+  const peaks = (!model && readPeaks?.(range)) || new Map();
   const exists = db?.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='history_days'").get();
   const available = exists ? db.prepare("SELECT min(day) AS first, max(day) AS last FROM history_days").get() : { first: null, last: null };
+  const peakDays = [...peaks.keys()].sort().reverse();
+  if (peakDays.length) {
+    if (!available.first || peakDays.at(-1) < available.first) available.first = peakDays.at(-1);
+    if (!available.last || peakDays[0] > available.last) available.last = peakDays[0];
+  }
   const meta = exists ? db.prepare("SELECT value FROM history_meta WHERE key='scan'").get() : null;
   const scan = meta ? JSON.parse(meta.value) : null;
   const condition = "day BETWEEN ? AND ? AND (?='' OR source=?)";
   const args = [from, to, source, source];
   const models = exists && !exportAll ? db.prepare(`SELECT model FROM history_days WHERE ${condition} AND model<>'' GROUP BY model ORDER BY model LIMIT 120`).all(...args).map((r) => r.model) : [];
-  let current, totalDays = 0;
-  function flush() {
-    if (!current?.usage.requests) return;
-    const { day, usage, performance } = current;
+  let current, totalDays = 0, peakIndex = 0;
+  function addDay(day, usage, performance) {
     if (exportAll || (totalDays >= offset && days.length < PAGE_SIZE)) {
-      days.push({ day, ...summarize(usage), score: source && model ? pooled([performance]).shown : null });
+      days.push({ day, ...(usage && summarize(usage)), peakOnly: !usage, peakOutputTokS: peaks.get(day) ?? null,
+        score: performance && source && model ? pooled([performance]).shown : null });
     }
     totalDays++;
+  }
+  function flush() {
+    if (!current) return;
+    const { day, usage, performance } = current;
+    while (peakDays[peakIndex] > day) addDay(peakDays[peakIndex++]);
+    if (peakDays[peakIndex] === day) peakIndex++;
+    if (usage.requests) addDay(day, usage, performance);
+    else if (peaks.has(day)) addDay(day);
   }
   if (exists) for (const item of db.prepare(`SELECT day,value FROM history_days WHERE ${condition} AND (?='' OR model=?) ORDER BY day DESC,file_id,source,model`).iterate(...args, model, model)) {
     const row = JSON.parse(item.value);
@@ -87,7 +100,9 @@ function readHistory(db, filters = {}, { now = Date.now(), exportAll = false } =
     addModes(modes, row.modes || []);
   }
   flush();
-  return { today, range, available, scan, models, totals: summarize(summary), days, offset, totalDays, pageSize: PAGE_SIZE,
+  while (peakIndex < peakDays.length) addDay(peakDays[peakIndex++]);
+  return { today, range, available, scan, models, totals: { ...summarize(summary), peakOutputTokS: peaks.size ? Math.max(...peaks.values()) : null },
+    days, offset, totalDays, pageSize: PAGE_SIZE,
     modes: [...modes.values()].map(({ measuredOutput, measuredMs, ...row }) => ({ ...row, outputTokS: rate(measuredOutput, measuredMs) }))
       .sort((a, b) => a.kind.localeCompare(b.kind) || b.requests - a.requests || a.value.localeCompare(b.value)) };
 }
@@ -102,10 +117,10 @@ function csvField(value) {
 function historyCsv(data, modes = false) {
   const { source, model, from, to } = data.range;
   const head = modes ? "from,to,source,model,kind,value,evidence,requests,measured_requests,avg_output_tok_s"
-    : "day,source,model,requests,input_tokens,cache_read_tokens,cache_creation_tokens,output_tokens,reasoning_tokens,unfinished_requests,measured_requests,avg_output_tok_s,priced_requests,estimated_usd,performance_score";
+    : "day,source,model,requests,input_tokens,cache_read_tokens,cache_creation_tokens,output_tokens,reasoning_tokens,unfinished_requests,measured_requests,avg_output_tok_s,priced_requests,estimated_usd,performance_score,peak_output_tok_s";
   const rows = modes ? data.modes.map((r) => [from, to, source, model, r.kind, r.value, r.evidence, r.requests, r.measured, r.outputTokS?.toFixed(2)])
     : data.days.map((r) => [r.day, source, model, r.requests, r.input, r.cachedInput, r.cacheCreation, r.output, r.reasoning,
-      r.unfinalized, r.measured, r.outputTokS?.toFixed(2), r.pricedRequests, r.pricedRequests ? r.estimatedUsd.toFixed(6) : null, r.score]);
+      r.unfinalized, r.measured, r.outputTokS?.toFixed(2), r.pricedRequests, r.pricedRequests ? r.estimatedUsd.toFixed(6) : null, r.score, r.peakOutputTokS?.toFixed(2)]);
   return `\ufeff${[head, ...rows.map((row) => row.map(csvField).join(","))].join("\r\n")}\r\n`;
 }
 

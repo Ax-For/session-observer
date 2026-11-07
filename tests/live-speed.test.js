@@ -13,6 +13,22 @@ const end = (s) => ({ type: "event_msg", timestamp: at(s), payload: { type: "tas
 const assistant = (s, id, output, stop) => ({ type: "assistant", timestamp: at(s), sessionId: "c", message: { id, model: "claude-test", usage: { output_tokens: output }, stop_reason: stop, content: [{ type: "text" }] } });
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
 
+test("source history uses only that source's intervals without changing live totals", () => {
+  const now = base + 100_000;
+  const engine = createLiveSpeedEngine({ clock: () => now });
+  const codex = { file: "codex.jsonl" }, claude = { file: "claude.jsonl" };
+  engine.ingest(start(98), codex, "codex");
+  engine.ingest(usage(100, "codex-output", 90), codex, "codex");
+  engine.ingest({ type: "api-request", timestamp: at(98), sessionId: "c" }, claude, "claude");
+  engine.ingest(assistant(100, "claude-output", 30, "end_turn"), claude, "claude");
+
+  const view = engine.snapshot(now, 1, "codex");
+  assert.equal(view.historySource, "codex");
+  assert.equal(view.measured, 40);
+  assert.equal(view.history.reduce((sum, point) => sum + point.measured, 0), 90);
+  assert.equal(engine.snapshot(now, 1).history.reduce((sum, point) => sum + point.measured, 0), 120);
+});
+
 test("live tool diagnostics link failed loops to a tool call, distinguish polling, and report confirmed recovery", () => {
   const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
   const context = { file: "loop.jsonl" };

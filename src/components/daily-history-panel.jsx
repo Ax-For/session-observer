@@ -22,7 +22,8 @@ function dateShift(day, offset) {
 function HistoryPlot({ days, metric }) {
   const dark = useComputedColorScheme("light") === "dark";
   const option = useMemo(() => {
-    const values = days.slice().reverse().map((row) => ({ day: row.day, value: metric === "tokens" ? row.input + row.output : metric === "speed" ? row.outputTokS : row.score }));
+    const values = days.slice().reverse().map((row) => ({ day: row.day, peak: row.peakOutputTokS,
+      value: metric === "tokens" ? (row.peakOnly ? null : row.input + row.output) : metric === "speed" ? row.outputTokS : row.score }));
     const rows = values.flatMap((row, i) => i && dateShift(values[i - 1].day, 1) < row.day ? [{ day: "", value: null }, row] : [row]);
     const color = dark ? "#8ca8ff" : "#315ad8", muted = dark ? "#b0b7c4" : "#606979";
     return { animation: false, grid: { left: 52, right: 18, top: 14, bottom: 25 },
@@ -30,21 +31,27 @@ function HistoryPlot({ days, metric }) {
       xAxis: { type: "category", data: rows.map((row) => row.day), axisLabel: { color: muted, hideOverlap: true, formatter: (day) => day.slice(5) }, axisTick: { show: false }, axisLine: { show: false } },
       yAxis: { type: "value", min: 0, splitNumber: 3, axisLabel: { color: muted, formatter: formatHumanNumber }, splitLine: { lineStyle: { color: dark ? "#32363f" : "#e6e8ed", type: "dashed" } } },
       series: [{ id: "history", name: metricTitle[metric], type: metric === "tokens" ? "bar" : "line", data: rows.map((row) => row.value),
-        itemStyle: { color }, barMaxWidth: 28, symbolSize: 5, connectNulls: false, lineStyle: { width: 1.5 } }],
+        itemStyle: { color }, barMaxWidth: 28, symbolSize: 5, connectNulls: false, lineStyle: { width: 1.5 } },
+      ...(metric === "speed" && days.some((day) => day.peakOutputTokS != null) ? [{
+        id: "peak", name: "实测峰值", type: "line", data: rows.map((row) => row.peak ?? null),
+        symbolSize: 5, connectNulls: false, lineStyle: { width: 1.5, type: "dashed" }, itemStyle: { color: dark ? "#efae72" : "#b46b31" },
+      }] : [])],
     };
   }, [days, metric, dark]);
   return <ChartPlot option={option} height={176} label={`本页${metricTitle[metric]}趋势`} />;
 }
 
-function DailyTable({ days, hasScore }) {
+function DailyTable({ days, hasScore, showPeak }) {
   return <table className="usage-history__table" aria-label="每日用量明细">
     <thead><tr><th scope="col">日期</th><th scope="col">请求</th><th scope="col">输入</th><th scope="col">缓存读取</th>
-      <th scope="col">输出</th><th scope="col">平均输出 tok/s</th><th scope="col">费用估算</th>{hasScore && <th scope="col">综合分</th>}</tr></thead>
+      <th scope="col">输出</th><th scope="col">平均输出 tok/s</th>{showPeak && <th scope="col">实测峰值 tok/s</th>}
+      <th scope="col">费用估算</th>{hasScore && <th scope="col">综合分</th>}</tr></thead>
     <tbody>{days.map((row) => <tr key={row.day}>
       <th scope="row"><time dateTime={row.day}>{row.day}</time></th>
-      <td title={row.unfinalized ? `${row.unfinalized} 次响应尚未结束` : undefined}>{fmt(row.requests)}{row.unfinalized > 0 && <sup>*</sup>}</td>
-      <td>{fmt(row.input)}</td><td>{fmt(row.cachedInput)}</td><td>{fmt(row.output)}</td>
+      <td title={row.peakOnly ? "仅保留了该日峰值" : row.unfinalized ? `${row.unfinalized} 次响应尚未结束` : undefined}>{row.peakOnly ? "—" : fmt(row.requests)}{row.unfinalized > 0 && <sup>*</sup>}</td>
+      <td>{row.peakOnly ? "—" : fmt(row.input)}</td><td>{row.peakOnly ? "—" : fmt(row.cachedInput)}</td><td>{row.peakOnly ? "—" : fmt(row.output)}</td>
       <td title={`${fmt(row.measured)} 次可测速响应`}>{speed(row.outputTokS)}</td>
+      {showPeak && <td title="监控期间观测到的最高 3 秒实测速率">{speed(row.peakOutputTokS)}</td>}
       <td title={`${fmt(row.pricedRequests)} / ${fmt(row.requests)} 次请求可计价`}>{cost(row)}</td>
       {hasScore && <td data-testid="history-day-score">{row.score == null ? "—" : fmt(row.score)}</td>}
     </tr>)}</tbody>
@@ -64,10 +71,10 @@ function ModeTable({ modes, exportModes, disabled }) {
   </details>;
 }
 
-export function DailyHistoryPanel() {
-  const [filters, setFilters] = useState({});
+export function DailyHistoryPanel({ initialSource = "", initialMetric = "tokens" }) {
+  const [filters, setFilters] = useState(initialSource ? { source: initialSource } : {});
   const [draft, setDraft] = useState({});
-  const [metric, setMetric] = useState("tokens");
+  const [metric, setMetric] = useState(initialMetric);
   const [filterError, setFilterError] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -80,7 +87,7 @@ export function DailyHistoryPanel() {
   const totals = data?.totals;
   const stats = scan?.coverage;
   const pendingFilters = Object.keys(draft).some((key) => draft[key] !== range[key]);
-  const exportDisabled = exporting || !totals?.requests || loading || pendingFilters;
+  const exportDisabled = exporting || !(totals?.requests || data?.totalDays) || loading || pendingFilters;
   const models = [...new Set([values.model, ...(data?.models || [])].filter(Boolean))];
   const error = filterError || exportError || refreshError;
 
@@ -135,7 +142,7 @@ export function DailyHistoryPanel() {
     {scan?.status === "partial" && <p className="usage-history__notice" role="status">部分日志尚未计入：读取失败 {fmt(stats?.failedFiles)} 个文件，跳过 {fmt(stats?.skippedLines)} 行，未写完 {fmt(stats?.partialFiles)} 个文件。</p>}
     {requestError ? <div className="usage-history__empty" role="alert"><strong>无法读取历史</strong><Button size="xs" variant="default" onClick={retry}>重试</Button></div>
       : !data || (!scan && status?.status === "loading") ? <div className="usage-history__empty" role="status"><strong>正在读取每日汇总</strong></div>
-        : !totals.requests ? <div className="usage-history__empty"><strong>此范围暂无记录</strong><p>扩大日期范围或切换来源、模型后再查看。</p></div>
+        : !totals.requests && !data.totalDays ? <div className="usage-history__empty"><strong>此范围暂无记录</strong><p>扩大日期范围或切换来源、模型后再查看。</p></div>
           : <>
             <dl className="usage-history__totals">
               <div><dt>请求</dt><dd>{fmt(totals.requests)}</dd><small>{totals.unfinalized ? `${fmt(totals.unfinalized)} 次未结束` : "所选范围"}</small></div>
@@ -144,12 +151,13 @@ export function DailyHistoryPanel() {
               <div><dt>费用估算</dt><dd>{cost(totals)}</dd><small>{fmt(totals.pricedRequests)} / {fmt(totals.requests)} 次已计价</small></div>
             </dl>
             <div className="usage-history__plot">
-              <div className="usage-history__plot-head"><div><h3>本页趋势</h3><p>{hasScore ? "每日综合分需要至少 20 次可测速响应" : "选择一个来源和模型后可查看综合分"}</p></div>
+              <div className="usage-history__plot-head"><div><h3>本页趋势</h3><p>{shownMetric === "speed" && !range.model
+                ? "蓝线为平均输出速度，虚线为监控期间的 3 秒实测峰值。" : hasScore ? "每日综合分需要至少 20 次可测速响应" : "选择一个来源和模型后可查看综合分"}</p></div>
                 <SegmentedControl size="xs" aria-label="历史图表指标" value={shownMetric} onChange={setMetric}
                   data={[{ value: "tokens", label: "Token" }, { value: "speed", label: "速度" }, { value: "score", label: "综合分", disabled: !hasScore }]} /></div>
               <HistoryPlot days={data.days} metric={shownMetric} />
             </div>
-            <DailyTable days={data.days} hasScore={hasScore} />
+            <DailyTable days={data.days} hasScore={hasScore} showPeak={!range.model} />
             <div className="usage-history__pagination"><span>{fmt(data.totalDays)} 个有记录的日期{totals.unfinalized ? " · * 含未结束请求" : ""}</span>
               {data.totalDays > data.pageSize && <div><Button size="xs" variant="default" disabled={loading || data.offset === 0}
                 onClick={() => setFilters({ ...range, offset: Math.max(0, data.offset - data.pageSize) })}>上一页</Button>

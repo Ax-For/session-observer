@@ -948,6 +948,7 @@ export function App() {
                     onRecalculate={recalculateObservability}
                     onOpenConversation={openConversation}
                     onOpenSessionDetail={openSessionDetail}
+                    onOpenUsageHistory={() => setTab("tokens")}
                   />}
                 </Suspense>
               ) : tab === "stream" ? (

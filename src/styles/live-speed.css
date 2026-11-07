@@ -23,14 +23,23 @@
 .live-speed__sources { margin: 0; display: grid; grid-template-columns: minmax(0, .8fr) repeat(2, minmax(0, 1fr)) minmax(0, 1.25fr); gap: 8px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
 .live-speed__sources > div { display: grid; gap: 4px; min-width: 0; }
 .live-speed__sources > div + div { border-left: 1px solid var(--line); padding-left: 8px; }
-.live-speed__sources dt { font-size: 11px; color: var(--text-soft); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
-.live-speed__sources i { width: 5px; height: 5px; border-radius: 50%; background: var(--platform-codex); }
+.live-speed__sources dt { min-width: 0; }
+.live-speed__sources button, .live-speed__chart-actions button, .live-speed__tool-signal {
+  min-height: 24px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-soft);
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+.live-speed__sources button { display: flex; width: 100%; align-items: center; gap: 5px; padding: 2px 4px; text-align: left; }
+.live-speed__sources button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-speed__sources button:hover, .live-speed__chart-actions button:hover, .live-speed__tool-signal:hover { background: var(--panel-soft); }
+.live-speed__sources .is-selected button { background: var(--accent-soft); color: var(--accent-strong); font-weight: 650; }
+.live-speed__sources button:focus-visible, .live-speed__chart-actions button:focus-visible, .live-speed__tool-signal:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.live-speed__sources i { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: var(--platform-codex); }
 .live-speed__sources i.is-claude { background: var(--platform-claude); }
 .live-speed__sources i.is-qwen { background: var(--platform-qwen); }
 .live-speed__sources i.is-dsh { background: var(--platform-dsh); }
 .live-speed__sources dd { margin: 0; color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-speed__sources small { font-size: 9px; color: var(--text-faint); }
-.live-speed__chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; font-size: 10px; color: var(--text-faint); }
+.live-speed__chart-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin-top: 13px; font-size: 10px; color: var(--text-faint); }
 .live-speed__chart-title, .live-speed__chart-legend, .live-speed__chart-legend span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .live-speed__chart-title { gap: 8px; color: var(--text-soft); }
 .live-speed__chart-title select { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px; background: var(--panel); color: var(--text-soft); font: inherit; cursor: pointer; }
@@ -38,6 +47,8 @@
 .live-speed__chart-legend { gap: 10px; }
 .live-speed__chart-head i { width: 12px; border-top: 2px solid var(--platform-codex); }
 .live-speed__chart-head i.is-estimated { border-top: 2px dashed var(--text-faint); }
+.live-speed__chart-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+.live-speed__chart-actions button { color: var(--accent-strong); padding: 2px 6px; }
 .live-speed__sessions { min-width: 0; border-left: 1px solid var(--line); padding-left: 24px; }
 .live-speed__session-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; }
 .live-speed__session-head p { margin: 4px 0 0; font-size: 10px; color: var(--text-faint); }
@@ -48,12 +59,6 @@
 .live-speed__list { max-height: 230px; overflow: auto; scrollbar-width: thin; }
 .live-speed__session-row { border-top: 1px solid var(--line); }
 .live-speed__session { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 56px 64px; gap: 10px; align-items: center; border: 0; background: transparent; text-align: left; padding: 12px 2px; font-family: inherit; cursor: pointer; color: var(--text); }
-.live-speed__tool-signal {
-  min-height: 24px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-soft);
-  font: inherit; font-size: 11px; cursor: pointer;
-}
-.live-speed__tool-signal:hover { background: var(--panel-soft); }
-.live-speed__tool-signal:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .live-speed__tool-signal { display: block; max-width: 100%; overflow: hidden; margin: -6px 0 7px; padding: 3px 6px; text-overflow: ellipsis; white-space: nowrap; }
 .live-speed__tool-signal span { margin-left: 4px; color: var(--text-soft); }
 .live-speed__tool-signal.is-looping { color: var(--danger); }

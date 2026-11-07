@@ -10,6 +10,7 @@ const { localDay, dayOffset, createDayRecorder, pooled, addRecord, emptyRecord, 
 const { validDay, createUsageRecorder, readHistory } = require("./history-query");
 const { PRICING_VERSION } = require("../shared/token-pricing");
 const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
+const { readDailyPeaks } = require("./live-speed-peaks");
 const { isDshCompressed } = require("./zstd-frames");
 
 const VERSION = 4;
@@ -123,7 +124,7 @@ function baselineModels(db, firstDay, today, timezone, legacy) {
   })).sort((a, b) => a.sourceType.localeCompare(b.sourceType) || b.n - a.n || a.model.localeCompare(b.model));
 }
 
-function createPerformanceHistory({ file, listFiles, roots = [], clock = Date.now, onProgress = () => {}, loadPrices = () => "builtin", scanBudgetMs = Infinity }) {
+function createPerformanceHistory({ file, peakFile, listFiles, roots = [], clock = Date.now, onProgress = () => {}, loadPrices = () => "builtin", scanBudgetMs = Infinity }) {
   let cycle;
   async function refresh() {
     const { DatabaseSync } = require("node:sqlite");
@@ -195,7 +196,7 @@ function createPerformanceHistory({ file, listFiles, roots = [], clock = Date.no
 
   function read(filters, options) {
     const { DatabaseSync } = require("node:sqlite");
-    const settings = { now: clock(), ...options };
+    const settings = { now: clock(), readPeaks: (range) => readDailyPeaks(peakFile, range), ...options };
     if (!fs.existsSync(file)) return readHistory(null, filters, settings);
     const db = new DatabaseSync(file, { readOnly: true });
     try {
