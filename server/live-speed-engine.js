@@ -5,6 +5,7 @@ const { evaluateAgent, highest } = require("./performance-score");
 const { executionModes } = require("./execution-modes");
 const { createResponseRates, emptyRates, addRates, publicRates } = require("./live-speed-rates");
 const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
+const { toolDigest, toolSignal } = require("./tool-signals");
 
 const RETENTION_MS = 30 * 60_000;
 const STALE_MS = 5 * 60_000;
@@ -53,7 +54,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
   let completionOrder = 0;
   let evictedResponses = 0;
 
-  function ingest(obj, context, source) {
+  function ingest(obj, context, source, { seeded = false } = {}) {
     const p = obj.payload || {};
     if (source === "codex" && obj.type === "session_meta") {
       if (context.codexMetadataSeen) return;
@@ -86,6 +87,7 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
     if (model && model !== "<synthetic>") agent.model = model;
     if (ms < agent.lastLineMs) return;
     agent.lastLineMs = ms;
+    if (agent.toolAvailableSince === Infinity) agent.toolAvailableSince = ms;
     const modes = executionModes(obj, context, source, context.configuredTier);
     agent.modes = modes.current;
     for (const event of toolEvents(obj, source)) {
@@ -93,7 +95,8 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       const id = `${key}|${bounded(event.id)}`;
       const previous = actions.get(id);
       if (event.kind === "call" && !previous && typeof event.tool === "string" && event.tool) {
-        actions.set(id, { id, callId: bounded(event.id), agentId: key, sourceType: source, model: agent.model || "", tool: bounded(event.tool), callMs: ms, resultMs: null, failed: null });
+        const diagnostic = actionStore ? {} : { digest: toolDigest(event.args), seeded };
+        actions.set(id, { id, callId: bounded(event.id), agentId: key, sourceType: source, model: agent.model || "", tool: bounded(event.tool), callMs: ms, resultMs: null, failed: null, ...diagnostic });
         if (Number.isFinite(maxActions)) {
           const own = [...actions.values()].filter((a) => a.agentId === key);
           for (const old of own.slice(0, Math.max(0, own.length - maxActions))) actions.delete(old.id);
@@ -247,7 +250,8 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
       return { id: agent.id, sessionId: agent.sessionId, sourceType: agent.sourceType, title: agent.title, project: agent.project,
         model: agent.model || "未知模型", modes: agent.modes, parentSessionId: agent.parentSessionId, phase: agent.phase, lastLineMs: agent.lastLineMs,
         measured, estimated, rates: { total: rates.total, reasoning: rates.reasoning }, unknown,
-        recentRate: agent.referenceRates?.output ?? null, performance };
+        recentRate: agent.referenceRates?.output ?? null, performance,
+        toolSignal: toolSignal(scoreActions.get(agent.id) || [], now, agent.toolAvailableSince) };
     }).sort((a, b) => Number(b.phase !== "idle") - Number(a.phase !== "idle") || b.lastLineMs - a.lastLineMs);
     const best = highest(rows);
     const common = { generatedAt: now, windowMs: WINDOW_MS, ...publicRates(totals),
@@ -263,7 +267,10 @@ function createLiveSpeedEngine({ clock = Date.now, maxAgents = 128, maxResponses
   }
   function stop(context) {
     const agent = agents.get(context.agentKey);
-    if (agent && agent.file === context.file) { agent.phase = "idle"; agent.start = null; agent.streaming = agent.explicit = false; }
+    if (agent && agent.file === context.file) {
+      agent.phase = "idle"; agent.start = null; agent.streaming = agent.explicit = false;
+      agent.toolAvailableSince = Infinity;
+    }
   }
   return { ingest, snapshot, snapshotRanges, stop };
 }

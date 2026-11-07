@@ -1529,6 +1529,7 @@ body {
 .session-replay-step.is-tool-result .session-replay-step__rail i { background: var(--violet); }
 .session-replay-step.is-error .session-replay-step__rail i { background: var(--danger); }
 .session-replay-step.is-slow { box-shadow: inset 2px 0 0 var(--warning); }
+.session-replay-step.is-focused { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
 .session-replay-step__time { align-self: center; color: var(--text-faint); font: 500 10px/1.3 var(--font-mono); }
 .session-replay-step__body { align-self: center; display: grid; gap: 3px; min-width: 0; padding: 9px 12px; }
 .session-replay-step__body strong { font-size: 12px; }

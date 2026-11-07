@@ -108,8 +108,8 @@ export const apiClient = {
     return request("/api/sessions", options);
   },
 
-  fetchSessionReplay(sessionId, limit = 500, options) {
-    const query = buildQuery({ limit });
+  fetchSessionReplay(sessionId, limit = 500, options, callId) {
+    const query = buildQuery({ limit, callId });
     return request(`/api/sessions/${encodeURIComponent(sessionId)}/replay?${query}`, options);
   },
 

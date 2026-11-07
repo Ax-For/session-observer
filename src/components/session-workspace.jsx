@@ -350,9 +350,17 @@ const OUTCOME_OPTIONS = [
   { value: "failed", label: "未完成" },
 ];
 
-function SessionReplay({ payload, loading, error, onOpenEvent }) {
+function SessionReplay({ payload, loading, error, onOpenEvent, focusCallId }) {
   const replay = payload?.replay;
   const slowest = new Set(replay?.slowestStepIds || []);
+  const focusRef = useRef(null);
+  const focused = focusCallId && replay?.steps?.find((step) => step.kind === "tool-call" && step.callId === focusCallId);
+  const focusedId = focused?.id;
+  useEffect(() => {
+    if (!focusedId) return undefined;
+    const frame = window.requestAnimationFrame(() => focusRef.current?.scrollIntoView?.({ block: "center" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedId]);
   if (loading && !replay) return <Text className="session-detail-empty">正在构建执行回放...</Text>;
   if (error) return <Text className="session-detail-empty is-error">{error}</Text>;
   if (!replay?.steps?.length) return <Text className="session-detail-empty">当前加载范围没有可回放的执行步骤。</Text>;
@@ -366,11 +374,14 @@ function SessionReplay({ payload, loading, error, onOpenEvent }) {
         <div><span>回放范围</span><strong>{formatNumber(replay.total)} 条</strong></div>
       </div>
       <div className="session-replay__timeline">
+        {focusCallId && !focused && !loading && <Text className="session-detail-empty">原始调用已不可用，显示近期回放。</Text>}
         {replay.steps.map((step, index) => (
           <button
             key={step.id}
             type="button"
-            className={`session-replay-step is-${step.kind}${step.status === "error" ? " is-error" : ""}${slowest.has(step.id) ? " is-slow" : ""}`}
+            ref={step.id === focusedId ? focusRef : undefined}
+            aria-current={step.id === focusedId ? "true" : undefined}
+            className={`session-replay-step is-${step.kind}${step.status === "error" ? " is-error" : ""}${slowest.has(step.id) ? " is-slow" : ""}${step.id === focusedId ? " is-focused" : ""}`}
             onClick={() => step.eventId && onOpenEvent?.({ eventId: step.eventId, contentTruncated: true })}
             disabled={!step.eventId}
           >
@@ -513,6 +524,7 @@ function SessionDetailPanel({
   relations,
   session,
   selectedSessionId,
+  replayCallId,
   events,
   loading,
   page,
@@ -527,13 +539,13 @@ function SessionDetailPanel({
   onReturnToSearch,
   onExitDialogueFocus,
 }) {
-  const [detailTab, setDetailTab] = useState("conversation");
+  const [detailTab, setDetailTab] = useState(replayCallId ? "replay" : "conversation");
   const [conversationQuery, setConversationQuery] = useState("");
   const [conversationLimit, setConversationLimit] = useState(8);
   const [chatAwayFromLatest, setChatAwayFromLatest] = useState(false);
   const motionEnabled = useInterfaceMotion();
   const { data: replayPayload, loading: replayLoading, error: replayError } = useAnalysisRequest(
-    (options) => apiClient.fetchSessionReplay(selectedSessionId, 500, options), selectedSessionId,
+    (options) => apiClient.fetchSessionReplay(selectedSessionId, 500, options, replayCallId), JSON.stringify([selectedSessionId, replayCallId]),
     `${session?.latest || ""}:${session?.count || 0}`, detailTab === "replay" && Boolean(selectedSessionId),
   );
   const [annotation, setAnnotation] = useState(session?.annotation || null);
@@ -563,12 +575,12 @@ function SessionDetailPanel({
   }
 
   useEffect(() => {
-    setDetailTab("conversation");
+    setDetailTab(replayCallId ? "replay" : "conversation");
     setConversationQuery("");
     setConversationLimit(8);
     setChatAwayFromLatest(false);
     setAnnotation(session?.annotation || null);
-  }, [selectedSessionId]);
+  }, [selectedSessionId, replayCallId]);
 
   useEffect(() => {
     if (detailTab !== "conversation" || dialogueFocus) return undefined;
@@ -788,7 +800,7 @@ function SessionDetailPanel({
         </Tabs.Panel>
 
         <Tabs.Panel value="replay" className="session-detail-tab-panel">
-          <SessionReplay payload={replayPayload} loading={replayLoading} error={replayError} onOpenEvent={onOpenEvent} />
+          <SessionReplay payload={replayPayload} loading={replayLoading} error={replayError} onOpenEvent={onOpenEvent} focusCallId={replayCallId} />
         </Tabs.Panel>
 
         <Tabs.Panel value="usage" className="session-detail-tab-panel">
@@ -1188,6 +1200,7 @@ export function SessionWorkspace({
   activeOverview,
   sections,
   selectedSessionId,
+  replayCallId,
   detailSession,
   detailRelations,
   detailEvents,
@@ -1336,6 +1349,7 @@ export function SessionWorkspace({
               onOpenSessionDetail={openSessionDetail}
               session={detailSession}
               selectedSessionId={selectedSessionId}
+              replayCallId={replayCallId}
               events={detailEvents}
               dialogueFocus={dialogueFocus}
               onReturnToSearch={onReturnToSearch}

@@ -98,7 +98,10 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
   const selected = metrics[metric];
   const [measuredLabel, estimatedLabel] = seriesNames(metric);
   const sessionMetric = metric === "cost" ? "output" : metric;
-  const rows = (data?.agents || []).filter((a) => showIdle || a.phase !== "idle");
+  const signalPriority = { looping: 2, recovered: 1 };
+  const priority = (row) => fresh ? signalPriority[row.toolSignal?.kind] || 0 : 0;
+  const rows = (data?.agents || []).filter((row) => showIdle || row.phase !== "idle" || priority(row))
+    .sort((left, right) => priority(right) - priority(left));
   const peak = metric === "output" || metric === "total" ? Math.max(0, ...history.map((r) => sum(metricRates(r, metric)))) : null;
   const limited = data?.monitor && (data.monitor.skippedLines || data.monitor.omittedFiles || data.monitor.readErrors || data.evictedResponses);
   return <section className="live-speed" aria-label="实时速度监测" data-testid="live-speed-panel">
@@ -150,19 +153,29 @@ export function LiveSpeedView({ data, status, historyMinutes = DEFAULT_HISTORY_M
           {rows.length ? rows.map((row) => {
             const value = currentRate(row, sessionMetric, fresh);
             const estimated = metricRates(row, sessionMetric)?.estimated > 0;
-            return <button key={row.id} className="live-speed__session" onClick={() => onOpenSessionDetail?.(row)} aria-label={`查看会话 ${row.title}`}>
-              <span className="live-speed__identity">
-                <strong title={row.title}>{row.parentSessionId ? "↳ " : ""}{row.title === row.sessionId ? row.project : row.title}</strong>
-                <span title={`${row.project} · ${row.model}`}>{platformLabel(row.sourceType)} · {row.project} · {row.model}{row.parentSessionId ? " · 子 Agent" : ""}</span>
-                {fresh && (row.modes?.tier || row.modes?.effort) && <span className="live-speed__modes" title={[["档位", row.modes.tier], ["推理强度", row.modes.effort]].map(([kind, mode]) => `${kind}：${mode ? `${modeLabel(mode.value)} · ${modeEvidence(mode.evidence)}` : "未知"}`).join("；")}>
-                  {[row.modes.tier, row.modes.effort].filter(Boolean).map((mode) => `${modeLabel(mode.value)}（${modeEvidence(mode.evidence)}）`).join(" · ")}
-                </span>}
-              </span>
-              <span className={`live-speed__phase is-${row.phase}`}>{phaseNames[row.phase]}</span>
-              <span className="live-speed__row-rate" title={readoutDetail(row, sessionMetric, fresh)}>
-                {value == null ? "—" : `${estimated ? "≈ " : ""}${rate(value)}`}<small>{value == null ? "" : "tok/s"}</small>
-              </span>
-            </button>;
+            const signal = fresh ? row.toolSignal : null;
+            const signalLabel = signal?.kind === "looping" ? "重复失败" : signal?.kind === "recovered" ? "已恢复" : "重复调用";
+            return <div key={row.id} className="live-speed__session-row">
+              <button type="button" className="live-speed__session" onClick={() => onOpenSessionDetail?.(row)} aria-label={`查看会话 ${row.title}`}>
+                <span className="live-speed__identity">
+                  <strong title={row.title}>{row.parentSessionId ? "↳ " : ""}{row.title === row.sessionId ? row.project : row.title}</strong>
+                  <span title={`${row.project} · ${row.model}`}>{platformLabel(row.sourceType)} · {row.project} · {row.model}{row.parentSessionId ? " · 子 Agent" : ""}</span>
+                  {fresh && (row.modes?.tier || row.modes?.effort) && <span className="live-speed__modes" title={[["档位", row.modes.tier], ["推理强度", row.modes.effort]].map(([kind, mode]) => `${kind}：${mode ? `${modeLabel(mode.value)} · ${modeEvidence(mode.evidence)}` : "未知"}`).join("；")}>
+                    {[row.modes.tier, row.modes.effort].filter(Boolean).map((mode) => `${modeLabel(mode.value)}（${modeEvidence(mode.evidence)}）`).join(" · ")}
+                  </span>}
+                </span>
+                <span className={`live-speed__phase is-${row.phase}`}>{phaseNames[row.phase]}</span>
+                <span className="live-speed__row-rate" title={readoutDetail(row, sessionMetric, fresh)}>
+                  {value == null ? "—" : `${estimated ? "≈ " : ""}${rate(value)}`}<small>{value == null ? "" : "tok/s"}</small>
+                </span>
+              </button>
+              {signal && <button type="button" className={`live-speed__tool-signal is-${signal.kind}`}
+                title={signal.kind === "repeating" ? "未发现明确失败，可能是正常轮询" : signal.tool}
+                aria-label={`${signalLabel} · ${signal.tool} · 查看工具回放`}
+                onClick={() => onOpenSessionDetail?.(row, { replayCallId: signal.callId })}>
+                {signalLabel} <span>{signal.tool}{signal.repeats ? ` ×${signal.repeats}` : ""}</span>
+              </button>}
+            </div>;
           }) : <div className="live-speed__empty">{fresh ? "当前没有正在生成或执行工具的会话" : "等待实时日志连接"}<span>{fresh ? "会话日志写入后，这里会自动更新。" : "连接恢复后自动继续监测。"}</span></div>}
         </div>
       </div>

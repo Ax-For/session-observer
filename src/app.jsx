@@ -207,6 +207,7 @@ export function App() {
   useEffect(() => { apiClient.fetchDiagnostics().then(setCapabilities).catch(() => {}); }, []);
   const [detailEvent, setDetailEvent] = useState(null);
   const [sessionDetailSeed, setSessionDetailSeed] = useState(null);
+  const [replayFocus, setReplayFocus] = useState(null);
   const [sessionDetailEvents, setSessionDetailEvents] = useState([]);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
   const [sessionDetailPage, setSessionDetailPage] = useState(createSessionDetailPage());
@@ -651,10 +652,12 @@ export function App() {
   }
 
   function selectSession(sessionId) {
+    setReplayFocus(null);
     setSelectedSessionId((current) => (current === sessionId ? "" : sessionId));
   }
 
   function clearSessionFocus() {
+    setReplayFocus(null);
     setSelectedSessionId("");
     setSessionDetailSeed(null);
     setSessionDetailEvents([]);
@@ -710,6 +713,7 @@ export function App() {
     const sessionId = getNavigationSessionId(target);
     if (!sessionId) return;
     const seed = buildSessionDetailSeed(target);
+    setReplayFocus(options.replayCallId ? { sessionId, callId: options.replayCallId } : null);
     const preferredOrder = options.order || "desc";
     if (tab === "stream" && submittedStreamQuery.trim()) {
       streamReturn.current = { selectedSessionId, scrollTop: document.scrollingElement?.scrollTop || 0 };
@@ -1227,6 +1231,7 @@ export function App() {
                       selectedIds={selectedSessionIds}
                       selectedSessionId={selectedSessionId}
                       detailSession={selectedDetailSession}
+                      replayCallId={replayFocus?.sessionId === selectedSessionId ? replayFocus.callId : ""}
                       detailEvents={sessionDetailEvents}
                       dialogueFocus={dialogueFocus}
                       onReturnToSearch={returnToSearch}

@@ -1,5 +1,6 @@
 const { estimateTokenCost } = require("../shared/token-pricing");
 const { qwenToolEvents, qwenUsage } = require("../shared/qwen-code");
+const { codexToolExitCode } = require("../shared/observer-core");
 
 const token = (value) => Math.min(1e12, Math.max(0, Math.trunc(Number(value) || 0)));
 function usageFor(obj, source, cumulative = false) {
@@ -38,20 +39,16 @@ function toolEvents(obj, source) {
   if (source === "qwen") return qwenToolEvents(obj);
   const p = obj.payload || {};
   if (source === "codex" && obj.type === "response_item") {
-    if (["function_call", "custom_tool_call"].includes(p.type)) return [{ kind: "call", id: p.call_id, tool: p.name }];
+    if (["function_call", "custom_tool_call"].includes(p.type)) return [{ kind: "call", id: p.call_id, tool: p.name, args: p.arguments ?? p.input }];
     if (["function_call_output", "custom_tool_call_output"].includes(p.type)) {
-      const output = Array.isArray(p.output) ? p.output.find((part) => part.type === "input_text")?.text : p.output;
-      let code = p.exit_code;
-      if (!Number.isInteger(code) && typeof output === "string") {
-        const match = output.slice(0, 8192).match(/^\s*\{[\s\S]*?"exit_code"\s*:\s*(-?\d+)\s*[,}]/);
-        if (match) code = Number(match[1]);
-      }
-      return [{ kind: "result", id: p.call_id, failed: Number.isInteger(code) ? code !== 0 : null }];
+      const code = codexToolExitCode(p);
+      const failed = Number.isInteger(code) ? code !== 0 : typeof p.is_error === "boolean" ? p.is_error : null;
+      return [{ kind: "result", id: p.call_id, failed }];
     }
   }
   if (source === "claude" && obj.message?.model !== "<synthetic>" && Array.isArray(obj.message?.content)) {
     return obj.message.content.flatMap((part) => obj.type === "assistant" && part.type === "tool_use"
-      ? [{ kind: "call", id: part.id, tool: part.name }] : obj.type === "user" && part.type === "tool_result"
+      ? [{ kind: "call", id: part.id, tool: part.name, args: part.input }] : obj.type === "user" && part.type === "tool_result"
         ? [{ kind: "result", id: part.tool_use_id, failed: part.is_error === true }] : []);
   }
   return [];

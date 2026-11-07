@@ -1919,6 +1919,26 @@
     };
   }
 
+  function codexToolExitCode(payload = {}) {
+    if (Number.isInteger(payload.exit_code)) return payload.exit_code;
+    const outputs = Array.isArray(payload.output)
+      ? payload.output.filter((part) => part?.type === "input_text").map((part) => part.text)
+      : [payload.output];
+    let code = null;
+    for (const [index, output] of outputs.entries()) {
+      if (typeof output !== "string") continue;
+      const header = output.slice(0, 8192);
+      const chunk = /^\s*\{\s*"chunk_id"\s*:\s*"[^"]+"\s*,\s*"wall_time_seconds"\s*:\s*[\d.]+\s*,\s*"exit_code"\s*:\s*(-?\d+)\s*[,}]/.exec(header);
+      const legacy = index === 0 && /^\s*\{[\s\S]*?"exit_code"\s*:\s*(-?\d+)\s*[,}]/.exec(header);
+      const match = chunk || legacy;
+      if (!match) continue;
+      const candidate = Number(match[1]);
+      if (candidate !== 0) return candidate;
+      code = 0;
+    }
+    return code;
+  }
+
   function enrichParsedEvents(result, obj, context, sourceType) {
     const payload = obj.payload || obj;
     const tier = payload.service_tier || obj.message?.service_tier;
@@ -1943,7 +1963,8 @@
       const resultBlock = obj.message?.content?.find?.((item) => item.type === "tool_result" && item.tool_use_id === event.callId);
       const error = resultBlock?.is_error ?? payload.is_error;
       if (typeof error === "boolean") event.isError = error;
-      if (Number.isInteger(payload.exit_code)) event.exitCode = payload.exit_code;
+      const exitCode = sourceType === "codex" && event.callType === "Tool_Result" ? codexToolExitCode(payload) : payload.exit_code;
+      if (Number.isInteger(exitCode)) event.exitCode = exitCode;
       // Only explicit per-message USD costs are accepted, never cumulative session totals.
       if (event.callType === "Token_Usage" && sourceType === "claude" && obj.message?.id && typeof obj.costUSD === "number" && Number.isFinite(obj.costUSD) && obj.costUSD >= 0) {
         const previous = context.lastCostMessageId === obj.message.id ? context.lastMessageCostUsd || 0 : 0;
@@ -1988,6 +2009,7 @@
     parseClaudeCodeLineToEvent,
     parseCodexLineToEvent,
     parseQwenCodeLineToEvent: qwenCodeApi?.parseQwenCodeLineToEvent,
+    codexToolExitCode,
     tokenCacheCreationInput,
     tokenCacheReadInput,
     tokenCountedTotal,

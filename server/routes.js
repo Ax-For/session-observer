@@ -120,7 +120,9 @@ function querySessionEventsDirect(filters, records) {
     allowSessionEarlyStop: true,
     applyEventSessionMetaCore: _deps.applyEventSessionMetaCore,
     eventMatchesModeCore: _deps.eventMatchesModeCore,
-    eventMatchesFiltersCore: _deps.eventMatchesFiltersCore,
+    eventMatchesFiltersCore: filters.callId
+      ? (event, values) => event.callId === filters.callId && _deps.eventMatchesFiltersCore(event, values)
+      : _deps.eventMatchesFiltersCore,
     sessionHints: summary.sessions.groups,
     compactContent: true,
   });
@@ -379,14 +381,14 @@ function querySessionComparison(leftId, rightId) {
   };
 }
 
-function querySessionReplay(sessionId, limitValue) {
+function querySessionReplay(sessionId, limitValue, callId = "") {
   const records = listSourceFileRecords();
   const summary = getSummaryForRecords(records);
   const resolvedSessionId = _deps.summaryStore.resolveSessionIdentifier(sessionId, { files: records });
   const session = summary.sessions.groups.find((item) => item.sessionId === resolvedSessionId);
   if (!session) return null;
   const limit = Math.min(config.MAX_PAGE_SIZE, Math.max(50, Number(limitValue) || 500));
-  const payload = querySessionEventsDirect({
+  const filters = {
     mode: "raw",
     platform: "",
     model: "",
@@ -402,11 +404,16 @@ function querySessionReplay(sessionId, limitValue) {
     limit,
     includeSummary: false,
     forceForward: true,
-  }, records);
+  };
+  const payload = querySessionEventsDirect(filters, records);
+  const included = payload.events.some((event) => event.callId === callId && event.callType === "Tool_Call");
+  const focused = callId && !included ? querySessionEventsDirect({ ...filters, callId, limit: 8 }, records).events : [];
+  const ids = new Set(payload.events.map((event) => event.eventId));
+  const extra = focused.filter((event) => !ids.has(event.eventId));
   return {
     generatedAt: new Date().toISOString(),
     session,
-    replay: SessionInsights.buildExecutionReplay(payload.events, { limit }),
+    replay: SessionInsights.buildExecutionReplay([...payload.events, ...extra], { limit: limit + extra.length }),
     page: payload.page,
   };
 }

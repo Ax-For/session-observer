@@ -302,7 +302,11 @@ const server = http.createServer((req, res) => {
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/replay") && req.method === "GET") {
       const sessionId = decodeURIComponent(u.pathname.split("/").filter(Boolean)[2] || "");
       if (!sessionId) return sendJson(req, res, 400, { error: "sessionId required" });
-      return runQuery(req, res, "querySessionReplay", [sessionId, u.searchParams.get("limit")]);
+      const callId = u.searchParams.get("callId") || "";
+      if (callId.length > 240 || Array.from(callId).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
+        return sendJson(req, res, 400, { error: "Invalid tool call id" });
+      }
+      return runQuery(req, res, "querySessionReplay", [sessionId, u.searchParams.get("limit"), callId]);
     }
 
     if (u.pathname.startsWith("/api/sessions/") && u.pathname.endsWith("/annotation")) {

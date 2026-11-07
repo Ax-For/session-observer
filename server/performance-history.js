@@ -11,7 +11,7 @@ const { validDay, createUsageRecorder, readHistory } = require("./history-query"
 const { PRICING_VERSION } = require("../shared/token-pricing");
 const { NATIVE_SOURCE_TYPES } = require("../shared/source-adapters");
 
-const VERSION = 3;
+const VERSION = 4;
 const hash = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const dayKey = (row) => JSON.stringify([row.day, row.sourceType, row.model]);
 const coverageFields = ["skippedLines", "compactedLines", "identifiedResponses", "measuredResponses", "partialFiles", "duplicateRecords"];

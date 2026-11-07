@@ -13,6 +13,34 @@ const end = (s) => ({ type: "event_msg", timestamp: at(s), payload: { type: "tas
 const assistant = (s, id, output, stop) => ({ type: "assistant", timestamp: at(s), sessionId: "c", message: { id, model: "claude-test", usage: { output_tokens: output }, stop_reason: stop, content: [{ type: "text" }] } });
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
 
+test("live tool diagnostics link failed loops to a tool call, distinguish polling, and report confirmed recovery", () => {
+  const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
+  const context = { file: "loop.jsonl" };
+  const addTool = (time, id, name, args, exitCode, seeded = false) => {
+    engine.ingest({ type: "response_item", timestamp: at(time), payload: { type: "function_call", call_id: id, name, arguments: args } }, context, "codex", { seeded });
+    const output = [{ type: "input_text", text: "Script completed" },
+      { type: "input_text", text: JSON.stringify({ chunk_id: id, wall_time_seconds: 0.1, exit_code: exitCode, output: "" }) }];
+    engine.ingest({ type: "response_item", timestamp: at(time + 0.1), payload: { type: "function_call_output", call_id: id, output } }, context, "codex", { seeded });
+  };
+  for (let i = 0; i < 3; i++) addTool(80 + i, `seed-${i}`, "shell", "private command", 1, true);
+  assert.equal(engine.snapshot().agents[0].toolSignal, null);
+  for (let i = 0; i < 3; i++) addTool(85 + i, `poll-${i}`, "read", "status", 0);
+  assert.equal(engine.snapshot().agents[0].toolSignal.kind, "repeating");
+  for (let i = 0; i < 3; i++) {
+    addTool(90 + 2 * i, `run-${i}`, "shell", "private command", 1);
+    addTool(91 + 2 * i, `read-${i}`, "read", "status", 0);
+  }
+  const signal = engine.snapshot().agents[0].toolSignal;
+  assert.deepEqual(signal, { kind: "looping", repeats: 3, callId: "run-2", tool: "shell" });
+  assert.ok(!JSON.stringify(engine.snapshot()).includes("private command"));
+  addTool(98, "unknown", "shell", "other command", undefined);
+  assert.equal(engine.snapshot().agents[0].toolSignal, null);
+  addTool(99, "recovered", "shell", "fixed command", 0);
+  assert.deepEqual(engine.snapshot().agents[0].toolSignal, { kind: "recovered", callId: "recovered", tool: "shell" });
+  engine.stop(context);
+  assert.equal(engine.snapshot().agents[0].toolSignal, null);
+});
+
 test("longer live charts include older responses and average each bucket without changing the current rate", () => {
   const engine = createLiveSpeedEngine({ clock: () => base + 100_000 });
   const context = { file: "codex.jsonl" };

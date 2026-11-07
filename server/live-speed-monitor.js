@@ -17,14 +17,24 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
   let timer;
   let running;
   let closed = false;
+  let began = false;
   let skippedLines = 0;
   let readErrors = 0;
   let omittedFiles = 0;
   let truncatedFiles = 0;
   const startedAt = clock();
   const activeRoots = (roots || []).filter((root) => !root.archive);
+  function clearPending(state) {
+    state.pending = Buffer.alloc(0);
+    state.skip = false;
+  }
+  function remove(state) {
+    engine.stop(state.context);
+    clearPending(state);
+    files.delete(state.file);
+  }
 
-  function track(file, mtimeMs = clock()) {
+  function track(file, mtimeMs = clock(), seedExisting = !began) {
     if (closed || mtimeMs < clock() - 30 * 60_000) return;
     if (files.has(file)) { files.get(file).changedAt = Math.max(files.get(file).changedAt || 0, mtimeMs); return; }
     const root = file.endsWith(".jsonl") && locationFor(file, activeRoots);
@@ -32,22 +42,21 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
     if (files.size >= maxFiles) {
       const oldest = [...files.values()].sort((a, b) => a.mtimeMs - b.mtimeMs)[0];
       if (oldest.mtimeMs >= mtimeMs) { omittedFiles++; return; }
-      engine.stop(oldest.context);
-      files.delete(oldest.file); omittedFiles++;
+      remove(oldest); omittedFiles++;
     }
     const configuredTier = readConfiguredTier(root.configFile);
-    files.set(file, { file, source: root.sourceType, configuredTier, mtimeMs, offset: 0, pending: Buffer.alloc(0), skip: false, initialized: false, context: { file, configuredTier } });
+    files.set(file, { file, source: root.sourceType, configuredTier, mtimeMs, offset: 0, pending: Buffer.alloc(0), skip: false, seedExisting, initialized: false, context: { file, configuredTier } });
   }
   function discover(records) {
     omittedFiles = 0;
-    for (const record of records) track(record.file, record.mtimeMs);
+    for (const record of records) track(record.file, record.mtimeMs, true);
   }
-  function parseLine(state, line) {
+  function parseLine(state, line, seeded = true) {
     if (!line.length) return;
-    try { engine.ingest(JSON.parse(line.toString("utf8")), state.context, state.source); }
+    try { engine.ingest(JSON.parse(line.toString("utf8")), state.context, state.source, { seeded }); }
     catch { skippedLines++; }
   }
-  function consume(state, buffer) {
+  function consume(state, buffer, seeded) {
     let start = 0;
     while (start < buffer.length) {
       const newline = buffer.indexOf(10, start);
@@ -59,8 +68,8 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
         } else state.pending = Buffer.concat([state.pending, part]);
       }
       if (newline < 0) break;
-      if (!state.skip) parseLine(state, state.pending);
-      state.pending = Buffer.alloc(0); state.skip = false; start = newline + 1;
+      if (!state.skip) parseLine(state, state.pending, seeded);
+      clearPending(state); start = newline + 1;
     }
   }
   async function readFile(state, budget) {
@@ -72,11 +81,14 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
       const identity = `${stat.dev}:${stat.ino}`;
       if (state.identity !== identity || stat.size < state.offset || (stat.size === state.offset && state.mtimeMs !== stat.mtimeMs)) {
         engine.stop(state.context);
-        state.initialized = false; state.pending = Buffer.alloc(0); state.context = { file: state.file, configuredTier: state.configuredTier }; state.skip = false;
+        if (state.initialized) state.seedExisting = true;
+        clearPending(state);
+        state.initialized = false; state.context = { file: state.file, configuredTier: state.configuredTier };
       }
       state.identity = identity; state.mtimeMs = stat.mtimeMs;
       if (!state.initialized) {
         state.offset = Math.max(0, stat.size - seedBytes);
+        state.seedEnd = state.seedExisting ? stat.size : 0;
         if (state.offset > 0) {
           truncatedFiles++;
           const header = Buffer.alloc(Math.min(maxLineBytes, stat.size));
@@ -89,17 +101,19 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
         }
         state.initialized = true;
       }
-      const size = Math.min(budget, 256 * 1024, stat.size - state.offset);
+      const seeded = state.offset < state.seedEnd;
+      const readEnd = seeded ? state.seedEnd : stat.size;
+      const size = Math.min(budget, 256 * 1024, readEnd - state.offset);
       state.caughtUp = state.offset >= stat.size;
       if (size <= 0) return 0;
       const buffer = Buffer.alloc(size);
       const { bytesRead } = await handle.read(buffer, 0, size, state.offset);
       state.offset += bytesRead;
-      consume(state, buffer.subarray(0, bytesRead));
+      consume(state, buffer.subarray(0, bytesRead), seeded);
       state.caughtUp = state.offset >= stat.size;
       return bytesRead;
     } catch (error) {
-      if (error.code === "ENOENT") { engine.stop(state.context); files.delete(state.file); }
+      if (error.code === "ENOENT") remove(state);
       else readErrors++;
       return 0;
     } finally { await handle?.close(); }
@@ -122,10 +136,11 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
   async function tick() {
     if (closed) return;
     if (running) return running;
+    began = true;
     running = (async () => {
       let budget = 2 * 1024 * 1024;
       for (const state of files.values()) {
-        if (Math.max(state.mtimeMs, state.changedAt || 0) < clock() - 30 * 60_000) { engine.stop(state.context); files.delete(state.file); continue; }
+        if (Math.max(state.mtimeMs, state.changedAt || 0) < clock() - 30 * 60_000) { remove(state); continue; }
         if (budget <= 0) break;
         budget -= await readFile(state, budget);
       }
@@ -150,7 +165,12 @@ function createLiveSpeedMonitor({ roots, clock = Date.now, maxFiles = 64, maxLin
   return { discover, notify: track, tick, snapshot, stream,
     setBaseline: (value) => { baseline = value; baselineByModel = new Map((value.models || []).map((row) => [JSON.stringify([row.sourceType, row.model]), row])); },
     start: () => { if (!timer) { tick(); timer = setInterval(tick, 1000); timer.unref?.(); } },
-    close: () => { closed = true; clearInterval(timer); for (const res of clients.keys()) res.end(); clients.clear(); frames.clear(); files.clear(); },
+    close: () => {
+      closed = true; clearInterval(timer);
+      for (const res of clients.keys()) res.end();
+      for (const state of files.values()) remove(state);
+      clients.clear(); frames.clear();
+    },
   };
 }
 
