@@ -9,28 +9,59 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createTokenPricing() {
   "use strict";
 
-  const PRICING_VERSION = "2026-09-24";
+  const PRICING_VERSION = "2026-11-18";
 
   const MODEL_PRICE_HINTS = [
-    { match: /gpt-6-astra/i, input: 10, output: 50, cacheRead: 1, cacheCreation: 12.5, source: "custom-pricing" },
-    { match: /gpt-6-sol/i, input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, source: "custom-pricing" },
-    { match: /gpt-6-luna/i, input: 0.1, output: 0.5, cacheRead: 0.01, cacheCreation: 0.125, source: "custom-pricing" },
+    // GPT-6.2 系列官方定价 (Standard 模式, Short context, 30m write)
+    { match: /gpt-6\.2-astra/i, input: 8, output: 40, cacheRead: 0.4, cacheCreation: 10, source: "openai-official" },
+    { match: /gpt-6\.2-sol/i, input: 2, output: 10, cacheRead: 0.1, cacheCreation: 2.5, source: "openai-official" },
+    
+    // GPT-6.1 系列官方定价 (Standard 模式, Short context, 30m write)
+    { match: /gpt-6\.1-astra/i, input: 10, output: 50, cacheRead: 1, cacheCreation: 12.5, source: "openai-official" },
+    { match: /gpt-6\.1-sol/i, input: 2, output: 10, cacheRead: 0.1, cacheCreation: 2.5, source: "openai-official" },
+    { match: /gpt-6\.1-terra/i, input: 1, output: 5, cacheRead: 0.05, cacheCreation: 1.25, source: "openai-official" },
+    
+    // GPT-6 系列官方定价 (Standard 模式, Short context, 30m write)
+    { match: /gpt-6-astra/i, input: 10, output: 50, cacheRead: 1, cacheCreation: 12.5, source: "openai-official" },
+    { match: /gpt-6-sol/i, input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, source: "openai-official" },
+    { match: /gpt-6-luna/i, input: 0.1, output: 0.5, cacheRead: 0.01, cacheCreation: 0.125, source: "openai-official" },
+    
+    // GPT-5.6 系列自定义定价
     { match: /gpt-5\.6-sol/i, input: 4, output: 20, cacheRead: 0.4, cacheCreation: 5, source: "custom-pricing" },
     { match: /gpt-5\.6-terra/i, input: 2, output: 12, cacheRead: 0.2, cacheCreation: 2.5, source: "custom-pricing" },
     { match: /gpt-5\.6-luna/i, input: 0.2, output: 1.2, cacheRead: 0.02, cacheCreation: 0.25, source: "custom-pricing" },
+    
+    // Grok 系列定价
     { match: /grok-4\.7/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
     { match: /grok-4\.6/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
     { match: /grok-4\.3/i, input: 1.25, output: 2.5, cacheRead: 0.2, cacheCreation: 2, source: "custom-pricing" },
     { match: /grok/i, input: 2, output: 6, cacheRead: 0.5, cacheCreation: 5, source: "custom-pricing" },
+    
+    // Codex 模型定价
     { match: /gpt-5\.5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2.5, source: "codex-rate-card" },
     { match: /gpt-5\.4-mini/i, input: 0.75, output: 4.52, cacheRead: 0.075, cacheCreation: 0.75, source: "codex-rate-card" },
     { match: /gpt-5\.4/i, input: 2.5, output: 15, cacheRead: 0.25, cacheCreation: 2.5, fastMultiplier: 2, source: "codex-rate-card" },
     { match: /gpt-5\.3-codex(?:-spark)?/i, input: 1.75, output: 14, cacheRead: 0.175, cacheCreation: 1.75, fastMultiplier: 2, source: "codex-estimate" },
+    
+    // Claude 系列定价
     { match: /claude.*haiku/i, input: 0.8, output: 4, cacheRead: 0.08, cacheCreation: 1 },
     { match: /claude.*sonnet/i, input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75 },
     { match: /claude.*opus/i, input: 15, output: 75, cacheRead: 1.5, cacheCreation: 18.75 },
-    { match: /gpt-4\.1|gpt-4o/i, input: 2.5, output: 10, cacheRead: 0.25, cacheCreation: 2.5 },
+    
+    // GPT-4 系列官方定价
+    { match: /gpt-4\.1|gpt-4o/i, input: 2.5, output: 10, cacheRead: 0.25, cacheCreation: 2.5, source: "openai-official" },
+    { match: /gpt-4-turbo/i, input: 10, output: 30, cacheRead: 1, cacheCreation: 12.5, source: "openai-official" },
+    { match: /gpt-4/i, input: 30, output: 60, cacheRead: 3, cacheCreation: 37.5, source: "openai-official" },
+    
+    // GPT-3.5 系列官方定价
+    { match: /gpt-3\.5-turbo/i, input: 0.5, output: 1.5, cacheRead: 0.05, cacheCreation: 0.625, source: "openai-official" },
+    
+    // 通用 fallback
     { match: /gpt-5/i, input: 5, output: 30, cacheRead: 0.5, cacheCreation: 5, fastMultiplier: 2, source: "codex-fallback" },
+    { match: /gpt-6\.2/i, input: 2, output: 10, cacheRead: 0.1, cacheCreation: 2.5, source: "openai-fallback" },
+    { match: /gpt-6/i, input: 2, output: 10, cacheRead: 0.2, cacheCreation: 2.5, source: "openai-fallback" },
+    
+    // 其他模型定价
     { match: /qwen/i, input: 0.4, output: 1.2, cacheRead: 0.04, cacheCreation: 0.4 },
     { match: /deepseek/i, input: 0.27, output: 1.1, cacheRead: 0.027, cacheCreation: 0.27 },
     { match: /glm/i, input: 0.5, output: 1.5, cacheRead: 0.05, cacheCreation: 0.5 },
