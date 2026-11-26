@@ -29,7 +29,7 @@ export function sliceConversationPage(allEvents = [], offset = 0, limit = CONVER
 
 export function mergeConversationPage(currentEvents = [], currentPage = createEmptyConversationPage(), incomingEvents = [], options = {}) {
   const { total, replace = false } = options;
-  const events = (replace ? [...incomingEvents] : [...currentEvents, ...incomingEvents])
+  const events = mergeEventPages(replace ? [] : currentEvents, incomingEvents, "desc", 4000, undefined, replace ? "start" : "end")
     .sort((left, right) => String(left?.time || "").localeCompare(String(right?.time || "")));
   const fallbackTotal = Number(currentPage?.total) || 0;
   const normalizedTotal = Number.isFinite(Number(total))
@@ -41,8 +41,9 @@ export function mergeConversationPage(currentEvents = [], currentPage = createEm
     page: {
       total: normalizedTotal,
       loaded: events.length,
-      nextOffset: events.length,
-      hasMore: events.length < normalizedTotal,
+      nextOffset: (replace ? 0 : currentPage.nextOffset) + incomingEvents.length,
+      hasMore: (replace ? 0 : currentPage.nextOffset) + incomingEvents.length < normalizedTotal,
     },
   };
 }
+import { mergeEventPages } from "./event-pages";

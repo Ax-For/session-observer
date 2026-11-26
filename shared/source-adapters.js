@@ -28,8 +28,27 @@
       pathMarkers: ["/.claude/"],
       capabilities: ["events", "conversation", "tokens", "rename", "delete", "export"],
     },
+    {
+      key: "qwen",
+      label: "Qwen Code",
+      sessionGlob: "~/.qwen/projects/*/chats/*.jsonl",
+      metadataSources: [],
+      parserKey: "parseQwenCodeLineToEvent",
+      pathMarkers: ["/.qwen/projects/"],
+      capabilities: ["events", "conversation", "tokens", "export"],
+    },
+    {
+      key: "dsh",
+      label: "DeepSeek Harness",
+      sessionGlob: "~/.dsh/sessions/**/session.v*.jsonl[.zstd]",
+      metadataSources: [],
+      parserKey: "parseDshLineToEvent",
+      pathMarkers: ["/.dsh/sessions/"],
+      capabilities: ["events", "conversation", "tokens", "export"],
+    },
   ];
 
+  const NATIVE_SOURCE_TYPES = Object.freeze(SOURCE_ADAPTERS.map(({ key }) => key));
   const DEFAULT_ADAPTER = SOURCE_ADAPTERS[0];
 
   function cloneAdapter(adapter) {
@@ -78,6 +97,7 @@
   }
 
   return {
+    NATIVE_SOURCE_TYPES,
     getSourceAdapter,
     listSourceAdapters,
     registerSourceAdapters,

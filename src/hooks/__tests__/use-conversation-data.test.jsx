@@ -92,7 +92,7 @@ describe("useConversationData", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("limit=400");
   });
 
-  test("hydrates truncated dialogue messages without expanding tool output", async () => {
+  test("retains previews without eagerly fetching dialogue or tool payloads", async () => {
     const notify = vi.fn();
     const fetchMock = vi.fn(async (url) => {
       if (String(url).includes("/api/events/detail")) {
@@ -141,13 +141,12 @@ describe("useConversationData", () => {
 
     await waitFor(() => {
       expect(result.current.conversationEvents.find((event) => event.callType === "Agent")?.content)
-        .toBe("完整回答，包含所有表格行和结论。");
+        .toBe("回答预览...");
     });
-    expect(result.current.conversationEvents.find((event) => event.callType === "Agent")?.contentTruncated).toBeUndefined();
+    expect(result.current.conversationEvents.find((event) => event.callType === "Agent")?.contentTruncated).toBe(true);
     expect(result.current.conversationEvents.find((event) => event.callType === "Tool_Result")?.content)
       .toBe("工具输出预览...");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1][0]).toContain("eventId=agent-preview");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(notify).not.toHaveBeenCalled();
   });
 });

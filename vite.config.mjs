@@ -19,10 +19,12 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
+          // Let LazyMotion split its optional features instead of eagerly merging them into vendor.
+          if (/\/(?:motion|framer-motion|motion-dom|motion-utils)\//.test(id)) return undefined;
           if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
             return "vendor-react";
           }
-          if (id.includes("/recharts/") || id.includes("/d3-")) {
+          if (id.includes("/echarts/") || id.includes("/zrender/")) {
             return "vendor-charts";
           }
           if (id.includes("/@mantine/")) {

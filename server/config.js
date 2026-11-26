@@ -23,17 +23,25 @@ const SESSION_ANNOTATIONS_FILE = process.env.OBSERVER_SESSION_ANNOTATIONS_FILE
   || path.join(DATA_DIR, "session-annotations.json");
 const DIALOGUE_SEARCH_DB = process.env.OBSERVER_DIALOGUE_SEARCH_DB
   || path.join(DATA_DIR, "dialogue-search.sqlite");
-const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "scan").trim().toLowerCase() === "sqlite"
-  ? "sqlite"
-  : "scan";
+const DIALOGUE_SEARCH_MODE = String(process.env.OBSERVER_DIALOGUE_SEARCH || "sqlite").trim().toLowerCase() === "scan"
+  ? "scan"
+  : "sqlite";
 const SOURCE_ADAPTERS_FILE = process.env.OBSERVER_SOURCE_ADAPTERS_FILE || "";
+const SOURCE_LOCATIONS_FILE = process.env.OBSERVER_SOURCE_LOCATIONS_FILE || path.join(DATA_DIR, "source-locations.json");
 
-const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(os.homedir(), ".codex", "sessions");
-const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), ".claude", "projects");
+const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+const SESSIONS_DIR = process.env.CODEX_SESSIONS_DIR || path.join(codexHome, "sessions");
+const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
+const qwenRuntime = process.env.QWEN_RUNTIME_DIR || process.env.QWEN_HOME || path.join(os.homedir(), ".qwen");
+const QWEN_PROJECTS_DIR = process.env.QWEN_PROJECTS_DIR
+  || path.join(qwenRuntime.startsWith("~/") ? path.join(os.homedir(), qwenRuntime.slice(2)) : qwenRuntime, "projects");
+const dshHome = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
+const DSH_SESSIONS_DIR = process.env.DSH_SESSIONS_DIR
+  || path.join(dshHome.startsWith("~/") ? path.join(os.homedir(), dshHome.slice(2)) : dshHome, "sessions");
 const CLAUDE_SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
-const CODEX_SESSION_INDEX = path.join(os.homedir(), ".codex", "session_index.jsonl");
+const CODEX_SESSION_INDEX = process.env.CODEX_SESSION_INDEX || path.join(os.homedir(), ".codex", "session_index.jsonl");
 const STATE_DB = process.env.CODEX_STATE_DB || path.join(os.homedir(), ".codex", "state_5.sqlite");
-const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(os.homedir(), ".codex", "config.toml");
+const CODEX_CONFIG_FILE = process.env.CODEX_CONFIG_FILE || path.join(path.basename(SESSIONS_DIR) === "sessions" ? path.dirname(SESSIONS_DIR) : codexHome, "config.toml");
 
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1000;
@@ -156,12 +164,15 @@ module.exports = {
   DIALOGUE_SEARCH_DB,
   DIALOGUE_SEARCH_MODE,
   SOURCE_ADAPTERS_FILE,
+  SOURCE_LOCATIONS_FILE,
   STATIC_ROOT,
   ensureFrontendBuild,
   DIST_ROOT,
   DIST_INDEX,
   SESSIONS_DIR,
   CLAUDE_PROJECTS_DIR,
+  QWEN_PROJECTS_DIR,
+  DSH_SESSIONS_DIR,
   CLAUDE_SESSIONS_DIR,
   CODEX_SESSION_INDEX,
   STATE_DB,

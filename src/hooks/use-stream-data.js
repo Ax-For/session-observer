@@ -1,5 +1,6 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
+import { mergeEventPages } from "../lib/event-pages";
 
 export const PAGE_LIMIT = 250;
 
@@ -29,15 +30,26 @@ export function useStreamData({
   notify,
 }) {
   const eventRequestId = useRef(0);
+  const controllerRef = useRef(null);
   const streamPayloadRef = useRef(EMPTY_STREAM_PAYLOAD);
   const [streamPayload, setStreamPayload] = useState(EMPTY_STREAM_PAYLOAD);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [sourceChanged, setSourceChanged] = useState(false);
+  const [searchProgress, setSearchProgress] = useState(null);
+  const completedKey = useRef("");
+  const sourceRevision = useRef(0);
+  const queryKey = JSON.stringify([mode, quickFilter, tokenThreshold, selectedSessionId, streamFilters, query]);
 
-  const loadEvents = useCallback(async ({ append = false, sessionIdOverride } = {}) => {
+  const loadEvents = useCallback(async ({ append = false, refresh = false, sessionIdOverride } = {}) => {
     if (dataSource !== "server") return null;
 
     const requestId = ++eventRequestId.current;
+    const requestedRevision = sourceRevision.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     setLoadingEvents(true);
+    setSearchProgress(null);
     try {
       const currentPayload = streamPayloadRef.current;
       const effectiveSessionId = sessionIdOverride ?? selectedSessionId;
@@ -54,20 +66,24 @@ export function useStreamData({
         order: streamFilters.order,
         sessionId: effectiveSessionId,
         limit: PAGE_LIMIT,
-        offset: append ? Number(currentPayload.page?.offset || 0) + PAGE_LIMIT : 0,
+        cursor: append ? currentPayload.page?.nextCursor : "",
+        offset: append && !currentPayload.page?.nextCursor ? Number(currentPayload.page?.offset || 0) + PAGE_LIMIT : 0,
         summary: append ? 0 : 1,
-      });
+      }, { signal: controller.signal });
 
       if (requestId !== eventRequestId.current) return null;
+      completedKey.current = queryKey;
+      setSourceChanged(sourceRevision.current !== requestedRevision);
       startTransition(() => {
         setStreamPayload((current) => {
-          const nextPayload = append
+          const nextPayload = append || refresh
             ? {
                 ...payload,
-                events: [...current.events, ...payload.events],
-                sessions: current.sessions,
-                tokenWindows: current.tokenWindows,
-                meta: current.meta,
+                events: mergeEventPages(current.events, payload.events, streamFilters.order, 4000, undefined, append ? "end" : "start"),
+                sessions: append ? current.sessions : payload.sessions,
+                tokenWindows: append ? current.tokenWindows : payload.tokenWindows,
+                meta: append ? current.meta : payload.meta,
+                page: refresh && current.events.length ? current.page : payload.page,
               }
             : payload;
           streamPayloadRef.current = nextPayload;
@@ -76,6 +92,7 @@ export function useStreamData({
       });
       return payload;
     } catch (error) {
+      if (error.name === "AbortError" || requestId !== eventRequestId.current) return null;
       notify({
         title: "事件流加载失败",
         message: String(error.message || error),
@@ -99,20 +116,41 @@ export function useStreamData({
     streamFilters.end,
     streamFilters.order,
     notify,
+    queryKey,
   ]);
 
   useEffect(() => {
     if (dataSource !== "server" || !enabled) return undefined;
+    if (query.trim() && completedKey.current === queryKey) return undefined;
     const timer = window.setTimeout(() => {
       loadEvents();
     }, 140);
 
-    return () => window.clearTimeout(timer);
-  }, [dataSource, enabled, loadEvents]);
+    return () => { window.clearTimeout(timer); controllerRef.current?.abort(); };
+  }, [dataSource, enabled, loadEvents, query, queryKey]);
+
+  useEffect(() => {
+    if (!loadingEvents || !query.trim()) return undefined;
+    const controller = new AbortController();
+    let timer;
+    async function poll() {
+      try {
+        const payload = await apiClient.fetchDiagnostics({ signal: controller.signal });
+        if (!controller.signal.aborted) setSearchProgress(payload.active?.progress || null);
+      } catch { /* Search errors are reported by the query itself. */ }
+      if (!controller.signal.aborted) timer = window.setTimeout(poll, 1000);
+    }
+    timer = window.setTimeout(poll, 700);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [loadingEvents, query]);
 
   return {
     streamPayload,
     loadingEvents,
     loadEvents,
+    sourceChanged,
+    searchProgress,
+    markSourceChanged: () => { sourceRevision.current += 1; setSourceChanged(true); },
+    cancelEvents: () => controllerRef.current?.abort(),
   };
 }

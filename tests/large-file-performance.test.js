@@ -37,6 +37,7 @@ test("latest event lookup does not load a 400 MB sparse transcript into memory",
   });
   const heapGrowth = process.memoryUsage().heapUsed - before;
   assert.equal(payload.events[0].content, "latest event");
-  assert.equal(payload.scan.stoppedEarly, true);
+  assert.equal(payload.page.hasMore, false);
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
   assert.ok(heapGrowth < 32 * 1024 * 1024, `heap grew by ${heapGrowth} bytes`);
 });

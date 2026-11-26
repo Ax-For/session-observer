@@ -15,8 +15,11 @@ const EMPTY_OBSERVABILITY_PAYLOAD = {
 
 export function useObservabilityData({ dataSource, localEvents, notify, enabled = true }) {
   const requestId = useRef(0);
+  const controllerRef = useRef(null);
+  const rebuildingRef = useRef(false);
   const [observabilityPayload, setObservabilityPayload] = useState(EMPTY_OBSERVABILITY_PAYLOAD);
   const [loadingObservability, setLoadingObservability] = useState(false);
+  const [observabilityError, setObservabilityError] = useState("");
   const [recalculatingObservability, setRecalculatingObservability] = useState(false);
 
   const localPayload = useMemo(() => ({
@@ -29,6 +32,7 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
   }), [localEvents]);
 
   const loadObservability = useCallback(async () => {
+    if (rebuildingRef.current) return null;
     if (dataSource !== "server") {
       startTransition(() => {
         setObservabilityPayload(localPayload);
@@ -37,15 +41,22 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
     }
 
     const currentRequestId = ++requestId.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setObservabilityError("");
     setLoadingObservability(true);
     try {
-      const payload = await apiClient.fetchObservability();
+      const payload = await apiClient.fetchObservability({ signal: controller.signal });
       if (currentRequestId !== requestId.current) return null;
       startTransition(() => {
         setObservabilityPayload(payload);
       });
       return payload;
     } catch (error) {
+      if (error.name === "AbortError") return null;
+      if (currentRequestId !== requestId.current) return null;
+      setObservabilityError(String(error.message || error));
       notify({
         title: "可观测数据加载失败",
         message: String(error.message || error),
@@ -58,13 +69,17 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
   }, [dataSource, localPayload, notify]);
 
   const recalculateObservability = useCallback(async () => {
-    if (dataSource !== "server") return null;
+    if (dataSource !== "server" || rebuildingRef.current) return null;
+    rebuildingRef.current = true;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
 
     const currentRequestId = ++requestId.current;
     setLoadingObservability(true);
     setRecalculatingObservability(true);
     try {
-      const payload = await apiClient.recalculateObservability();
+      const payload = await apiClient.recalculateObservability({ signal: controller.signal });
       if (currentRequestId !== requestId.current) return null;
       startTransition(() => {
         setObservabilityPayload(payload);
@@ -77,6 +92,7 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
       });
       return payload;
     } catch (error) {
+      if (error.name === "AbortError") return null;
       notify({
         title: "历史 Token 重新计算失败",
         message: String(error.message || error),
@@ -84,12 +100,14 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
       });
       return null;
     } finally {
+      rebuildingRef.current = false;
       if (currentRequestId === requestId.current) {
         setLoadingObservability(false);
         setRecalculatingObservability(false);
       }
     }
   }, [dataSource, notify]);
+  useEffect(() => () => controllerRef.current?.abort(), []);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -102,6 +120,7 @@ export function useObservabilityData({ dataSource, localEvents, notify, enabled 
   return {
     observabilityPayload,
     loadingObservability,
+    observabilityError,
     loadObservability,
     recalculateObservability,
     recalculatingObservability,

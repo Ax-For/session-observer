@@ -61,15 +61,6 @@ const MARKDOWN_PATTERNS = [
   /(\*\*[^*]+\*\*|__[^_]+__|`[^`\n]+`)/,
   /(^|\n)\|.+\|/,
 ];
-const TOOL_RESULT_ERROR_PATTERNS = [
-  /\bProcess exited with code\s+([1-9]\d*)\b/i,
-  /(^|\n)\s*(Error|ERROR|Exception|Traceback)[:\s]/m,
-  /(^|\n)\s*Failed to\b/m,
-  /\b(Request failed|Command failed|Permission denied|net::ERR_[A-Z_]+|ENOENT|EACCES|ECONNREFUSED|ETIMEDOUT)\b/i,
-  /(^|\n)\s*(错误|异常|失败|拒绝)[:：\s]/m,
-  /\b(请求失败|执行失败|操作失败|连接被拒绝)\b/,
-];
-
 const TOOL_DISPLAY_CONFIGS = {
   Bash: {
     category: "bash",
@@ -373,12 +364,6 @@ function buildToolResultDisplay(event, toolName, config, isError) {
   };
 }
 
-function detectToolResultError(content) {
-  const text = String(content || "");
-  if (!text.trim()) return false;
-  return TOOL_RESULT_ERROR_PATTERNS.some((pattern) => pattern.test(text));
-}
-
 /**
  * Normalize events for conversation display (clean internal markers).
  * @param {Array} events - Raw event array
@@ -419,7 +404,7 @@ export function buildConversationEntries(events) {
       const toolName = event.toolName || "Tool";
       const config = getToolConfig(toolName);
       const isError = event.callType === "Tool_Result"
-        ? detectToolResultError(event.content)
+        ? event.isError === true || (Number.isInteger(event.exitCode) && event.exitCode !== 0)
         : false;
       const display = event.callType === "Tool_Call"
         ? buildToolInputDisplay(event, toolName, config)
@@ -459,6 +444,11 @@ export function buildConversationEntries(events) {
     entries.push({
       id,
       kind: "message",
+      eventId: event.eventId || "",
+      contentTruncated: Boolean(event.contentTruncated),
+      contentLength: event.contentLength,
+      matchOffset: event.matchOffset,
+      sessionId: event.sessionId || "",
       role,
       grouped: previous?.kind === "message" && previous.role === role,
       agentPrefix: parsed.agentPrefix,

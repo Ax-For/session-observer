@@ -6,12 +6,14 @@
 const fs = require("fs");
 const path = require("path");
 const config = require("./config");
-const { resolveSourceAdapterForFile } = require("../shared/source-adapters");
+const { getSourceAdapter, resolveSourceAdapterForFile } = require("../shared/source-adapters");
+const { locationFor } = require("./source-locations");
+const { isDshCompressed, dshChunks, readDshBytes } = require("./zstd-frames");
 
 /**
- * Recursively list all .jsonl files under a directory, skipping subagent dirs.
+ * Recursively list source logs, including separately attributed child agents.
  */
-function listJsonlFiles(dir) {
+function listJsonlFiles(dir, { zstd = false, dsh = false } = {}) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
   const stack = [dir];
@@ -21,9 +23,8 @@ function listJsonlFiles(dir) {
     for (const e of entries) {
       const full = path.join(current, e.name);
       if (e.isDirectory()) {
-        if (e.name === "subagents") continue;
         stack.push(full);
-      } else if (e.isFile() && full.endsWith(".jsonl")) {
+      } else if (e.isFile() && (full.endsWith(".jsonl") || (zstd && full.endsWith(".jsonl.zst")) || (dsh && isDshCompressed(full)))) {
         out.push(full);
       }
     }
@@ -36,6 +37,15 @@ function listJsonlFiles(dir) {
  */
 function readJsonlLine(file, targetLine) {
   if (!fs.existsSync(file) || !(targetLine > 0)) return "";
+  if (isDshCompressed(file)) {
+    let text = "";
+    forEachCompleteJsonlLine(file, (line, number, locator) => {
+      if (number !== targetLine) return;
+      if (!locator.truncated) text = line;
+      return false;
+    }, { maxLineBytes: config.EVENT_DETAIL_MAX_LINE_BYTES });
+    return text;
+  }
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   const parts = [];
@@ -80,6 +90,19 @@ function readJsonlLineAtOffset(file, offset, maxBytes = 0) {
   const startOffset = Number(offset);
   if (!fs.existsSync(file) || !Number.isFinite(startOffset) || startOffset < 0) return "";
   const byteLimit = Math.max(0, Number(maxBytes) || 0);
+  if (isDshCompressed(file)) {
+    const limit = byteLimit || config.EVENT_DETAIL_MAX_LINE_BYTES;
+    const parts = [];
+    let length = 0;
+    readDshBytes(file, startOffset, limit + 1, (chunk) => {
+      const newline = chunk.indexOf(10);
+      const piece = newline >= 0 ? chunk.subarray(0, newline) : chunk;
+      length += piece.length;
+      if (length <= limit && piece.length) parts.push(piece);
+      return newline < 0 && length <= limit;
+    });
+    return length <= limit ? Buffer.concat(parts).toString("utf8").replace(/\r$/, "") : "";
+  }
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   const parts = [];
@@ -117,6 +140,10 @@ function readJsonlLineAtOffset(file, offset, maxBytes = 0) {
  */
 function forEachJsonlLine(file, onLine) {
   if (!fs.existsSync(file)) return;
+  if (isDshCompressed(file)) {
+    return forEachCompleteJsonlLine(file, (line, number, locator) => locator.truncated ? undefined : onLine(line, number),
+      { maxLineBytes: config.EVENT_DETAIL_MAX_LINE_BYTES });
+  }
   const fd = fs.openSync(file, "r");
   const buffer = Buffer.alloc(64 * 1024);
   let parts = [];
@@ -163,14 +190,18 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
   const startOffset = Math.max(0, Number(options.startOffset) || 0);
   const initialLineNumber = Math.max(0, Number(options.initialLineNumber) || 0);
   const initialTailBuffer = String(options.initialTailBuffer || "");
+  const endOffset = Number.isFinite(options.endOffset) ? options.endOffset : Infinity;
   const result = {
     lineCount: initialLineNumber,
     tailBuffer: "",
     endedWithNewline: options.initialEndedWithNewline === true,
   };
-  if (!fs.existsSync(file)) return result;
-  const fd = fs.openSync(file, "r");
-  const buffer = Buffer.alloc(64 * 1024);
+  if (!options.regularFileOnly && !fs.existsSync(file)) return result;
+  const compressed = isDshCompressed(file);
+  const regularOnly = options.regularFileOnly || compressed;
+  const fd = fs.openSync(file, regularOnly ? fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK : "r");
+  const stat = regularOnly && fs.fstatSync(fd);
+  if (regularOnly && !stat.isFile()) { fs.closeSync(fd); throw new Error("Source is not a regular file"); }
   let parts = [];
   let partsLength = 0;
   let truncatedBytes = 0;
@@ -218,11 +249,24 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
     result.endedWithNewline = false;
   }
 
-  try {
+  function* plainChunks() {
+    const buffer = Buffer.alloc(64 * 1024);
     while (true) {
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, byteOffset);
-      if (bytesRead <= 0) break;
+      const readLength = Math.min(buffer.length, endOffset - byteOffset);
+      if (readLength <= 0) return;
+      const bytesRead = fs.readSync(fd, buffer, 0, readLength, byteOffset);
+      if (bytesRead <= 0) {
+        if (options.regularFileOnly && Number.isFinite(endOffset)) throw new Error("Source truncated during history scan");
+        return;
+      }
+      yield buffer.subarray(0, bytesRead);
+    }
+  }
 
+  try {
+    const chunks = compressed ? dshChunks(fd, Math.min(stat.size, endOffset), result) : plainChunks();
+    for (const buffer of chunks) {
+      const bytesRead = buffer.length;
       let segmentStart = 0;
       for (let index = 0; index < bytesRead; index += 1) {
         if (buffer[index] !== 10) continue;
@@ -244,6 +288,7 @@ function forEachCompleteJsonlLine(file, onLine, options = {}) {
     if (parts.length) {
       result.tailBuffer = Buffer.concat(parts).toString("utf8").replace(/\r$/, "");
     }
+    if (result.partialFrame || result.skippedFrames) result.endedWithNewline = false;
   } finally {
     fs.closeSync(fd);
   }
@@ -308,10 +353,12 @@ function forEachCompleteJsonlLineReverse(file, onLine, options = {}) {
   const fd = fs.openSync(file, "r");
   const bufferSize = 64 * 1024;
   const buffer = Buffer.alloc(bufferSize);
-  let position = fs.statSync(file).size;
+  let position = Math.min(fs.statSync(file).size, Number.isSafeInteger(options.endOffset) ? Math.max(0, options.endOffset) : Infinity);
   let tail = Buffer.alloc(0);
   let lineNumber = count.lineCount;
-  let skippedTrailingPartial = count.endedWithNewline;
+  const endByte = Buffer.alloc(1);
+  const endsAtNewline = position > 0 && fs.readSync(fd, endByte, 0, 1, position - 1) === 1 && endByte[0] === 10;
+  let skippedTrailingPartial = endsAtNewline;
   let truncatedBytes = 0;
 
   try {
@@ -386,12 +433,15 @@ function getPathSignature(target) {
 }
 
 /**
- * Check if a file path belongs to Codex or Claude Code, returning the appropriate parser.
+ * Resolve a transcript's source and parser, including configured roots.
  */
 function resolveParserForFile(filePath, parsers) {
-  const adapter = resolveSourceAdapterForFile(filePath);
+  const location = locationFor(filePath);
+  const adapter = location ? getSourceAdapter(location.sourceType) : resolveSourceAdapterForFile(filePath);
   const parser = parsers[adapter.parserKey] || parsers.parseCodexLineToEvent;
-  const sessionsDir = adapter.key === "claude" ? config.CLAUDE_PROJECTS_DIR : config.SESSIONS_DIR;
+  const sessionsDir = location?.path || {
+    codex: config.SESSIONS_DIR, claude: config.CLAUDE_PROJECTS_DIR, qwen: config.QWEN_PROJECTS_DIR, dsh: config.DSH_SESSIONS_DIR,
+  }[adapter.key] || config.SESSIONS_DIR;
   return { adapter, parser, sessionsDir };
 }
 

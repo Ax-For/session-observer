@@ -197,4 +197,31 @@ describe("useSourceChangeStream", () => {
 
     expect(MockEventSource.instances).toHaveLength(0);
   });
+
+  test("accepts a reset version after a server restart", () => {
+    vi.stubGlobal("EventSource", MockEventSource);
+    const onChange = vi.fn();
+    renderHook(() => useSourceChangeStream({ enabled: true, onChange, refreshDelayMs: 0 }));
+    const source = MockEventSource.instances[0];
+    act(() => source.dispatch("ready", { instanceId: "first", version: 80 }));
+    act(() => source.dispatch("ready", { instanceId: "second", version: 0 }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ reason: "restart" }));
+    act(() => source.dispatch("source-changed", { instanceId: "second", version: 1 }));
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  test("serializes refreshes and records success only after the request completes", async () => {
+    vi.stubGlobal("EventSource", MockEventSource);
+    let resolve;
+    const onChange = vi.fn().mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    const { result } = renderHook(() => useSourceChangeStream({ enabled: true, onChange, refreshDelayMs: 0 }));
+    const source = MockEventSource.instances[0];
+    act(() => source.dispatch("source-changed", { version: 1 }));
+    act(() => source.dispatch("source-changed", { version: 2 }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(result.current.lastRefreshAt).toBe("");
+    await act(async () => resolve({ ok: true }));
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(result.current.lastRefreshAt).not.toBe("");
+  });
 });

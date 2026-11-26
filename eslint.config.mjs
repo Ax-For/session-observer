@@ -5,11 +5,11 @@ import reactPlugin from "eslint-plugin-react";
 export default [
   js.configs.recommended,
   {
-    ignores: ["dist/", "node_modules/", ".codegraph/", "coverage/"],
+    ignores: ["dist/", "node_modules/", ".codegraph/", "coverage/", "test-results/"],
   },
   // Root-level server entry and server module files
   {
-    files: ["server.js", "server/**/*.js", "tests/**/*.js"],
+    files: ["server.js", "server/**/*.js", "tests/**/*.js", "tests/**/*.cjs", "scripts/**/*.cjs"],
     languageOptions: {
       globals: { ...globals.node },
       ecmaVersion: 2022,
@@ -59,7 +59,7 @@ export default [
   },
   // Test files — relaxed unused vars
   {
-    files: ["**/*.test.{js,jsx,mjs}", "**/__tests__/**/*.{js,jsx}", "src/test/setup.js"],
+    files: ["**/*.test.{js,jsx,mjs}", "**/*.spec.mjs", "**/__tests__/**/*.{js,jsx}", "src/test/setup.js"],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
       ecmaVersion: 2022,

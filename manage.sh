@@ -6,13 +6,13 @@ RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/server.pid"
 LOG_FILE="${RUNTIME_DIR}/server.log"
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-10}"
-OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-192}"
-OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-8}"
+OBSERVER_NODE_MAX_OLD_SPACE_MB="${OBSERVER_NODE_MAX_OLD_SPACE_MB:-64}"
+OBSERVER_NODE_SEMI_SPACE_MB="${OBSERVER_NODE_SEMI_SPACE_MB:-4}"
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8787}"
-SESSIONS_DIR="${CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
-CLAUDE_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+SESSIONS_DIR="${CODEX_SESSIONS_DIR:-${CODEX_HOME:-$HOME/.codex}/sessions}"
+CLAUDE_DIR="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"
 
 usage() {
   cat <<EOF
@@ -32,6 +32,10 @@ Environment variables:
   PORT                 Default: 8787
   CODEX_SESSIONS_DIR   Default: \$HOME/.codex/sessions
   CLAUDE_PROJECTS_DIR  Default: \$HOME/.claude/projects
+  QWEN_PROJECTS_DIR    Default: \$HOME/.qwen/projects (follows QWEN_RUNTIME_DIR or QWEN_HOME)
+  DSH_SESSIONS_DIR     Default: \$HOME/.dsh/sessions (follows DSH_HOME)
+  OBSERVER_SOURCE_LOCATIONS_FILE
+                       Optional local native directory lists (source-locations.json)
   INDEX_FILE_EVENT_CACHE_MAX_EVENTS
                        Default: 0, retain per-file parsed event arrays only when needed
   INDEX_MAX_EVENTS
@@ -43,9 +47,9 @@ Environment variables:
   EVENT_STREAM_MAX_PARSE_LINE_BYTES
                        Default: 131072, truncate oversized JSONL rows on list/summary paths
   OBSERVER_NODE_MAX_OLD_SPACE_MB
-                       Default: 192, cap V8 old-space to limit RSS growth
+                       Default: 64, HTTP process old-space (query worker is separate)
   OBSERVER_NODE_SEMI_SPACE_MB
-                       Default: 8, cap V8 young generation semi-space
+                       Default: 4, cap V8 young generation semi-space
 EOF
 }
 

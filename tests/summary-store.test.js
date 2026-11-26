@@ -35,8 +35,49 @@ const parser = {
     sourceType: "codex",
     tokenUsage: json.tokenUsage,
     extra: json.extra,
+    isError: json.isError,
   }),
 };
+
+test("cached summaries keep child usage exclusive after inherited parent context and appends", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "child.jsonl");
+  const cacheFile = path.join(dir, "summary.json");
+  writeJsonl(file, [
+    { type: "session_meta", timestamp: "2026-11-05T00:00:00Z", payload: { id: "child", source: { subagent: { thread_spawn: { parent_thread_id: "parent" } } } } },
+    { type: "turn_context", timestamp: "2026-11-05T00:00:01Z", payload: { thread_id: "parent", model: "gpt-5.5" } },
+    { type: "event_msg", timestamp: "2026-11-05T00:00:02Z", payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } } } },
+  ], Date.parse("2026-11-05T00:00:03Z"));
+  const options = { parsers: { parseCodexLineToEvent: ObserverCore.parseCodexLineToEvent }, cacheFile };
+  let summary = createSummaryStore(options).getSummary({ files: [file] });
+  assert.equal(summary.sessions.groups.length, 1);
+  assert.equal(summary.sessions.groups[0].sessionId, "child");
+  assert.equal(summary.sessions.groups[0].isSubagent, true);
+  assert.equal(summary.sessions.groups[0].aggregateToken.total, 120);
+  fs.appendFileSync(file, JSON.stringify({ type: "event_msg", timestamp: "2026-11-05T00:00:04Z", payload: { type: "agent_message", message: "child result" } }) + "\n");
+  summary = createSummaryStore(options).getSummary({ files: [file] });
+  assert.equal(summary.sessions.groups.length, 1);
+  assert.equal(summary.sessions.groups[0].sessionId, "child");
+  assert.equal(summary.tokens.effectiveTotal, 120);
+});
+
+test("negative usage corrections agree between global, daily and session ledgers", (t) => {
+  const dir = makeTempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "correction.jsonl");
+  writeJsonl(file, [
+    { time: "2026-06-01T00:00:00Z", sessionId: "s", model: "gpt-5.5", callType: "Token_Usage", tokenUsage: { input: 100, output: 20, total: 120 } },
+    { time: "2026-06-01T00:00:01Z", sessionId: "s", model: "gpt-5.5", callType: "Token_Usage", tokenUsage: { input: 0, output: -10, total: -10 } },
+  ], Date.parse("2026-06-01T00:00:02Z"));
+  const store = createSummaryStore({ parsers: [parser], now: () => Date.parse("2026-06-01T12:00:00Z") });
+  const summary = store.getSummary({ files: [file] });
+  assert.equal(summary.tokens.effectiveTotal, 110);
+  assert.equal(summary.tokens.output, 10);
+  assert.equal(summary.tokens.windows.day.total, 110);
+  assert.equal(summary.sessions.groups[0].aggregateToken.total, 110);
+  assert.ok(Math.abs(summary.tokens.cost.estimatedUsd - 0.0008) < 1e-9);
+});
 
 test("summary store builds global dashboard data without retaining raw events", () => {
   const dir = makeTempDir();
@@ -263,6 +304,7 @@ test("summary store keeps bounded session goal, outcome, tool, file, model, and 
       callType: "Tool_Result",
       toolName: "apply_patch",
       content: "Error: patch failed",
+      isError: true,
     },
     {
       id: "compact",

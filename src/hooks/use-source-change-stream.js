@@ -17,6 +17,7 @@ export function useSourceChangeStream({
   const onChangeRef = useRef(onChange);
   const lastVersionRef = useRef(0);
   const hasBaselineRef = useRef(false);
+  const instanceRef = useRef("");
   const pendingPayloadRef = useRef(null);
   const [connected, setConnected] = useState(false);
   const [pending, setPending] = useState(false);
@@ -29,15 +30,17 @@ export function useSourceChangeStream({
   }, [onChange]);
 
   useEffect(() => {
-    if (!enabled || typeof EventSource === "undefined") {
+    if (!enabled) {
       setConnected(false);
       return undefined;
     }
 
     let closed = false;
     let refreshTimer = null;
+    let inFlight = false;
+    let lastHeartbeatAt = Date.now();
     const connectedRef = { current: false };
-    const source = new EventSource(SOURCE_EVENTS_URL);
+    const source = typeof EventSource === "undefined" ? null : new EventSource(SOURCE_EVENTS_URL);
     const delay = Math.max(0, Number(refreshDelayMs) || 0);
     const fallbackDelay = Math.max(1_000, Number(fallbackIntervalMs) || DEFAULT_FALLBACK_INTERVAL_MS);
 
@@ -54,17 +57,34 @@ export function useSourceChangeStream({
 
     function flushPendingRefresh() {
       clearRefreshTimer();
-      if (closed || !pendingPayloadRef.current || isHidden()) return;
+      if (closed || inFlight || !pendingPayloadRef.current || isHidden()) return;
 
       const payload = pendingPayloadRef.current;
       pendingPayloadRef.current = null;
       setPending(false);
-      onChangeRef.current?.(payload);
-      setLastRefreshAt(new Date().toISOString());
+      const complete = (success) => {
+        inFlight = false;
+        if (closed) return;
+        if (success) setLastRefreshAt(new Date().toISOString());
+        else {
+          pendingPayloadRef.current ||= payload;
+          setPending(true);
+          refreshTimer = setTimeout(flushPendingRefresh, fallbackDelay);
+          return;
+        }
+        if (pendingPayloadRef.current) schedulePendingRefresh();
+      };
+      try {
+        const result = onChangeRef.current?.(payload);
+        if (result?.then) {
+          inFlight = true;
+          result.then((value) => complete(value !== null && value !== false), () => complete(false));
+        } else complete(result !== null && result !== false);
+      } catch { complete(false); }
     }
 
     function schedulePendingRefresh() {
-      clearRefreshTimer();
+      if (refreshTimer) return;
       if (closed || !pendingPayloadRef.current || isHidden()) return;
       if (delay === 0) {
         flushPendingRefresh();
@@ -94,8 +114,19 @@ export function useSourceChangeStream({
       try {
         const payload = parseEventPayload(event);
         const version = Number(payload.version) || 0;
+        lastHeartbeatAt = Date.now();
         connectedRef.current = true;
         setConnected(true);
+
+        if ((instanceRef.current && payload.instanceId && instanceRef.current !== payload.instanceId)
+          || (hasBaselineRef.current && version < lastVersionRef.current)) {
+          instanceRef.current = payload.instanceId || "";
+          lastVersionRef.current = version;
+          setLastVersion(version);
+          queueRefresh({ ...payload, reason: "restart" });
+          return;
+        }
+        instanceRef.current = payload.instanceId || instanceRef.current;
 
         if (!hasBaselineRef.current && lastVersionRef.current === 0) {
           hasBaselineRef.current = true;
@@ -117,35 +148,41 @@ export function useSourceChangeStream({
       }
     }
 
-    function handleHeartbeat() {
+    function handleHeartbeat(event) {
+      lastHeartbeatAt = Date.now();
       connectedRef.current = true;
       setConnected(true);
+      try { acceptVersion(parseEventPayload(event), "heartbeat-reconcile"); } catch { /* next heartbeat retries */ }
     }
 
     function handleVisibilityChange() {
       if (!isHidden() && pendingPayloadRef.current) schedulePendingRefresh();
     }
 
-    source.onopen = () => {
+    if (source) source.onopen = () => {
       if (closed) return;
       connectedRef.current = true;
       setConnected(true);
     };
-    source.onerror = () => {
+    if (source) source.onerror = () => {
       if (closed) return;
       connectedRef.current = false;
       setConnected(false);
     };
-    source.addEventListener("ready", handleReady);
-    source.addEventListener("source-changed", handleSourceChanged);
-    source.addEventListener("heartbeat", handleHeartbeat);
+    source?.addEventListener("ready", handleReady);
+    source?.addEventListener("source-changed", handleSourceChanged);
+    source?.addEventListener("heartbeat", handleHeartbeat);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     const fallbackTimer = setInterval(() => {
-      if (closed || connectedRef.current || pendingPayloadRef.current) return;
+      if (Date.now() - lastHeartbeatAt > 60_000) {
+        connectedRef.current = false;
+        setConnected(false);
+      }
+      if (closed || pendingPayloadRef.current) return;
       queueRefresh({
         version: lastVersionRef.current,
-        reason: "fallback",
+        reason: connectedRef.current ? "reconcile" : "fallback",
         generatedAt: new Date().toISOString(),
       });
     }, fallbackDelay);
@@ -156,11 +193,11 @@ export function useSourceChangeStream({
       clearRefreshTimer();
       clearInterval(fallbackTimer);
       pendingPayloadRef.current = null;
-      source.removeEventListener("ready", handleReady);
-      source.removeEventListener("source-changed", handleSourceChanged);
-      source.removeEventListener("heartbeat", handleHeartbeat);
+      source?.removeEventListener("ready", handleReady);
+      source?.removeEventListener("source-changed", handleSourceChanged);
+      source?.removeEventListener("heartbeat", handleHeartbeat);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      source.close();
+      source?.close();
       setConnected(false);
       setPending(false);
     };

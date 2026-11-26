@@ -1,0 +1,78 @@
+import { test, expect } from "@playwright/test";
+import fs from "node:fs";
+
+test("pending search retains a readable label, stable controls and a bounded loading icon", async ({ page }, testInfo) => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  await page.route("**/api/events?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("q") === "状态检查") await gate;
+    await route.continue();
+  });
+  await page.goto("/?tab=stream");
+  const search = page.getByRole("button", { name: "搜索", exact: true });
+  const input = page.getByRole("textbox", { name: "搜索", exact: true });
+  await expect(search).toBeEnabled();
+  await input.fill("状态检查");
+  const before = await search.boundingBox();
+  const inputBefore = await input.boundingBox();
+  await search.click();
+  const pending = page.getByRole("button", { name: "搜索中", exact: true });
+  await expect(pending).toHaveAttribute("aria-busy", "true");
+  await expect(pending).toBeDisabled();
+  await expect(page.getByRole("button", { name: "取消检索" })).toBeVisible();
+  expect((await pending.boundingBox()).width).toBe(before.width);
+  expect((await input.boundingBox()).width).toBe(inputBefore.width);
+  const clear = page.getByRole("button", { name: "清除", exact: true });
+  expect((await clear.boundingBox()).y).toBe((await pending.boundingBox()).y);
+  expect((await pending.boundingBox()).height).toBe((await input.boundingBox()).height);
+  const glyph = pending.locator(".interface-motion-icon");
+  await expect(glyph).toHaveAttribute("data-motion", "rotating");
+  expect((await glyph.boundingBox()).height).toBeLessThan(24);
+  await page.getByLabel("事件查询", { exact: true }).screenshot({ path: testInfo.outputPath("search-pending.png") });
+  release();
+  await expect(search).toBeEnabled();
+  await expect(page.getByRole("button", { name: "取消检索" })).toHaveCount(0);
+});
+
+test("full dialogue search opens the historical hit and returns to a stable search snapshot", async ({ page, request }, testInfo) => {
+  const errors = [];
+  const searches = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (req) => { const url = new URL(req.url()); if (url.pathname === "/api/events" && url.searchParams.get("q") === "封存关键词") searches.push(req); });
+  await page.goto("/?tab=stream");
+  await page.getByRole("textbox", { name: "搜索", exact: true }).fill("封存关键词");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "命中会话" })).toBeVisible();
+  const hit = page.locator(".event-row__open").filter({ hasText: "封存关键词" }).first();
+  await expect(hit.locator("mark")).toHaveText("封存关键词");
+  await expect(page.locator(".session-rail__metrics")).toContainText("1 处匹配");
+  await page.screenshot({ path: testInfo.outputPath("search-results.png"), fullPage: true });
+  const contextResponse = page.waitForResponse((response) => response.url().includes("/api/events/context?"));
+  await hit.click();
+  const context = await (await contextResponse).json();
+  expect(context.events.some((event) => event.eventId === context.targetEventId)).toBe(true);
+  await expect(page.getByRole("button", { name: "返回搜索结果" })).toBeVisible();
+  await expect(page.locator("[data-search-target] mark").first()).toContainText("封存关键词");
+  await expect(page.locator("[data-search-target]")).toBeInViewport();
+  await expect(page.locator("[data-search-target] mark").first()).toBeInViewport({ ratio: 1 });
+  await expect.poll(async () => {
+    const marker = await page.locator("[data-search-target] mark").first().boundingBox();
+    const heading = await page.locator("[data-search-target] .session-chat-turn__toggle").boundingBox();
+    return marker.y >= heading.y + heading.height;
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("search-context.png"), fullPage: true });
+  await page.getByRole("button", { name: "返回搜索结果" }).click();
+  await expect(hit).toBeVisible();
+  expect(searches).toHaveLength(1);
+  const results = await (await request.get("/api/events?q=" + encodeURIComponent("封存关键词"))).json();
+  const file = results.events[0].sourceFile;
+  expect(file).toContain("observer-e2e-");
+  fs.appendFileSync(file, JSON.stringify({ type: "event_msg", timestamp: new Date().toISOString(), payload: { type: "agent_reasoning", text: "fixture update" } }) + "\n");
+  await expect(page.getByText("日志有更新，当前保留搜索结果。", { exact: true })).toBeVisible({ timeout: 10000 });
+  expect(searches).toHaveLength(1);
+  await page.getByRole("button", { name: "更新搜索结果" }).click();
+  await expect(page.getByText("日志有更新，当前保留搜索结果。", { exact: true })).toHaveCount(0);
+  expect(searches).toHaveLength(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});

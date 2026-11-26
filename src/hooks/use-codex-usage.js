@@ -45,9 +45,11 @@ export function useCodexUsage({ enabled = true } = {}) {
       if (currentRequestId !== requestId.current) return null;
       setCodexUsagePayload((current) => ({
         ...current,
-        status: "unavailable",
+        status: current.updatedAt ? "ready" : "unavailable",
         installed: current.installed !== false,
-        error: "Codex 使用额度暂时无法读取",
+        error: current.updatedAt
+          ? "Codex 使用额度更新失败，当前显示上次结果，请重试"
+          : "Codex 使用额度暂时无法读取，请检查服务连接后重试",
       }));
       return null;
     }
