@@ -45,6 +45,16 @@ import {
   shortSessionId,
 } from "../lib/formatters";
 
+const TOKEN_RANGE_OPTIONS = [
+  { key: "today", label: "当天", days: 1 },
+  { key: "week", label: "近 7 天", days: 7 },
+  { key: "month", label: "近 30 天", days: 30 },
+  { key: "quarter", label: "近 90 天", days: 90 },
+  { key: "halfYear", label: "近 180 天", days: 180 },
+  { key: "year", label: "近 1 年", days: 365 },
+];
+const TOKEN_RANGE_BY_KEY = Object.fromEntries(TOKEN_RANGE_OPTIONS.map((option) => [option.key, option]));
+
 function tokenLabel(value) {
   return formatHumanNumber(value);
 }
@@ -1099,11 +1109,7 @@ function TokenRangeToolbar({ range, value, onChange, onRecalculate, recalculatin
         value={value}
         onChange={onChange}
         aria-label="Token 数据范围"
-        data={[
-          { label: "当天", value: "today" },
-          { label: "近 7 天", value: "week" },
-          { label: "近 30 天", value: "month" },
-        ]}
+        data={TOKEN_RANGE_OPTIONS.map((option) => ({ label: option.label, value: option.key }))}
       />
       <div className="product-token-range__scope">
         <span>{dateRange}</span>
@@ -1825,13 +1831,14 @@ export function ObservabilityWorkspace({
   const todayActivity = dailySessionHeatmap.at(-1) || {};
   const inputSideTotal = inputSideToken(tokenWindows.day) || finiteToken(tokenWindows.day?.input);
   const cacheCoverage = percentValue(cacheReadToken(tokenWindows.day), inputSideTotal);
-  const tokenRangeDays = tokenRangeKey === "today" ? 1 : tokenRangeKey === "month" ? 30 : 7;
+  const tokenRangeOption = TOKEN_RANGE_BY_KEY[tokenRangeKey] || TOKEN_RANGE_BY_KEY.week;
+  const tokenRangeDays = tokenRangeOption.days;
   const fallbackTimeline = tokenRangeKey === "today"
     ? hourlyChart
     : dailyChart.slice(-tokenRangeDays);
   const fallbackRange = {
     key: tokenRangeKey,
-    label: tokenRangeKey === "today" ? "当天" : tokenRangeKey === "month" ? "近 30 天" : "近 7 天",
+    label: tokenRangeOption.label,
     days: tokenRangeDays,
     startAt: fallbackTimeline[0]?.time,
     endAt: fallbackTimeline.at(-1)?.time,

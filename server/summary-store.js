@@ -1432,6 +1432,9 @@ function buildTokenRangeSnapshots(summary, nowMs) {
     { key: "today", label: "当天", days: 1 },
     { key: "week", label: "近 7 天", days: 7 },
     { key: "month", label: "近 30 天", days: 30 },
+    { key: "quarter", label: "近 90 天", days: 90 },
+    { key: "halfYear", label: "近 180 天", days: 180 },
+    { key: "year", label: "近 1 年", days: 365 },
   ].map((definition) => [definition.key, buildTokenRangeSnapshot(summary, nowMs, definition)]));
 }
 
