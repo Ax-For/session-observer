@@ -244,7 +244,7 @@ body { font-size: 14px; background: var(--bg); }
 .product-shell .mc-metric-tile strong { font-size: 18px; color: var(--text); }
 .product-shell .mc-metric-tile p, .product-shell .mc-metric-tile span { font-size: 11px; }
 
-.product-token-range { display: flex; align-items: center; gap: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
+.product-token-range { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; }
 .product-token-range__scope { display: grid; gap: 5px; font-size: 12px; }
 .product-token-range__scope > span { color: var(--text-faint); }
 .product-token-range__scope > strong { font-weight: 500; }

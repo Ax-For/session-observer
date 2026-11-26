@@ -22,15 +22,25 @@ Session Observer is built for developers who use multiple local coding agents an
 
 ## Start in 30 seconds
 
+**Linux/macOS:**
 ```bash
 npm install
 ./manage.sh start
 ./manage.sh open
 ```
 
+**Windows:**
+```cmd
+pnpm install
+
+pnpm run build
+
+node server.js
+```
+
 The default UI is [http://127.0.0.1:8787](http://127.0.0.1:8787). No account or external database is required.
 
-`manage.sh` builds the Vite frontend when needed and runs the Node service with a constrained heap. For UI-only development, use `npm run dev`.
+`manage.sh` (Linux/macOS) and `manage.bat` (Windows) build the Vite frontend when needed and run the Node service with a constrained heap. For UI-only development, use `npm run dev`.
 
 ## Product surfaces
 
@@ -125,13 +135,26 @@ Open **Token → 每日历史** to filter by date, source and model, see daily o
 
 ## Commands
 
+**Linux/macOS:**
 ```bash
 ./manage.sh start      # Start the observer in the background
 ./manage.sh status     # Show PID and local URL
 ./manage.sh logs -f    # Follow runtime logs
 ./manage.sh stop       # Stop the service
 ./manage.sh run        # Run in the foreground
+```
 
+**Windows:**
+```cmd
+manage.bat start       # Start the observer in the background
+manage.bat status      # Show PID and local URL
+manage.bat logs -f     # Follow runtime logs
+manage.bat stop        # Stop the service
+manage.bat run         # Run in the foreground
+```
+
+**Cross-platform:**
+```bash
 npm test               # Frontend Vitest suite
 npm run test:core      # Parser, aggregation, cache, and route tests
 npm run build          # Production frontend build
@@ -178,8 +201,16 @@ One local Node process serves HTTP and file-change notifications; a bounded chil
 | `OBSERVER_ALLOW_SOURCE_MUTATIONS` | `0` | Set to `1` to allow source transcript rename/delete |
 | `OBSERVER_PRICEBOOK_FILE` | `.runtime/pricebook.json` | Local dated model prices |
 
+**Linux/macOS:**
 ```bash
 PORT=8790 CODEX_SESSIONS_DIR=/path/to/codex/sessions ./manage.sh start
+```
+
+**Windows:**
+```cmd
+set PORT=8790
+set CODEX_SESSIONS_DIR=C:\path\to\codex\sessions
+manage.bat start
 ```
 
 To read multiple native session directories, create `source-locations.json` and restart the service:
@@ -227,9 +258,16 @@ Session transcripts may contain prompts, source code, tool output, filesystem pa
 
 Only bind to a non-local interface when you understand the exposure risk:
 
+**Linux/macOS:**
 ```bash
 HOST=0.0.0.0 OBSERVER_ACCESS_TOKEN="$MY_LOCAL_TOKEN" \
   OBSERVER_ALLOWED_HOSTS="observer.local:8787" ./manage.sh start
+```
+
+**Windows:**
+```cmd
+set HOST=0.0.0.0
+manage.bat start
 ```
 
 Non-loopback binding requires an access token. HTTP Basic accepts any username and the token as password; use an HTTPS reverse proxy for network access. Host/Origin checks reject cross-origin mutations. Source rename/delete is disabled by default; `OBSERVER_ALLOW_SOURCE_MUTATIONS=1` explicitly enables it. Local bookmarks and annotations remain writable. See [security notes](SECURITY.md).

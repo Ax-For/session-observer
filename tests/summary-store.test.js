@@ -186,7 +186,7 @@ test("summary store builds cached token snapshots for today, seven days, and thi
   });
   const summary = store.getSummary({ files: [file] });
 
-  assert.deepEqual(Object.keys(summary.tokenRanges), ["today", "week", "month"]);
+  assert.deepEqual(Object.keys(summary.tokenRanges), ["today", "week", "month", "quarter", "halfYear", "year"]);
   assert.equal(summary.tokenRanges.today.days, 1);
   assert.equal(summary.tokenRanges.today.tokens.effectiveTotal, 160);
   assert.equal(summary.tokenRanges.today.health.sessionsTotal, 1);
